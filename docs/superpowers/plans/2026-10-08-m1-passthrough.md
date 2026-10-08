@@ -5141,7 +5141,7 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
   if (cfg.kind == "ndi") {
 #if BC_WITH_NDI
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
-    if (name.empty() || name.size() > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
+    if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
     return std::make_unique<NdiOutput>(name);
 #else
     (void)cam;
@@ -6636,7 +6636,7 @@ void validateOutput(const OutputConfig& o) {
     if (o.params.contains("name")) {
       if (!o.params["name"].is_string()) throw std::invalid_argument("NDI name must be text");
       const auto n = o.params["name"].get<std::string>();
-      if (n.empty() || n.size() > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
+      if (n.empty() || utf8Length(n) > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
     }
     return;
   }
