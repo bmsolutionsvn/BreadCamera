@@ -34,6 +34,8 @@ add_library(bc_core STATIC
   src/core/show.cpp
   src/core/show_store.cpp
   # Task 4
+  src/core/signal_state.cpp
+  src/core/state_store.cpp
 )
 target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
@@ -50,6 +52,7 @@ add_executable(bc_tests
   tests/audio_delay_test.cpp
   tests/show_test.cpp
   tests/show_store_test.cpp
+  tests/state_store_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
