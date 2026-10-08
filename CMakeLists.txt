@@ -69,6 +69,17 @@ add_library(bc_gpu STATIC
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
 target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
 
+# ---- io ----
+add_library(bc_io STATIC
+  src/io/srt_params.cpp
+  src/io/ffmpeg_input.cpp
+  # Task 7
+  # Task 8
+)
+target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
+target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
+target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
@@ -83,8 +94,12 @@ add_executable(bc_tests
   tests/state_store_test.cpp
   # Task 5
   tests/gpu_test.cpp
+  # Task 6
+  tests/srt_params_test.cpp
+  tests/ffmpeg_input_test.cpp
+  tests/support/test_media.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
-target_link_libraries(bc_tests PRIVATE bc_core bc_gpu doctest::doctest)
+target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io doctest::doctest)
 target_compile_definitions(bc_tests PRIVATE BC_WITH_NDI=$<BOOL:${BC_WITH_NDI}>)
