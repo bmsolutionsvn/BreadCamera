@@ -4,6 +4,8 @@
 
 **Goal:** The hardware-bound adapters: Blackmagic DeckLink SDI/HDMI input and output (with external key+fill), AJA NTV2 input and output (experimental, fill only), and a Windows 11 virtual camera per camera (Media Foundation `MFCreateVirtualCamera` + a custom media source DLL fed through shared memory).
 
+**Amended 2026-10-08 after the UI mockup review (owner):** English only; Task 4's UI part is ported to M1's native dialogs; SDI (DeckLink, AJA) and the virtual camera keep their fixed formats, so the Add output dialog hides Resolution / Frame rate for them and the router refuses a format override (spec §4.3).
+
 **Architecture:** DeckLink and AJA follow the M1 adapter model (`Input` / `QueuedOutput`), converting UYVY ⇄ BGRA on the CPU with swscale. The virtual camera has two halves: `breadcamera-vcam.dll` (a media source vendored from `smourier/VCamSample`, MIT, whose frame generator now copies the latest frame from a `Global\` shared-memory section it creates) and `VirtualCameraOutput` in the engine, which registers the camera with `MFCreateVirtualCamera` and writes frames into that section with a sequence lock. All three are compile-gated and **untested on the build PC** unless the hardware/registration exists.
 
 **Tech Stack:** Blackmagic Desktop Video SDK 14.x (owner installs; IDL compiled with MIDL), AJA libajantv2 `ntv2_18_0_0` (MIT, CMake FetchContent), Media Foundation virtual camera API (Windows 11 22000+), C++/WinRT headers from the Windows SDK, WIL.
@@ -16,7 +18,7 @@
 
 - All earlier Global Constraints apply.
 - `BC_WITH_DECKLINK` (SDK found via `DECKLINK_SDK_DIR`), `BC_WITH_AJA` (FetchContent succeeds), `BC_WITH_VCAM` (Windows SDK has `mfvirtualcamera.h`) — each ON when available, OFF with a message otherwise.
-- AJA is **experimental**: the UI labels every AJA item "Thử nghiệm — chưa kiểm tra trên phần cứng" ("Experimental — not verified on hardware"). AJA output is **fill only** in this milestone (key output is a follow-up) — a deviation from spec §4.3's "key+fill" table row, recorded in the follow-ups.
+- AJA is **experimental**: the UI labels every AJA item "Experimental — not verified on hardware". AJA output is **fill only** in this milestone (key output is a follow-up) — a deviation from spec §4.3's "key+fill" table row, recorded in the follow-ups.
 - DeckLink output: `keyed` outputs use the card's **external keyer** (fill on one connector, key on its pair) when the card reports `BMDDeckLinkSupportsExternalKeying`; otherwise the output refuses with a clear error.
 - SDI/HDMI outputs run at 1920×1080 at the show rate (`50/1`, `60000/1001`, `60/1` → `bmdModeHD1080p50`, `bmdModeHD1080p5994`, `bmdModeHD1080p6000`); frames of other sizes are scaled.
 - Virtual camera: 1920×1080 at 30 fps, at most **4** (one per camera that uses it), indexes 1–4 unique within a show. The DLL needs registration in HKLM (admin) — done by the installer (M5) or `regsvr32` for development; without it the output shows "the BreadCamera virtual camera is not installed".
@@ -1638,15 +1640,15 @@ git commit -m "feat: Windows 11 virtual camera (vendored VCamSample media source
 ### Task 4: Factory, router and UI for DeckLink, AJA and the virtual camera
 
 **Files:**
-- Modify: `src/engine/adapter_factory.cpp`, `src/engine/command_router.h/.cpp` (validators, `listDeckLinkDevices`, `listAjaDevices`, vcam index uniqueness), `src/engine/engine_main.cpp`, `tests/command_router_test.cpp`, `ui/src/screens/AddCameraDialog.tsx`, `ui/src/screens/AddOutputDialog.tsx`, `ui/src/i18n.ts`
-- Test: `tests/command_router_test.cpp` (cases), `ui/src/screens/AddOutputDialog.test.tsx` (case)
+- Modify: `src/engine/adapter_factory.cpp`, `src/engine/command_router.h/.cpp` (validators, `listDeckLinkDevices`, `listAjaDevices`, vcam index uniqueness), `src/engine/engine_main.cpp`, `tests/command_router_test.cpp`, `ui/src/dialogs/AddCameraDialog.tsx`, `ui/src/dialogs/AddOutputDialog.tsx`
+- Test: `tests/command_router_test.cpp` (cases), `ui/src/dialogs/AddOutputDialog.test.tsx` (case)
 
 **Interfaces:**
 - Produces: input kinds `decklink {device: 0..15}`, `aja {device: 0..7, channel: 1..8}`; output kinds `decklink {device: 0..15}` (uses `OutputConfig::keyed` for external keying), `aja {device: 0..7, channel: 1..8}`, `vcam {index: 1..4, name?: 1..80}`; a show may hold each vcam index **once** (router: `invalid` "virtual camera N is already used by camera X"); commands `listDeckLinkDevices` → `[{index, name, hasInput, hasOutput, externalKeying}]`, `listAjaDevices` → `[{index, name}]`; `Effects` gains both.
 
 Factory (`makeInput`/`makeOutput`): `decklink` → `DeckLinkInput(gpu, pool, device)` / `DeckLinkOutput(device, showRate, cfg.keyed)`; `aja` → `AjaInput(gpu, pool, device, channel)` / `AjaOutput(device, channel, showRate)`; `vcam` → `VirtualCameraOutput(index, name or "BreadCamera - <camera name>")`; each behind its `#if BC_WITH_*` with the "… support is not installed in this build" error otherwise. The factory needs the show rate: add `Rate showRate` to `DefaultAdapterFactory` via `void setShowRate(Rate)` called by the engine in `apply()` before cameras are (re)built (and in the test fakes: a no-op default `virtual void setShowRate(Rate) {}` on `AdapterFactory`).
 
-UI copy (vi / en): kinds "DeckLink (SDI/HDMI)", "AJA (thử nghiệm)" / "AJA (experimental)", "Camera ảo Windows" / "Windows virtual camera"; "Card", "Kênh" / "Channel", "Số camera ảo" / "Virtual camera number"; badge text for AJA "Thử nghiệm — chưa kiểm tra trên phần cứng" / "Experimental — not verified on hardware"; DeckLink keyed toggle "Xuất key + fill (2 cổng SDI)" / "Key + fill out (2 SDI ports)", disabled with hint "Card này không có keyer ngoài" / "This card has no external keyer" when `externalKeying` is false.
+UI copy (English): kinds "DeckLink (SDI/HDMI)", "AJA (experimental)", "Windows virtual camera"; "Card", "Channel", "Virtual camera number"; AJA badge "Experimental — not verified on hardware"; DeckLink keyed switch "Key + fill out (2 SDI ports)", disabled with the hint "This card has no external keyer" when `externalKeying` is false; fixed-format note "SDI and the virtual camera use a fixed format: 1080p at the show rate (SDI), 1080p30 (virtual camera)."
 
 - [ ] **Step 1: Router tests**
 
@@ -1791,11 +1793,36 @@ with the matching guarded `#include`s.
 
 Run `scripts/test.ps1 -Filter "CommandRouter*,Engine*"` — all pass.
 
-- [ ] **Step 3: UI**
+- [ ] **Step 3: Fixed formats in the router**
 
-`AddCameraDialog`: kinds `decklink` (card select from `listDeckLinkDevices`, only `hasInput`) and `aja` (card from `listAjaDevices` + channel 1..8, with the experimental badge as a `Chip color="warning"`). `AddOutputDialog`: kinds `decklink` (card select, only `hasOutput`; keyed switch enabled only when `externalKeying`; sends `keyed` at the output level), `aja` (card + channel + badge), `vcam` (number 1..4 select, defaulting to the lowest index not used in `show`). Add a test to `AddOutputDialog.test.tsx`:
+In `validateOutput` (`src/engine/command_router.cpp`), for `decklink`, `aja` and `vcam`, after the kind's own checks:
+```cpp
+    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+```
+and append to `tests/command_router_test.cpp`:
+```cpp
+TEST_CASE("CommandRouter: SDI and virtual camera outputs refuse a format override") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
+  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(add["error"]["code"] == "invalid");
+}
+```
+
+- [ ] **Step 4: UI (M1's native dialogs)**
+
+`ui/src/dialogs/AddCameraDialog.tsx` — the Input type select gains `decklink` "DeckLink (SDI/HDMI)" and `aja` "AJA (experimental)". DeckLink: `<Prop label="Card">` select from `listDeckLinkDevices` (only `hasInput`). AJA: Card (from `listAjaDevices`) and Channel (1–8) selects, with `<ErrorBlock severity="warning" message="Experimental — not verified on hardware" />` under them. Params as the router expects.
+
+`ui/src/dialogs/AddOutputDialog.tsx` — Output type gains `decklink` "DeckLink SDI", `aja` "AJA SDI (experimental)", `vcam` "Windows virtual camera":
+- DeckLink: Card (only `hasOutput`); "Key + fill out (2 SDI ports)" switch, enabled only when the card's `externalKeying` is true, otherwise disabled with the hint "This card has no external keyer"; sends `keyed` at the output level.
+- AJA: Card + Channel + the warning block.
+- vcam: "Virtual camera number" select 1–4, defaulting to the lowest number no `vcam` output in the show uses (`useEngine(client).show`).
+- For `decklink`, `aja`, `vcam` (and `fullscreen`) the Resolution and Frame rate rows are hidden and replaced by the fixed-format note; the dialog sends `format: { width: 0, height: 0, halfRate: false }`.
+
+Append to `ui/src/dialogs/AddOutputDialog.test.tsx`:
 ```tsx
-test('a virtual camera output picks the first free number', () => {
+test('a virtual camera output picks the first free number and has no format choice', () => {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
@@ -1805,21 +1832,21 @@ test('a virtual camera output picks the first free number', () => {
     state: {},
     show: { cameras: [{ id: 'z', name: 'Z', input: { kind: 'srt', params: {} }, outputs: [{ id: 'v', kind: 'vcam', keyed: false, enabled: true, params: { index: 1 } }] }] },
   });
-  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} onClose={() => {}} />);
-  fireEvent.mouseDown(screen.getByLabelText('Loại đầu ra'));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText('Camera ảo Windows'));
-  fireEvent.click(screen.getByRole('button', { name: 'Thêm đầu ra' }));
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'vcam' } });
+  expect(screen.queryByLabelText('Resolution')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
-  expect(add.args.output).toMatchObject({ kind: 'vcam', params: { index: 2 } });
+  expect(add.args.output).toMatchObject({ kind: 'vcam', params: { index: 2 }, format: { width: 0, height: 0, halfRate: false } });
 });
 ```
 Run `npm test` and `npm run build` in `ui/`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src tests ui/src
-git commit -m "feat: DeckLink, AJA and virtual camera kinds in the factory, router and UI"
+git commit -m "feat: DeckLink, AJA and virtual camera kinds in the factory, router and UI dialogs"
 ```
 
 ---
@@ -1842,7 +1869,7 @@ Run and paste the configure summary lines (`BC_WITH_NDI/OMT/MAXINE/DECKLINK/AJA/
 
 ## Virtual camera (Windows 11)
 1. As administrator: `regsvr32 <build>\vcam\breadcamera-vcam.dll` → "succeeded".
-2. Add an SRT camera, add output "Camera ảo Windows" #1.
+2. Add an SRT camera, add output "Windows virtual camera" #1.
 3. Open the Windows Camera app → pick "BreadCamera - <camera>" → live picture within 2 s.
 4. Open it in OBS (Video Capture Device) at the same time as the Camera app → both show picture.
 5. Stop the input → after 1 s the virtual camera shows the dark-grey slate, never black.
@@ -1850,7 +1877,7 @@ Run and paste the configure summary lines (`BC_WITH_NDI/OMT/MAXINE/DECKLINK/AJA/
 ## DeckLink
 1. Card with SDI in: add a DeckLink camera → live; change the source from 1080i50 to 1080p60 → picture returns without touching BreadCamera.
 2. SDI out: add a DeckLink output → picture on a monitor.
-3. Key + fill: on a card with an external keyer, a keyed output on a camera with Background = "Tách nền (key + fill)" → fill on SDI A, key on SDI B; a switcher's DSK keys the person cleanly.
+3. Key + fill: on a card with an external keyer, a keyed output on a camera with Background mode = "Keyed (fill + key)" → fill on SDI A, key on SDI B; a switcher's DSK keys the person cleanly.
 
 ## AJA (experimental)
 1. Input on channel 1 → live picture and audio meters in the switcher fed from BreadCamera.

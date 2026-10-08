@@ -4,6 +4,8 @@
 
 **Goal:** The I/O adapters the build PC can test end to end: SRT output (hardware H.264 + AAC in MPEG-TS), NDI input, OMT output (alpha), USB/UVC capture input through Media Foundation, plus the router validation, discovery commands and UI forms for every new kind.
 
+**Amended 2026-10-08 after the UI mockup review (owner):** English only; the SRT output encodes at the size of the frames it receives — the per-output format from M1 Task 11A (same as show, 1280×720, 960×540, half rate) replaces its own width/height; Task 5's UI part is ported to M1's native window (Inspector + dialogs, plain `select` controls). The USB input also covers a laptop's built-in camera (any Media Foundation video capture device).
+
 **Architecture:** Each adapter is an `Input` or a `QueuedOutput` (M1 Task 7) created by `DefaultAdapterFactory` from show params validated by `validateInput`/`validateOutput` (M1 Task 11). The H.264 encoder opening logic moves from `PreviewEncoder` into a shared `openH264Encoder` so the SRT output and previews use one encoder order (spec §7.2). Discovery (NDI sources, capture devices) is exposed as read-only commands for the UI pickers.
 
 **Tech Stack:** as before, plus libomt (OMT) v1.0.0.19 prebuilt binaries (MIT), Media Foundation source reader.
@@ -14,11 +16,11 @@
 
 ## Global Constraints
 
-- All earlier Global Constraints apply (SDK options + `BC_REQUIRES`, never black, LGPL FFmpeg, 127.0.0.1 + token, DPAPI for every `passphrase`, Vietnamese-first UI copy).
+- All earlier Global Constraints apply (SDK options + `BC_REQUIRES`, never black, LGPL FFmpeg, 127.0.0.1 + token, DPAPI for every `passphrase`, English-only UI with Unicode names, M1's per-output format (Task 11A) for every output).
 - Outputs never block the tick: every new output is a `QueuedOutput` (queue of 2, drop-oldest, own thread, retry with backoff).
 - SRT output encodes with the first encoder that opens in the order `h264_nvenc`, `h264_amf`, `h264_qsv`, `h264_mf`; audio is FFmpeg's native `aac` (LGPL) at 48 kHz stereo 160 kb/s; container MPEG-TS; no alpha (spec §4.3).
 - OMT output carries alpha when the frame has it (`OMTVideoFlags_Alpha`); NDI input accepts any source and delivers BGRA.
-- USB capture audio is out of scope for v1 (video only) — say so in the UI ("Không có âm thanh" note) and the follow-ups.
+- USB capture audio is out of scope for v1 (video only) — say so in the UI ("USB and built-in cameras are video only, no audio." note) and the follow-ups.
 - New third-party binaries are fetched by `scripts/fetch-sdks.ps1` at a pinned version with a SHA-256 check, into `third_party/` (git-ignored).
 
 ## Review Focus
@@ -61,7 +63,7 @@ cmake/FindOMT.cmake
 - Produces:
   - `bc::OpenedEncoder { AVCodecContext* ctx; std::string name; }`, `bc::OpenedEncoder bc::openH264Encoder(int width, int height, int fpsNum, int fpsDen, int64_t bitRate, int gop, bool globalHeader)` (throws `std::runtime_error` listing what was tried; caller frees with `avcodec_free_context`), `const std::vector<std::string>& bc::h264EncoderOrder()`. `PreviewEncoder::encoderOrder()` now returns `h264EncoderOrder()`.
   - `bool QueuedOutput::stopRequested() const` (protected) — subclasses use it in FFmpeg interrupt callbacks.
-  - `bc::SrtOutputOptions { std::string url; std::map<std::string,std::string> avOptions; int width = 1920, height = 1080; int bitrateKbps = 8000; }`, `bc::SrtOutputOptions bc::srtOutputOptionsFromParams(const nlohmann::json&)` — same keys and rules as the SRT input (`url` | `mode`+`host`+`port`, `latencyMs`, `passphrase`, `streamId`) plus `bitrateKbps` 1000..50000 (default 8000), `width`/`height` one of 1280×720, 1920×1080 (default 1920×1080).
+  - `bc::SrtOutputOptions { std::string url; std::map<std::string,std::string> avOptions; int bitrateKbps = 8000; }`, `bc::SrtOutputOptions bc::srtOutputOptionsFromParams(const nlohmann::json&)` — same keys and rules as the SRT input (`url` | `mode`+`host`+`port`, `latencyMs`, `passphrase`, `streamId`) plus `bitrateKbps` 1000..50000 (default 8000). The picture size is the size of the frames the output receives (M1 Task 11A's per-output format); the encoder opens at the first frame's size and later frames of another size are scaled to it.
   - `bc::SrtOutput(SrtOutputOptions)` — `needsCpu() == true`, error code `"srt-out-failed"`.
 
 Behaviour: `open()` opens the SRT connection (caller: connect; listener: wait for a caller, interruptible by `stop()`), then the muxer header; the encoder opens on the first frame. Every frame is scaled to the configured size (BGRA → NV12 via swscale), so an upstream size change never restarts the encoder. Audio from `OutFrame::audio` goes through a FIFO into 1024-sample AAC frames. A write error throws → the base retries with backoff (`connecting` again in listener mode).
@@ -124,20 +126,18 @@ TEST_CASE("srtOutputOptionsFromParams: validation") {
   auto o = bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"port", 9100}, {"bitrateKbps", 6000}});
   CHECK(o.url == "srt://0.0.0.0:9100");
   CHECK(o.bitrateKbps == 6000);
-  CHECK(o.width == 1920);
   CHECK_THROWS_AS(bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"port", 9100}, {"bitrateKbps", 999999}}), std::invalid_argument);
-  CHECK_THROWS_AS(bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"port", 9100}, {"width", 1000}, {"height", 500}}), std::invalid_argument);
   CHECK_THROWS_AS(bc::srtOutputOptionsFromParams({{"mode", "caller"}, {"port", 0}, {"host", "x"}}), std::invalid_argument);
 }
 
 TEST_CASE("SrtOutput: a listener output is read by an SRT caller input, picture and sound" BC_REQUIRES(bc::test::Req::H264Encoder)) {
-  auto opts = bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47951}, {"width", 1280}, {"height", 720}});
+  auto opts = bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47951}});
   bc::SrtOutput out(opts);
   out.start();
   std::this_thread::sleep_for(300ms);
   CHECK(out.status().state == bc::SignalState::Connecting);  // nobody connected yet
   std::atomic<bool> run{true};
-  std::thread feeder([&] { feed(out, run, 1920, 1080); });
+  std::thread feeder([&] { feed(out, run, 1280, 720); });  // the engine sends the output's format size
 
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   bc::TexturePool pool(*gpu);
@@ -155,7 +155,7 @@ TEST_CASE("SrtOutput: a listener output is read by an SRT caller input, picture 
   {
     std::lock_guard l(sink.m);
     CHECK(sink.video > 60);
-    CHECK(sink.width == 1280);  // scaled to the configured size
+    CHECK(sink.width == 1280);  // encoded at the size it was given
     CHECK(sink.audio > 24000);
   }
   CHECK(out.status().state == bc::SignalState::Live);
@@ -295,10 +295,10 @@ In `src/io/queued_output.h` add to the protected section: `bool stopRequested() 
 struct SrtOutputOptions {
   std::string url;
   std::map<std::string, std::string> avOptions;
-  int width = 1920, height = 1080;
   int bitrateKbps = 8000;
 };
-// Same connection keys as the input (spec §4.2) plus bitrateKbps, width, height. Throws std::invalid_argument.
+// Same connection keys as the input (spec §4.2) plus bitrateKbps. The size comes from the frames
+// (the per-output format, spec §4.3). Throws std::invalid_argument.
 SrtOutputOptions srtOutputOptionsFromParams(const nlohmann::json& params);
 ```
 `src/io/srt_params.cpp` — add:
@@ -306,17 +306,12 @@ SrtOutputOptions srtOutputOptionsFromParams(const nlohmann::json& params);
 SrtOutputOptions srtOutputOptionsFromParams(const json& p) {
   if (!p.is_object()) throw std::invalid_argument("SRT settings must be an object");
   json conn = p;
-  for (auto k : {"bitrateKbps", "width", "height"}) conn.erase(k);
+  conn.erase("bitrateKbps");
   auto in = srtOptionsFromParams(conn);
   SrtOutputOptions o;
   o.url = in.url;
   o.avOptions = in.avOptions;
   o.bitrateKbps = intIn(p, "bitrateKbps", 8000, 1000, 50000);
-  o.width = intIn(p, "width", 1920, 1280, 1920);
-  o.height = intIn(p, "height", 1080, 720, 1080);
-  if (!((o.width == 1920 && o.height == 1080) || (o.width == 1280 && o.height == 720))) {
-    throw std::invalid_argument("size must be 1920x1080 or 1280x720");
-  }
   return o;
 }
 ```
@@ -366,6 +361,7 @@ class SrtOutput final : public QueuedOutput {
   AVFrame* aframe_ = nullptr;
   SwsContext* sws_ = nullptr;
   uint32_t swsW_ = 0, swsH_ = 0;
+  int encW_ = 0, encH_ = 0;  // set from the first frame
   std::vector<float> audioFifo_;  // interleaved stereo
   int64_t vpts_ = 0, apts_ = 0;
   bool headerWritten_ = false;
@@ -412,7 +408,9 @@ void SrtOutput::open() {
 }
 
 void SrtOutput::openEncoders(const OutFrame& f) {
-  auto v = openH264Encoder(opts_.width, opts_.height, f.rate.num, f.rate.den, int64_t{opts_.bitrateKbps} * 1000,
+  encW_ = static_cast<int>(f.bgra->width) & ~1;  // H.264 4:2:0 needs even sizes
+  encH_ = static_cast<int>(f.bgra->height) & ~1;
+  auto v = openH264Encoder(encW_, encH_, f.rate.num, f.rate.den, int64_t{opts_.bitrateKbps} * 1000,
                            f.rate.num / f.rate.den, false);
   venc_ = v.ctx;
   vst_ = avformat_new_stream(fmt_, nullptr);
@@ -433,8 +431,8 @@ void SrtOutput::openEncoders(const OutFrame& f) {
 
   vframe_ = av_frame_alloc();
   vframe_->format = AV_PIX_FMT_NV12;
-  vframe_->width = opts_.width;
-  vframe_->height = opts_.height;
+  vframe_->width = encW_;
+  vframe_->height = encH_;
   check(av_frame_get_buffer(vframe_, 0), "video frame");
   aframe_ = av_frame_alloc();
   aframe_->format = AV_SAMPLE_FMT_FLTP;
@@ -465,7 +463,7 @@ void SrtOutput::deliver(const OutFrame& f) {
   if (!venc_) openEncoders(f);
   if (!sws_ || swsW_ != f.bgra->width || swsH_ != f.bgra->height) {
     sws_ = sws_getCachedContext(sws_, static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA,
-                                opts_.width, opts_.height, AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr, nullptr, nullptr);
+                                encW_, encH_, AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr, nullptr, nullptr);
     swsW_ = f.bgra->width;
     swsH_ = f.bgra->height;
   }
@@ -1488,14 +1486,14 @@ git commit -m "feat(io): USB/UVC capture input via Media Foundation, with device
 ### Task 5: Factory, router validation, discovery commands and UI forms for the new kinds
 
 **Files:**
-- Modify: `src/engine/adapter_factory.cpp`, `src/engine/command_router.h/.cpp` (`validateInput`, `validateOutput`, `Effects::listNdiSources`, `Effects::listCaptureDevices`, commands), `src/engine/engine_main.cpp`, `tests/command_router_test.cpp` (`FakeFx` additions + cases), `ui/src/screens/AddCameraDialog.tsx`, `ui/src/screens/AddOutputDialog.tsx`, `ui/src/screens/Multiview.tsx` + `CameraDetail.tsx` (kind labels), `ui/src/i18n.ts`
-- Test: `tests/command_router_test.cpp`, `ui/src/screens/AddCameraDialog.test.tsx`, `ui/src/screens/AddOutputDialog.test.tsx`
+- Modify: `src/engine/adapter_factory.cpp`, `src/engine/command_router.h/.cpp` (`validateInput`, `validateOutput`, `Effects::listNdiSources`, `Effects::listCaptureDevices`, commands), `src/engine/engine_main.cpp`, `tests/command_router_test.cpp` (`FakeFx` additions + cases), `ui/src/dialogs/AddCameraDialog.tsx`, `ui/src/dialogs/AddOutputDialog.tsx`, `ui/src/inspector/Inspector.tsx` (Input section per kind)
+- Test: `tests/command_router_test.cpp`, `ui/src/dialogs/AddCameraDialog.test.tsx`, `ui/src/dialogs/AddOutputDialog.test.tsx`
 
 **Interfaces:**
 - Consumes: `SrtOutput`, `srtOutputOptionsFromParams` (Task 1), `NdiInput`, `listNdiSources` (Task 2), `OmtOutput` (Task 3), `MfCaptureInput`, `listCaptureDevices` (Task 4).
 - Produces: input kinds `srt` | `ndi` `{source: string 1..256}` | `uvc` `{device: string 1..512, width?: 0|640..3840, height?: 0|360..2160, fps?: 0|15..60}`; output kinds `ndi` | `fullscreen` | `srt` (params per Task 1) | `omt` `{name?: string 1..200}`; commands `listNdiSources` → `["MACHINE (Name)", ...]`, `listCaptureDevices` → `[{name, id}]`; `Effects` gains `virtual nlohmann::json listNdiSources() = 0; virtual nlohmann::json listCaptureDevices() = 0;`. A kind whose SDK is not built is still **valid in the show** (so a show file moves between PCs) but the factory throws "… support is not installed in this build" — the camera/output shows that error (M1 behaviour).
 
-UI copy (vi / en): input kind "Loại nguồn" / "Source type" with "SRT", "NDI", "Thiết bị USB / capture" / "USB / capture device"; "Nguồn NDI" / "NDI source"; "Tìm lại" / "Refresh"; "Thiết bị" / "Device"; note "Đầu vào USB chỉ có hình, không có âm thanh." / "USB input is video only, no audio."; output kinds add "OMT" and "SRT"; "Tên nguồn OMT" / "OMT source name"; "Bitrate (kb/s)"; "Kích thước" / "Size"; errors "Chọn một nguồn NDI" / "Choose an NDI source", "Chọn một thiết bị" / "Choose a device".
+UI copy (English): Input type — "SRT (BreadCall feeds, encoders)", "NDI", "USB or built-in camera"; "NDI source"; "Refresh"; "Device"; note "USB and built-in cameras are video only, no audio."; output types add "OMT" and "SRT"; "OMT source name"; "Bitrate (kb/s)"; errors "Choose an NDI source", "Choose a device". The output size and rate come from M1's Resolution / Frame rate fields, for every output type except Fullscreen.
 
 - [ ] **Step 1: Write the failing router tests**
 
@@ -1628,13 +1626,14 @@ with the matching `#include`s (`io/ndi_input.h` under `#if BC_WITH_NDI`, `io/mf_
 
 Run `scripts/test.ps1 -Filter "CommandRouter*"` — all pass.
 
-- [ ] **Step 4: UI forms**
+- [ ] **Step 4: UI forms (M1's native dialogs)**
 
-`ui/src/i18n.ts`: add the keys `'field.inputKind'`, `'input.srt'`, `'input.ndi'`, `'input.uvc'`, `'field.ndiSource'`, `'action.refresh'`, `'field.device'`, `'note.uvcNoAudio'`, `'output.omt'`, `'output.srt'`, `'field.omtName'`, `'field.bitrate'`, `'field.size'`, `'error.ndiSource'`, `'error.device'` with the copy above.
+The labels live in `ui/src/state/labels.ts` already (`inputCode`, `inputName`, `outputCode`, `outputName` know `ndi`, `uvc`, `srt`, `omt`); nothing else needs a label table.
 
-`AddCameraDialog.tsx` — add at the top of the form a kind select (`srt` default), and render per kind:
+`ui/src/dialogs/AddCameraDialog.tsx`:
+- Replace the disabled "Input type" select with a live one: `const [kind, setKind] = useState<'srt' | 'ndi' | 'uvc'>('srt');` and options `srt` "SRT (BreadCall feeds, encoders)", `ndi` "NDI", `uvc` "USB or built-in camera".
+- Add the discovery state and fetch:
 ```tsx
-  const [kind, setKind] = useState<'srt' | 'ndi' | 'uvc'>('srt');
   const [ndiSources, setNdiSources] = useState<string[]>([]);
   const [ndiSource, setNdiSource] = useState('');
   const [devices, setDevices] = useState<{ name: string; id: string }[]>([]);
@@ -1642,69 +1641,94 @@ Run `scripts/test.ps1 -Filter "CommandRouter*"` — all pass.
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
   const refreshDevices = () => client.request<{ name: string; id: string }[]>('listCaptureDevices').then(setDevices).catch(() => setDevices([]));
   useEffect(() => {
-    if (!open) return;
     if (kind === 'ndi') refreshNdi();
     if (kind === 'uvc') refreshDevices();
-  }, [open, kind]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
 ```
-Validation: for `ndi` the error is `t('error.ndiSource')` when `ndiSource` is empty; for `uvc` `t('error.device')` when `device` is empty; the SRT checks apply only when `kind === 'srt'`. `submit()` sends `input: { kind: 'ndi', params: { source: ndiSource } }` or `{ kind: 'uvc', params: { device } }` (device = the chosen id) or the existing SRT params. The NDI field is a `TextField select` of `ndiSources` plus a "Tìm lại" button calling `refreshNdi`; the device field is a select of `devices` (label = name, value = id) with the `note.uvcNoAudio` caption under it.
+(import `useEffect`).
+- Rows per kind: SRT keeps Mode / URL / Host / Port / Latency / Passphrase / Stream ID. NDI: `<Prop label="NDI source" hint={errors.ndi}>` with a `select` of `ndiSources` (first option "Choose a source…" with value "") followed by a small `<button className="btn" onClick={refreshNdi}>Refresh</button>`. USB: `<Prop label="Device" hint={errors.device || 'USB and built-in cameras are video only, no audio.'}>` with a `select` of `devices` (label = name, value = id) and the same Refresh button calling `refreshDevices`.
+- Validation: `errors.ndi = kind === 'ndi' && !ndiSource ? 'Choose an NDI source' : ''`, `errors.device = kind === 'uvc' && !device ? 'Choose a device' : ''`; the SRT checks (`port`, `passphrase`, `host`) apply only when `kind === 'srt'`.
+- `submit()` sends `input: { kind: 'ndi', params: { source: ndiSource } }`, `{ kind: 'uvc', params: { device } }`, or the existing SRT params.
 
-`AddOutputDialog.tsx` — kinds `ndi | omt | srt | fullscreen`; `omt` shows a name field (default `BreadCamera - <camera name>`); `srt` shows mode (caller/listener), host (caller), port, latency, passphrase, bitrate (default 8000) and size (`1920x1080` | `1280x720`), and sends `{mode, host?, port, latencyMs, passphrase?, bitrateKbps, width, height}`.
+`ui/src/dialogs/AddOutputDialog.tsx`:
+- Kinds `ndi | omt | srt | fullscreen` in the Output type select ("NDI", "OMT", "SRT (H.264 over SRT)", "Fullscreen on a monitor").
+- `omt`: `<Prop label="OMT source name">` text input, default `BreadCamera - <camera name>`; params `{ name }`.
+- `srt`: rows Mode (Caller / Listener), Host (caller only), Port, Latency (ms, default 120), Passphrase (optional), Bitrate (kb/s, default 8000); params `{ mode, host?, port, latencyMs, passphrase?, bitrateKbps }`.
+- The Resolution and Frame rate rows from M1 stay for every kind except Fullscreen; `format` is sent as before.
 
-Kind labels in `Multiview.tsx`/`CameraDetail.tsx`: replace the inline ternaries with a helper `outputLabel(kind)` in `i18n.ts` that maps `ndi|omt|srt|fullscreen` to their keys and falls back to the raw kind.
+`ui/src/inspector/Inspector.tsx` — the Input section follows the camera's kind: SRT shows its current rows; NDI shows "NDI source" (a select filled from `listNdiSources` with a Refresh button); USB shows "Device" (from `listCaptureDevices`). "Apply input changes" sends `updateCamera` with the edited params for that kind.
 
 - [ ] **Step 5: UI tests**
 
-`ui/src/screens/AddCameraDialog.test.tsx`:
+`ui/src/dialogs/AddCameraDialog.test.tsx`:
 ```tsx
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { EngineClient } from '../api/client';
 import { FakeWs } from '../test/fakeWs';
 import { AddCameraDialog } from './AddCameraDialog';
 
-test('NDI cameras pick a discovered source', async () => {
+function client() {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
   FakeWs.last.open();
-  render(<AddCameraDialog client={c} open onClose={() => {}} />);
-  fireEvent.change(screen.getByLabelText('Tên'), { target: { value: 'Khách' } });
-  fireEvent.mouseDown(screen.getByLabelText('Loại nguồn'));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText('NDI'));
+  return c;
+}
+
+test('NDI cameras pick a discovered source', async () => {
+  const c = client();
+  render(<AddCameraDialog client={c} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Khách mời' } });
+  fireEvent.change(screen.getByLabelText('Input type'), { target: { value: 'ndi' } });
   const list = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'listNdiSources');
   FakeWs.last.receive({ id: list.id, ok: true, result: ['STUDIO (vMix - Output 1)'] });
-  await waitFor(() => fireEvent.mouseDown(screen.getByLabelText('Nguồn NDI')));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText('STUDIO (vMix - Output 1)'));
-  fireEvent.click(screen.getByRole('button', { name: 'Thêm camera' }));
+  await waitFor(() => expect(screen.getByRole('option', { name: 'STUDIO (vMix - Output 1)' })).toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText('NDI source'), { target: { value: 'STUDIO (vMix - Output 1)' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add camera' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addCamera');
-  expect(add.args).toEqual({ name: 'Khách', input: { kind: 'ndi', params: { source: 'STUDIO (vMix - Output 1)' } } });
+  expect(add.args).toEqual({ name: 'Khách mời', input: { kind: 'ndi', params: { source: 'STUDIO (vMix - Output 1)' } } });
+});
+
+test('a built-in or USB camera is picked by device id', async () => {
+  const c = client();
+  render(<AddCameraDialog client={c} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Laptop' } });
+  fireEvent.change(screen.getByLabelText('Input type'), { target: { value: 'uvc' } });
+  const list = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'listCaptureDevices');
+  FakeWs.last.receive({ id: list.id, ok: true, result: [{ name: 'Integrated Camera', id: '\\?\usb#vid_04f2' }] });
+  await waitFor(() => expect(screen.getByRole('option', { name: 'Integrated Camera' })).toBeInTheDocument());
+  fireEvent.change(screen.getByLabelText('Device'), { target: { value: '\\?\usb#vid_04f2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add camera' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addCamera');
+  expect(add.args.input).toEqual({ kind: 'uvc', params: { device: '\\?\usb#vid_04f2' } });
 });
 ```
 
-`ui/src/screens/AddOutputDialog.test.tsx`:
+`ui/src/dialogs/AddOutputDialog.test.tsx`:
 ```tsx
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { EngineClient } from '../api/client';
 import { FakeWs } from '../test/fakeWs';
 import { AddOutputDialog } from './AddOutputDialog';
 
-test('an SRT output sends its connection, bitrate and size', () => {
+test('an SRT output sends its connection and bitrate, and the format', () => {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
   FakeWs.last.open();
-  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} onClose={() => {}} />);
-  fireEvent.mouseDown(screen.getByLabelText('Loại đầu ra'));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText('SRT'));
-  fireEvent.mouseDown(screen.getByLabelText('Chế độ'));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText(/Listener/));
-  fireEvent.change(screen.getByLabelText('Cổng'), { target: { value: '9300' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Thêm đầu ra' }));
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'srt' } });
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'listener' } });
+  fireEvent.change(screen.getByLabelText('Port'), { target: { value: '9300' } });
+  fireEvent.change(screen.getByLabelText('Resolution'), { target: { value: '1280x720' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
   expect(add.args.output.kind).toBe('srt');
-  expect(add.args.output.params).toMatchObject({ mode: 'listener', port: 9300, bitrateKbps: 8000, width: 1920, height: 1080 });
+  expect(add.args.output.params).toMatchObject({ mode: 'listener', port: 9300, bitrateKbps: 8000 });
+  expect(add.args.output.format).toEqual({ width: 1280, height: 720, halfRate: false });
 });
 ```
 
@@ -1714,7 +1738,7 @@ Run in `ui/`: `npm test` (all pass), `npm run build`.
 
 ```bash
 git add src tests ui/src
-git commit -m "feat: NDI/USB inputs and SRT/OMT outputs in the factory, router, discovery and UI"
+git commit -m "feat: NDI/USB inputs and SRT/OMT outputs in the factory, router, discovery and UI dialogs"
 ```
 
 ---
@@ -1774,7 +1798,7 @@ TEST_CASE("M4a acceptance: SRT in → engine → SRT out, read back" BC_REQUIRES
   c.name = "Cam";
   c.input.kind = "srt";
   c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47960}};
-  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47961}, {"width", 1280}, {"height", 720}}});
+  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47961}}, 1280, 720});
   show.cameras.push_back(c);
   engine.apply(show);
   engine.start();
