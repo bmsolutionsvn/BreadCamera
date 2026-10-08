@@ -57,6 +57,8 @@ endfunction()
 bc_shader(yuv_to_linear cs_5_0)
 bc_shader(bgra_to_linear cs_5_0)
 bc_shader(linear_to_bgra8 cs_5_0)
+# Task 11A
+bc_shader(fit_linear cs_5_0)
 # Task 7
 bc_shader(fullscreen_vs vs_5_0)
 bc_shader(fullscreen_ps ps_5_0)
@@ -150,6 +152,8 @@ add_executable(bc_tests
   # Task 11
   tests/command_router_test.cpp
   tests/control_server_test.cpp
+  # Task 11A
+  tests/input_health_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine doctest::doctest)

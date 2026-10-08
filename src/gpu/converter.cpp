@@ -4,6 +4,7 @@
 #include <stdexcept>
 
 #include "bgra_to_linear.h"
+#include "fit_linear.h"
 #include "linear_to_bgra8.h"
 #include "yuv_to_linear.h"
 
@@ -34,7 +35,8 @@ Converter::Converter(GpuDevice& gpu, TexturePool& pool) : gpu_(gpu), pool_(pool)
   auto* dev = gpu_.device();
   if (FAILED(dev->CreateComputeShader(g_yuv_to_linear, sizeof(g_yuv_to_linear), nullptr, &yuvCs_)) ||
       FAILED(dev->CreateComputeShader(g_bgra_to_linear, sizeof(g_bgra_to_linear), nullptr, &bgraCs_)) ||
-      FAILED(dev->CreateComputeShader(g_linear_to_bgra8, sizeof(g_linear_to_bgra8), nullptr, &outCs_))) {
+      FAILED(dev->CreateComputeShader(g_linear_to_bgra8, sizeof(g_linear_to_bgra8), nullptr, &outCs_)) ||
+      FAILED(dev->CreateComputeShader(g_fit_linear, sizeof(g_fit_linear), nullptr, &fitCs_))) {
     throw std::runtime_error("CreateComputeShader failed");
   }
   D3D11_BUFFER_DESC bd{sizeof(Params), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
@@ -96,6 +98,18 @@ TextureRef Converter::toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t 
   p.srcH = linear.height;
   ID3D11ShaderResourceView* srvs[] = {linear.srv.Get()};
   dispatch(outCs_.Get(), srvs, 1, out->uav.Get(), p);
+  return out;
+}
+
+TextureRef Converter::fit(const GpuTexture& linear, uint32_t w, uint32_t h) {
+  auto out = pool_.acquire(w, h, kLinearFormat, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+  Params p{};
+  p.outW = w;
+  p.outH = h;
+  p.srcW = linear.width;
+  p.srcH = linear.height;
+  ID3D11ShaderResourceView* srvs[] = {linear.srv.Get()};
+  dispatch(fitCs_.Get(), srvs, 1, out->uav.Get(), p);
   return out;
 }
 

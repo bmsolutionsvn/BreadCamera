@@ -135,3 +135,24 @@ TEST_CASE("Converter: solid fill and BGRA upload round trips") {
 TEST_CASE("loadImageBgra: a missing file throws") {
   CHECK_THROWS(bc::loadImageBgra("C:/definitely/not/here.png"));
 }
+
+TEST_CASE("Converter: fit scales to the target size and letterboxes another aspect") {
+  Gpu g;
+  std::vector<uint8_t> red(36 * 36 * 4);
+  for (size_t i = 0; i < red.size(); i += 4) {
+    red[i] = 0;
+    red[i + 1] = 0;
+    red[i + 2] = 255;
+    red[i + 3] = 255;
+  }
+  auto sq = g.conv.toLinear(*g.conv.uploadBgra8(red.data(), 36, 36, 36 * 4), bc::PixelLayout::BGRA8, true);
+  auto fitted = g.conv.fit(*sq, 64, 36);
+  CHECK(fitted->width == 64);
+  CHECK(fitted->height == 36);
+  auto img = g.conv.readback(*g.conv.toBgra8(*fitted, 64, 36));
+  auto px = [&](int x, int y) { return &img.bgra[(static_cast<size_t>(y) * 64 + x) * 4]; };
+  CHECK(px(2, 18)[2] < 5);     // left bar: black
+  CHECK(px(61, 18)[2] < 5);    // right bar: black
+  CHECK(px(32, 18)[2] > 250);  // centre: the red picture
+  CHECK(px(32, 18)[3] == 255);
+}

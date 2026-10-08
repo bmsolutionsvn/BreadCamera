@@ -1,7 +1,10 @@
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include "core/secrets.h"
 #include "core/show.h"
+#include "core/utf8.h"
 
 namespace {
 bc::Show sampleShow() {
@@ -85,4 +88,43 @@ TEST_CASE("Show: newId gives 8 lowercase hex chars and differs") {
   CHECK(a.size() == 8);
   CHECK(a.find_first_not_of("0123456789abcdef") == std::string::npos);
   CHECK(a != b);
+}
+
+TEST_CASE("Show: resolution and output format round-trip, and old files load with defaults") {
+  auto s = sampleShow();
+  s.settings.width = 1280;
+  s.settings.height = 720;
+  s.cameras[0].outputs[0].width = 960;
+  s.cameras[0].outputs[0].height = 540;
+  s.cameras[0].outputs[0].halfRate = true;
+  auto j = bc::showToJson(s, bc::SecretMode::Plain);
+  CHECK(j["settings"]["resolution"] == "1280x720");
+  CHECK(j["cameras"][0]["outputs"][0]["format"] == nlohmann::json{{"width", 960}, {"height", 540}, {"halfRate", true}});
+  CHECK(bc::showFromJson(j) == s);
+
+  j["settings"].erase("resolution");
+  j["cameras"][0]["outputs"][0].erase("format");
+  auto old = bc::showFromJson(j);
+  CHECK(old.settings.width == 1920);
+  CHECK(old.settings.height == 1080);
+  CHECK(old.cameras[0].outputs[0].width == 0);
+  CHECK_FALSE(old.cameras[0].outputs[0].halfRate);
+}
+
+TEST_CASE("Show: unsupported sizes are rejected") {
+  auto j = bc::showToJson(sampleShow(), bc::SecretMode::Plain);
+  j["settings"]["resolution"] = "3840x2160";
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+  j["settings"]["resolution"] = "1920x1080";
+  j["cameras"][0]["outputs"][0]["format"] = {{"width", 800}, {"height", 600}, {"halfRate", false}};
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+}
+
+TEST_CASE("Show: Unicode names survive the file unchanged") {
+  auto s = sampleShow();
+  s.cameras[0].name = "Sân khấu trái – Cam 2 📷";
+  auto back = bc::showFromJson(nlohmann::json::parse(bc::showToJson(s, bc::SecretMode::Plain).dump()));
+  CHECK(back.cameras[0].name == "Sân khấu trái – Cam 2 📷");
+  CHECK(bc::toUtf8(bc::toWide(back.cameras[0].name)) == back.cameras[0].name);
+  CHECK(bc::utf8Length("Sân khấu") == 8);
 }

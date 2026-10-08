@@ -38,6 +38,14 @@ bc::OutputConfig out(const std::string& id, json params = json::object(), const 
   return {id, kind, false, true, std::move(params)};
 }
 
+// Small show format so the tests stay cheap; the engine fits every frame to it.
+bc::Show testShow() {
+  bc::Show s;
+  s.settings.width = 64;
+  s.settings.height = 36;
+  return s;
+}
+
 int countBetween(const std::vector<bc::test::FakeOutput::Seen>& seen, Clock::time_point a, Clock::time_point b) {
   int n = 0;
   for (auto& s : seen) if (s.at >= a && s.at < b) ++n;
@@ -61,7 +69,7 @@ std::string phaseOf(bc::StateStore& s, const std::string& id) {
 
 TEST_CASE("Engine: a 30 fps input becomes a steady 60 fps output") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}, {"bgra", {10, 20, 200, 255}}}));
   r.engine.apply(show);
   r.engine.start();
@@ -80,7 +88,7 @@ TEST_CASE("Engine: a 30 fps input becomes a steady 60 fps output") {
 
 TEST_CASE("Engine: each tick carries exactly its share of audio") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}));
   r.engine.apply(show);
   r.engine.start();
@@ -90,7 +98,7 @@ TEST_CASE("Engine: each tick carries exactly its share of audio") {
 
 TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never stop") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.settings.holdMs = 500;
   show.cameras.push_back(cam("a", {out("o1")}));
   r.engine.apply(show);
@@ -115,7 +123,7 @@ TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never st
 
 TEST_CASE("Engine: a slow output does not slow its neighbour") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("slow", {{"delayMs", 200}}), out("fast")}));
   r.engine.apply(show);
   r.engine.start();
@@ -127,7 +135,7 @@ TEST_CASE("Engine: a slow output does not slow its neighbour") {
 
 TEST_CASE("Engine: apply adds, reconfigures and removes cameras") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}));
   r.engine.apply(show);
   r.engine.start();
@@ -147,9 +155,9 @@ TEST_CASE("Engine: apply adds, reconfigures and removes cameras") {
   CHECK(r.state.snapshot()["cameras"].empty());
 }
 
-TEST_CASE("Engine: a resolution change mid-stream follows the new size") {
+TEST_CASE("Engine: an input changing size mid-stream still leaves at the show size, without a gap") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}));
   r.engine.apply(show);
   r.engine.start();
@@ -158,14 +166,18 @@ TEST_CASE("Engine: a resolution change mid-stream follows the new size") {
   r.factory.input("a")->height = 18;
   std::this_thread::sleep_for(500ms);
   auto seen = r.factory.output("o1")->seen();
+  REQUIRE_FALSE(seen.empty());
   CHECK(seen.front().width == 64);
-  CHECK(seen.back().width == 32);
+  CHECK(seen.back().width == 64);
   CHECK(maxGap(seen) < 50ms);
+  // Review Focus #2: the switch itself must not crash the tick or wedge the frame.
+  CHECK_FALSE(r.state.snapshot()["cameras"]["a"].contains("tickError"));
+  CHECK(seen.back().firstPixel[2] > 100);  // still the picture, never an all-zero frame
 }
 
 TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a warning") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.settings.slatePath = "C:/definitely/not/here.png";
   show.cameras.push_back(cam("a", {out("o1")}, {{"paused", true}}));  // never any frame
   r.engine.apply(show);
@@ -180,7 +192,7 @@ TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a
 
 TEST_CASE("Engine: a bad output config is reported and the camera keeps running") {
   Rig r;
-  bc::Show show;
+  bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("bad", {}, "nope"), out("good")}));
   r.engine.apply(show);
   r.engine.start();
@@ -190,4 +202,45 @@ TEST_CASE("Engine: a bad output config is reported and the camera keeps running"
   CHECK(snap["cameras"]["a"]["outputs"]["bad"]["error"]["code"] == "output-config");
   CHECK(snap["cameras"]["a"]["outputs"]["good"]["state"] == "live");
   CHECK(r.factory.output("good")->delivered > 30);
+}
+
+TEST_CASE("Engine: an output can send a smaller size, and a half-rate output gets every second tick with all the audio") {
+  Rig r;
+  bc::Show show = testShow();
+  auto smallOut = out("small");
+  smallOut.width = 32;
+  smallOut.height = 18;
+  auto half = out("half");
+  half.halfRate = true;
+  show.cameras.push_back(cam("a", {out("full"), smallOut, half}));
+  r.engine.apply(show);
+  r.engine.start();
+  auto t0 = Clock::now();
+  std::this_thread::sleep_for(1600ms);
+  CHECK(r.factory.output("full")->seen().back().width == 64);
+  CHECK(r.factory.output("small")->seen().back().width == 32);
+  auto halfSeen = r.factory.output("half")->seen();
+  const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
+  CHECK(n >= 27);
+  CHECK(n <= 31);
+  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 800 * 2);
+}
+
+TEST_CASE("Engine: input health is published") {
+  Rig r;
+  bc::Show show = testShow();
+  show.settings.holdMs = 3000;
+  show.cameras.push_back(cam("a", {out("o1")}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(1200ms);
+  auto health = [&] { return r.state.snapshot()["cameras"]["a"]["input"]["health"].get<std::string>(); };
+  CHECK(health() == "receiving");
+  r.factory.input("a")->paused = true;
+  std::this_thread::sleep_for(1200ms);
+  CHECK(health() == "down");
+  r.factory.input("a")->paused = false;
+  std::this_thread::sleep_for(1200ms);
+  CHECK(health() == "degraded");  // the pause was a stutter less than 10 s ago
+  CHECK(r.state.snapshot()["engine"]["resolution"] == "64x36");
 }

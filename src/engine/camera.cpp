@@ -12,6 +12,7 @@ Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, State
 Camera::~Camera() { stop(); }
 
 void Camera::startInput() {
+  inputState_ = SignalState::Connecting;
   state_.set(path("/input/state"), "connecting");
   state_.set(path("/input/error"), nullptr);
   try {
@@ -102,6 +103,7 @@ void Camera::onAudio(AudioBlock a) {
 }
 
 void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
+  inputState_ = s;
   state_.set(path("/input/state"), std::string(toString(s)));
   state_.set(path("/input/error"), errorToJson(e));
 }
@@ -112,7 +114,8 @@ void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point n
   if (pick.frame) {
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
-      lastConverted_ = conv_.toLinear(*f.tex, f.layout, f.fullRange);
+      auto lin = conv_.toLinear(*f.tex, f.layout, f.fullRange);
+      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : conv_.fit(*lin, width_, height_);
       if (pick.fresh) arrival = pick.frame->arrival;
     }
   } else {
@@ -122,20 +125,47 @@ void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point n
   lastFrame_ = frame;
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
-  bool anyCpu = false;
-  for (auto& s : outputs_) anyCpu = anyCpu || (s.out && s.out->needsCpu());
-  std::shared_ptr<const CpuImage> cpu;
-  if (anyCpu) cpu = std::make_shared<CpuImage>(conv_.readback(*conv_.toBgra8(*frame, frame->width, frame->height)));
 
-  OutFrame out{index, sched.rate(), frame, cpu, audio, 48000, 2, false};
+  // One frame (and one readback) per distinct output size this tick (spec §4.3).
+  struct Variant {
+    TextureRef tex;
+    std::shared_ptr<const CpuImage> cpu;
+  };
+  std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
+  auto variant = [&](const OutputConfig& c, bool needsCpu) -> Variant& {
+    const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
+    const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
+    auto& v = variants[{w, h}];
+    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : conv_.fit(*frame, w, h);
+    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(conv_.readback(*conv_.toBgra8(*v.tex, w, h)));
+    return v;
+  };
   for (auto& s : outputs_) {
-    if (s.out) s.out->submit(out);
+    if (!s.out) continue;
+    if (!s.cfg.halfRate) {
+      auto& v = variant(s.cfg, s.out->needsCpu());
+      s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, false});
+      continue;
+    }
+    // Half rate: even ticks only, carrying the odd tick's audio so nothing is lost.
+    if (index % 2 == 1) {
+      s.carryAudio = *audio;
+      continue;
+    }
+    auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
+    s.carryAudio.clear();
+    both->insert(both->end(), audio->begin(), audio->end());
+    auto& v = variant(s.cfg, s.out->needsCpu());
+    const Rate half{sched.rate().num, sched.rate().den * 2};
+    s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, false});
   }
 
   std::lock_guard l(statsMutex_);
   phase_ = pick.phase;
   if (arrival) {
     ++freshThisSecond_;
+    if (lastFresh_ && *arrival - *lastFresh_ > std::chrono::milliseconds(100)) lastStutter_ = Clock::now();
+    lastFresh_ = *arrival;
     const double ms = std::chrono::duration<double, std::milli>(Clock::now() - *arrival).count();
     latencyEwmaMs_ = latencyEwmaMs_ == 0 ? ms : latencyEwmaMs_ * 0.9 + ms * 0.1;
   }
@@ -144,14 +174,17 @@ void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point n
 void Camera::publishStatus() {
   double latency;
   FeedPhase phase;
+  bool stutter;
   {
     std::lock_guard l(statsMutex_);
     fps_ = static_cast<double>(freshThisSecond_);
     freshThisSecond_ = 0;
     latency = latencyEwmaMs_;
     phase = phase_;
+    stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
   }
   state_.set(path("/phase"), toString(phase));
+  state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {
     audio_.setDelay(target);

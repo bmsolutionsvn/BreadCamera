@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "core/utf8.h"
 #include "io/srt_params.h"
 
 namespace bc {
@@ -26,7 +27,7 @@ std::string str(const json& args, const char* key) {
 }
 std::string name(const json& args) {
   auto n = str(args, "name");
-  if (n.empty() || n.size() > 80) throw CmdError("invalid", "name must be 1 to 80 characters");
+  if (n.empty() || utf8Length(n) > 80) throw CmdError("invalid", "name must be 1 to 80 characters");
   return n;
 }
 
@@ -67,6 +68,14 @@ PreviewSize sizeArg(const json& args) {
   auto s = parsePreviewSize(args.value("size", std::string("small")));
   if (!s) throw CmdError("invalid", "size must be small or large");
   return *s;
+}
+
+void formatFrom(const json& f, OutputConfig& o) {
+  if (!f.is_object()) throw CmdError("bad-request", "format must be an object");
+  o.width = f.value("width", 0);
+  o.height = f.value("height", 0);
+  o.halfRate = f.value("halfRate", false);
+  if (!isOutputSize(o.width, o.height)) throw CmdError("invalid", "output size must be same as show, 1280x720 or 960x540");
 }
 }  // namespace
 
@@ -184,6 +193,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     out.enabled = o.value("enabled", true);
     out.params = o.value("params", json::object());
     if (!out.params.is_object()) throw CmdError("bad-request", "params must be an object");
+    if (o.contains("format")) formatFrom(o["format"], out);
     checkOutput(out);
     c.outputs.push_back(out);
     result = {{"id", out.id}};
@@ -195,6 +205,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     if (args.contains("keyed")) it->keyed = args["keyed"].get<bool>();
     if (args.contains("enabled")) it->enabled = args["enabled"].get<bool>();
     if (args.contains("params")) it->params = obj(args, "params");
+    if (args.contains("format")) formatFrom(args["format"], *it);
     checkOutput(*it);
   } else if (cmd == "removeOutput") {
     auto& c = findCam(str(args, "cameraId"));
@@ -210,6 +221,12 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
       auto r = parseShowRate(str(args, "rate"));
       if (!r) throw CmdError("invalid", "rate must be 50/1, 60000/1001 or 60/1");
       next.settings.rate = *r;
+    }
+    if (args.contains("resolution")) {
+      auto res = parseShowResolution(str(args, "resolution"));
+      if (!res) throw CmdError("invalid", "resolution must be 1280x720 or 1920x1080");
+      next.settings.width = res->first;
+      next.settings.height = res->second;
     }
     if (args.contains("holdMs")) {
       if (!args["holdMs"].is_number_integer()) throw CmdError("bad-request", "holdMs must be a whole number");

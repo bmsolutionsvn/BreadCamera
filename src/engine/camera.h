@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -8,6 +9,7 @@
 
 #include "core/audio_delay.h"
 #include "core/frame_sync.h"
+#include "core/input_health.h"
 #include "core/show.h"
 #include "core/state_store.h"
 #include "core/tick_schedule.h"
@@ -34,6 +36,12 @@ class Camera final : public InputSink {
   void stop();
   void reconfigure(const CameraConfig& cfg);
   void setPolicy(SyncPolicy p) { sync_.setPolicy(p); }
+  // The show's frame size; called from the tick thread's lock (Engine holds mutex_).
+  void setFormat(uint32_t w, uint32_t h) {
+    width_ = w;
+    height_ = h;
+    lastConverted_.reset();
+  }
   void tick(uint64_t index, const TickSchedule& sched, std::chrono::steady_clock::time_point now,
             const TextureRef& slate);
   TextureRef lastFrame() const { return lastFrame_; }
@@ -53,6 +61,7 @@ class Camera final : public InputSink {
     OutputConfig cfg;
     std::unique_ptr<Output> out;
     std::optional<ErrorInfo> createError;
+    std::vector<float> carryAudio;  // half-rate audio from the odd tick
   };
   void startInput();
   void startOutput(OutputSlot& slot);
@@ -69,6 +78,10 @@ class Camera final : public InputSink {
   TextureRef lastConverted_;
   TextureRef lastFrame_;
   std::chrono::milliseconds audioDelaySet_{-1};
+  uint32_t width_ = 1920, height_ = 1080;
+  std::atomic<SignalState> inputState_{SignalState::Connecting};
+  std::optional<std::chrono::steady_clock::time_point> lastFresh_;
+  std::chrono::steady_clock::time_point lastStutter_{};
   mutable std::mutex statsMutex_;
   double latencyEwmaMs_ = 0;
   uint64_t freshThisSecond_ = 0;

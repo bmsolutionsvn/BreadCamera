@@ -69,7 +69,12 @@ const CameraConfig* Show::findCamera(std::string_view id) const {
 }
 
 json outputToJson(const OutputConfig& o) {
-  return {{"id", o.id}, {"kind", o.kind}, {"keyed", o.keyed}, {"enabled", o.enabled}, {"params", o.params}};
+  return {{"id", o.id},
+          {"kind", o.kind},
+          {"keyed", o.keyed},
+          {"enabled", o.enabled},
+          {"params", o.params},
+          {"format", {{"width", o.width}, {"height", o.height}, {"halfRate", o.halfRate}}}};
 }
 
 OutputConfig outputFromJson(const json& j) {
@@ -83,6 +88,12 @@ OutputConfig outputFromJson(const json& j) {
     o.enabled = j.value("enabled", true);
     o.params = j.value("params", json::object());
     if (!o.params.is_object()) throw ShowError("output params must be an object");
+    auto f = j.value("format", json::object());
+    if (!f.is_object()) throw ShowError("output format must be an object");
+    o.width = f.value("width", 0);
+    o.height = f.value("height", 0);
+    o.halfRate = f.value("halfRate", false);
+    if (!isOutputSize(o.width, o.height)) throw ShowError("output size must be same as show, 1280x720 or 960x540");
     return o;
   } catch (const nlohmann::json::exception& e) {
     throw ShowError(e.what());
@@ -126,6 +137,7 @@ json showToJson(const Show& s, SecretMode mode) {
   return {{"schemaVersion", Show::kSchemaVersion},
           {"settings",
            {{"rate", s.settings.rate.str()},
+            {"resolution", resolutionStr(s.settings.width, s.settings.height)},
             {"holdMs", s.settings.holdMs},
             {"slatePath", s.settings.slatePath}}},
           {"cameras", cams}};
@@ -142,6 +154,10 @@ Show showFromJson(const json& j) {
     auto rate = parseShowRate(settings.value("rate", std::string("60/1")));
     if (!rate) throw ShowError("settings.rate must be 50/1, 60000/1001 or 60/1");
     s.settings.rate = *rate;
+    auto res = parseShowResolution(settings.value("resolution", std::string("1920x1080")));
+    if (!res) throw ShowError("settings.resolution must be 1280x720 or 1920x1080");
+    s.settings.width = res->first;
+    s.settings.height = res->second;
     s.settings.holdMs = settings.value("holdMs", 5000);
     if (s.settings.holdMs < 0 || s.settings.holdMs > 60000) throw ShowError("settings.holdMs must be 0..60000");
     s.settings.slatePath = settings.value("slatePath", std::string());
@@ -155,6 +171,18 @@ Show showFromJson(const json& j) {
   } catch (const nlohmann::json::exception& e) {
     throw ShowError(e.what());
   }
+}
+
+std::optional<std::pair<int, int>> parseShowResolution(std::string_view s) {
+  if (s == "1280x720") return std::pair{1280, 720};
+  if (s == "1920x1080") return std::pair{1920, 1080};
+  return std::nullopt;
+}
+
+std::string resolutionStr(int w, int h) { return std::to_string(w) + "x" + std::to_string(h); }
+
+bool isOutputSize(int w, int h) {
+  return (w == 0 && h == 0) || (w == 1280 && h == 720) || (w == 960 && h == 540);
 }
 
 std::string newId() {

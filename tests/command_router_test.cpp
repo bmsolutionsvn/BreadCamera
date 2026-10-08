@@ -154,3 +154,30 @@ TEST_CASE("CommandRouter: preview commands reach the effects, bad arguments do n
   CHECK(call(r, {{"cmd", "requestKeyframe"}, {"args", {{"cameraId", "a"}, {"size", "huge"}}}})["error"]["code"] == "invalid");
   CHECK(fx.keyIds.size() == 1);  // failures never fire an effect
 }
+
+TEST_CASE("CommandRouter: show resolution and output format are validated") {
+  FakeFx fx;
+  bc::CommandRouter r(bc::Show{}, fx);
+  REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
+  CHECK(r.show().settings.width == 1280);
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["error"]["code"] == "invalid");
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  auto ok = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 960}, {"height", 540}, {"halfRate", true}}}}}}}});
+  REQUIRE(ok["ok"] == true);
+  auto& o = r.show().cameras[0].outputs[0];
+  CHECK(o.width == 960);
+  CHECK(o.halfRate);
+  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["error"]["code"] == "invalid");
+  REQUIRE(call(r, {{"cmd", "updateOutput"}, {"args", {{"cameraId", cam}, {"id", ok["result"]["id"]}, {"format", {{"width", 0}, {"height", 0}, {"halfRate", false}}}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].outputs[0].width == 0);
+}
+
+TEST_CASE("CommandRouter: names are counted in characters, not bytes") {
+  FakeFx fx;
+  bc::CommandRouter r(bc::Show{}, fx);
+  std::string eighty;
+  for (int i = 0; i < 80; ++i) eighty += "ấ";  // 3 bytes each
+  CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty}, {"input", kSrt}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty + "a"}, {"input", kSrt}}}})["error"]["code"] == "invalid");
+  CHECK(r.show().cameras[0].name == eighty);
+}

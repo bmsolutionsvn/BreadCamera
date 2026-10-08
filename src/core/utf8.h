@@ -19,4 +19,10 @@ inline std::wstring toWide(std::string_view s) {
   MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
   return w;
 }
+// Number of code points in valid UTF-8 (continuation bytes are 10xxxxxx).
+inline size_t utf8Length(std::string_view s) {
+  size_t n = 0;
+  for (unsigned char c : s) n += (c & 0xC0) != 0x80;
+  return n;
+}
 }  // namespace bc

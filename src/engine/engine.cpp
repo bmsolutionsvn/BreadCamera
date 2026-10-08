@@ -15,6 +15,7 @@ Engine::Engine(Converter& conv, StateStore& state, AdapterFactory& factory)
   std::lock_guard l(mutex_);
   loadSlate();
   state_.set("/engine/rate", settings_.rate.str());
+  state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));
   state_.set("/engine/overruns", 0);
 }
 
@@ -33,14 +34,14 @@ void Engine::loadSlate() {
     try {
       auto img = loadImageBgra(settings_.slatePath);
       auto up = conv_.uploadBgra8(img.bgra.data(), img.width, img.height, img.width * 4);
-      slate_ = conv_.toLinear(*up, PixelLayout::BGRA8, true);
+      slate_ = conv_.fit(*conv_.toLinear(*up, PixelLayout::BGRA8, true), settings_.width, settings_.height);
       return;
     } catch (const std::exception& e) {
       state_.set("/engine/warnings/slate", std::string("slate image could not be loaded: ") + e.what() +
                                                "; using the built-in slate");
     }
   }
-  slate_ = conv_.solid(1920, 1080, {0.05f, 0.05f, 0.06f, 1.0f});
+  slate_ = conv_.solid(settings_.width, settings_.height, {0.05f, 0.05f, 0.06f, 1.0f});
 }
 
 void Engine::apply(const Show& show) {
@@ -49,12 +50,17 @@ void Engine::apply(const Show& show) {
     std::lock_guard l(mutex_);
     if (!settingsApplied_ || !(show.settings == settings_)) {
       const bool slateChanged = !settingsApplied_ || show.settings.slatePath != settings_.slatePath;
+      const bool sizeChanged = !settingsApplied_ || show.settings.width != settings_.width ||
+                               show.settings.height != settings_.height;
       rateChanged_ = rateChanged_ || !(show.settings.rate == settings_.rate);
       settings_ = show.settings;
       settingsApplied_ = true;
-      if (slateChanged) loadSlate();
+      if (slateChanged || sizeChanged) loadSlate();
       state_.set("/engine/rate", settings_.rate.str());
+      state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));
       for (auto& c : cameras_) c->setPolicy(policy());
+      if (sizeChanged)
+        for (auto& c : cameras_) c->setFormat(settings_.width, settings_.height);
     }
     std::map<std::string, std::unique_ptr<Camera>> existing;
     for (auto& c : cameras_) existing.emplace(c->config().id, std::move(c));
@@ -67,6 +73,7 @@ void Engine::apply(const Show& show) {
         existing.erase(it);
       } else {
         auto cam = std::make_unique<Camera>(cfg, factory_, conv_, state_, policy());
+        cam->setFormat(settings_.width, settings_.height);
         cam->start();
         cameras_.push_back(std::move(cam));
       }
