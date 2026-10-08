@@ -112,9 +112,12 @@ add_library(bc_engine STATIC
   src/engine/preview_hub.cpp
   src/engine/preview_service.cpp
   # Task 11
+  src/engine/command_router.cpp
+  src/engine/control_server.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
+target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
 
 # ---- tests ----
 add_executable(bc_tests
@@ -144,7 +147,15 @@ add_executable(bc_tests
   tests/engine_test.cpp
   # Task 10
   tests/preview_test.cpp
+  # Task 11
+  tests/command_router_test.cpp
+  tests/control_server_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine doctest::doctest)
 bc_copy_runtime(bc_tests)
+
+# ---- engine executable (Task 11) ----
+add_executable(breadcamera-engine src/engine/engine_main.cpp)
+target_link_libraries(breadcamera-engine PRIVATE bc_engine shell32 ole32)
+bc_copy_runtime(breadcamera-engine)
