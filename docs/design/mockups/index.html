@@ -219,7 +219,7 @@ details.sec > summary .right { margin-left: auto; display: flex; align-items: ce
 .cal-cam .s { font: 400 11px var(--mono); color: var(--dim); white-space: nowrap; display: flex; gap: 4px; align-items: center; }
 .cal-cam .s.ok { color: var(--success); } .cal-cam .s svg.i { width: 11px; height: 11px; }
 .cal-view { display: grid; place-items: center; padding: 10px; min-height: 0; min-width: 0; }
-.cal-view .pic { width: 100%; max-height: 100%; border-radius: 2px; }
+.cal-view .pic { height: 100%; max-width: 100%; border-radius: 2px; }
 .swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
 .swatch { display: grid; grid-template-rows: 1fr 1fr; aspect-ratio: 1; border-radius: 2px; overflow: hidden; }
 .swatch i { display: block; }
@@ -228,6 +228,15 @@ details.sec > summary .right { margin-left: auto; display: flex; align-items: ce
 .steps { padding-left: 18px; display: grid; gap: 5px; color: var(--muted); }
 .steps li.done { color: var(--dim); } .steps li.done::marker { color: var(--success); } .steps li.now { color: var(--text); }
 .link { background: none; border: none; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hair-strong); cursor: default; padding: 0; }
+
+.solo-bar { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--cyan-wash); color: var(--muted); border-bottom: 1px solid var(--hair-subtle); }
+.solo-bar svg.i { width: 14px; height: 14px; color: var(--cyan); }
+.solo-bar b { color: var(--text); font-weight: 600; }
+.solo-bar .right { margin-left: auto; color: var(--dim); }
+.wall-wrap > .cal-view { flex: 1; }
+.block.info { border-color: var(--info); background: rgba(56,189,248,0.08); } .block.info svg { color: var(--info); }
+.ok-line { display: inline-flex; align-items: center; gap: 5px; color: var(--success); }
+.ok-line svg.i { width: 12px; height: 12px; }
 
 /* menu */
 .menu { position: absolute; z-index: 20; min-width: 260px; background: var(--surface-raised); border: 1px solid var(--hair-strong); border-radius: 6px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4); }
@@ -395,7 +404,6 @@ const MENUS = ['File', 'Show', 'Camera', 'Output', 'View', 'Help'];
 const titlebar = (open) => `<div class="titlebar"><span class="app-ic">${icon('cam')}</span><div class="menus">${MENUS.map(m => `<span class="${m === open ? 'open' : ''}">${m}</span>`).join('')}</div>
   <div class="wintitle">Hội nghị Khách hàng 2026 — BreadCamera</div><div class="caption"><span title="Minimise">${CAP.min}</span><span title="Maximise">${CAP.max}</span><span class="close" title="Close to tray: outputs keep running">${CAP.close}</span></div></div>`;
 const toolbar = (ws) => `<div class="toolbar">
-  <div class="ws"><span class="${ws === 'mv' ? 'on' : ''}">${icon('grid')}Multiview</span><span class="${ws === 'cal' ? 'on' : ''}">${icon('chart')}Calibration</span></div>
   <button class="tb accent" title="Add camera (Ctrl+Shift+N)">${icon('plus')}Add camera</button>
   <button class="tb" title="Add output to the selected camera (Ctrl+Shift+O)">${icon('out')}Add output</button>
   <button class="tb" title="Add effect to the selected camera">${icon('fxadd')}Add effect</button>
@@ -419,7 +427,7 @@ const seg = (opts, on = 0) => `<div class="seg" style="width:max-content">${opts
 const sec = (title, body, right = '') => `<details class="sec" open><summary><span class="chev">${icon('chev')}</span>${title}<span class="right">${right}</span></summary><div class="sec-b">${body}</div></details>`;
 const group = (ic, name, body) => `<div class="group"><div class="group-h"><span class="gi">${icon(ic)}</span><b>${name}</b><span class="right"><span class="st run">RUNNING</span><span class="sw on" role="switch" aria-checked="true" aria-label="${name} on"></span><button class="ibtn" aria-label="${name} menu">${icon('more')}</button></span></div><div class="group-b">${body}</div></div>`;
 
-function inspector() {
+function inspector(o = {}) {
   return `<aside class="insp"><div class="insp-h"><span class="k">INSPECTOR · CAM 2</span><div class="t"><span class="in-chip ready">SRT</span><span class="n">MC chính – Cam 2</span></div></div>
   <div class="insp-b">
   ${sec('Input', `
@@ -432,7 +440,13 @@ function inspector() {
     ${prop('Dropped · RTT', '<span class="ro">0 frames · 34 ms</span>')}`, '<span class="pill ready"><i></i>READY</span>')}
   ${sec('Effects', `
     <div class="chain"><span>SRT in</span>${icon('arrow')}<span class="fxn">Colour</span>${icon('arrow')}<span class="fxn">Background removal</span>${icon('arrow')}<span>2 outputs</span></div>
-    ${group('color', 'Colour', `${prop('Calibrated', '<span class="ro">19:40 · printed card</span>')}${prop('Chart ΔE', '<span class="ro">7.4 → 1.1</span>')}<div><button class="btn">${icon('chart')}Recalibrate</button></div>`)}
+    ${o.calibrating ? group('color', 'Colour', `
+      <div class="block info" role="status">${icon('chart')}<div><b>Calibrating.</b> <span class="d">Hold the chart in front of CAM 2 under show lighting.</span></div></div>
+      ${prop('Chart', seg(['Printed card', 'Tablet']))}
+      ${prop('Found', '<span class="ok-line">' + icon('check') + 'Chart found, corners placed</span>')}
+      <div style="display:flex;gap:6px"><button class="btn primary">${icon('check')}Capture</button><button class="btn">Cancel</button></div>
+      <p class="note">Drag a corner on the picture only if it is wrong. Tablet: show the chart image at full brightness.</p>`)
+    : group('color', 'Colour', `${prop('Calibration', '<span class="ok-line" title="Average colour error 7.4 before, 1.1 after (ΔE2000)">' + icon('check') + 'Good match · 19:40</span>')}<div><button class="btn">${icon('chart')}Calibrate again</button></div>`)}
     ${group('matte', 'Background removal', `${prop('Quality', ctl('High quality', { select: true }))}<div class="row2">${prop('Choke', ctl('1', { mono: true, unit: 'px', spin: true }))}${prop('Feather', ctl('2', { mono: true, unit: 'px', spin: true }))}</div>${prop('Threshold', slider(42, '0.42'))}`)}
     <p class="note">Effects run in this fixed order.</p>`, `<button class="ibtn" title="Add effect">${icon('plus')}</button>`)}
   ${sec('Outputs', `
@@ -446,30 +460,12 @@ const emptyInspector = () => `<aside class="insp"><div class="insp-h"><span clas
 
 const GRID = { 1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [3, 2], 6: [3, 2], 7: [4, 2], 8: [4, 2] };
 function multiviewWin(cams, o = {}) {
-  const center = cams.length ? `<div class="wall-wrap">${o.banner || ''}<div class="wall-area"><div class="wall" data-n="${cams.length}">${cams.map(c => tile(c, { dense: cams.length > 4, frozen: o.frozen })).join('')}</div></div></div>`
+  const center = o.calibrating ? `<div class="wall-wrap"><div class="solo-bar">${icon('chart')}<b>CAM 2 · MC chính – Cam 2</b><span>Calibrating colour</span><span class="right">Other cameras keep running</span></div><div class="cal-view"><div class="pic">${scene('mc', { chart: true, handles: true })}</div></div></div>`
+    : cams.length ? `<div class="wall-wrap">${o.banner || ''}<div class="wall-area"><div class="wall" data-n="${cams.length}">${cams.map(c => tile(c, { dense: cams.length > 4, frozen: o.frozen })).join('')}</div></div></div>`
     : `<div class="empty"><div><div class="frame">${icon('cam')}</div><span class="h">No cameras yet</span><span>Use Add camera in the toolbar (Ctrl+Shift+N). Each camera can send to several outputs.</span></div></div>`;
   return titlebar(o.menu) + toolbar('mv') + `<div class="body"><div class="center">
-    <div class="subbar"><b>Multiview</b><span>${cams.length} cameras</span><span class="right">Layout ${seg(['Auto', '2×2', '3×2', '4×2'])}</span></div>${center}</div>
-    <div class="splitter" title="Drag to resize"></div>${cams.length ? inspector() : emptyInspector()}</div>` + statusbar(o.status);
-}
-
-function calibrationWin() {
-  const cams = [['Sân khấu trái', 'stageL', 'ok', 'ΔE 7.9 → 1.1'], ['MC chính – Cam 2', 'mc', 'todo', 'Not calibrated'], ['Khách mời Đà Nẵng', 'guest', 'ok', 'ΔE 6.2 → 1.6'], ['Toàn cảnh hội trường', 'wide', 'todo', 'Not calibrated'], ['Bục phát biểu', 'podium', 'todo', 'Not calibrated']];
-  const sw = CHART.map((c, i) => `<span class="swatch" title="Patch ${i + 1}"><i style="background:${c}"></i><i style="background:${SEEN[i]}"></i></span>`).join('');
-  return titlebar() + toolbar('cal') + `<div class="body"><div class="center">
-    <div class="subbar"><b>Calibration</b><span>2 of 5 calibrated</span><span class="right">Chart ${seg(['Printed card', 'Tablet screen'])}<button class="link">Save chart image for a tablet…</button></span></div>
-    <div class="cal"><div class="cal-list"><div class="hd">Cameras</div>
-      ${cams.map(([n, sc, st, t], i) => `<div class="cal-cam ${i === 1 ? 'on' : ''}"><div class="th">${scene(sc, { noTag: true })}</div><div style="min-width:0"><div class="n">${n}</div><div class="s ${st === 'ok' ? 'ok' : ''}">${st === 'ok' ? icon('check') : ''}${t}</div></div></div>`).join('')}
-      <p class="note" style="padding:10px">Calibrate each camera once before the show, under show lighting. Recalibrate only if the lighting changes.</p></div>
-      <div class="cal-view"><div class="pic">${scene('mc', { chart: true, handles: true })}</div></div></div></div>
-    <div class="splitter"></div>
-    <aside class="insp"><div class="insp-h"><span class="k">CALIBRATION · CAM 2</span><div class="t"><span class="in-chip ready">SRT</span><span class="n">MC chính – Cam 2</span></div></div><div class="insp-b">
-      ${sec('Steps', `<ol class="steps"><li class="done">Hold the chart in front of the camera, square on, about a quarter of the picture.</li><li class="done">Use the show lighting. Avoid glare.</li><li class="now">Drag the four corners onto the chart, then Capture.</li></ol>`, '<span class="st run">CHART 24/24</span>')}
-      ${sec('Chart reading', `<div class="swatches">${sw}</div><p class="note">Top: card values · bottom: what CAM 2 sees now</p><div class="de"><span class="note">Average ΔE now</span><span class="v">7.4</span><span class="note">target ≤ 2.0</span></div>`)}
-      <div style="padding:12px;display:grid;gap:8px"><button class="btn primary wide">${icon('check')}Capture CAM 2</button>
-      <p class="note">Takes 1 s of video, builds the correction and locks it for this camera.</p>
-      <div style="display:flex;gap:6px"><button class="btn">${icon('undo')}Undo last</button><button class="btn ghost-danger">Clear calibration…</button></div></div>
-    </div></aside></div>` + statusbar();
+    <div class="subbar"><b>Multiview</b><span>${o.calibrating ? 'Showing CAM 2 only' : cams.length + ' cameras'}</span><span class="right">Layout ${seg(['Auto', '2×2', '3×2', '4×2'])}</span></div>${center}</div>
+    <div class="splitter" title="Drag to resize"></div>${cams.length ? inspector(o) : emptyInspector()}</div>` + statusbar(o.status);
 }
 
 const dlg = (title, body, foot, cls = '') => `<div class="scrim"><div class="dlg ${cls}" role="dialog" aria-label="${title}"><div class="dlg-h">${title}<span class="x" title="Close">${CAP.close}</span></div>${body}<div class="dlg-f">${foot}</div></div></div>`;
@@ -481,7 +477,7 @@ const SCREENS = {
   empty: { label: 'Empty', build: () => multiviewWin([], { status: { outs: '0', retry: false } }) },
   restart: { label: 'Engine restarting', build: () => multiviewWin(CAMS4, { frozen: true, status: { restart: true, outs: '0', retry: false },
     banner: `<div class="block warning" role="status">${icon('retry')}<div><b>Engine restarting.</b> <span class="d">It stopped unexpectedly and is reloading this show. Outputs come back in about 3 seconds. The pictures are the last frames received.</span></div></div>` }) },
-  calibration: { label: 'Calibration', build: calibrationWin },
+  calibrate: { label: 'Calibrate colour', build: () => multiviewWin(CAMS4, { calibrating: true }) },
   menu: { label: 'Camera menu', build: () => multiviewWin(CAMS4, { menu: 'Camera' }) + `<div class="menu" style="left:150px;top:32px">
     <div class="it">${icon('plus')}<span>Add camera…</span><span class="k">Ctrl+Shift+N</span></div>
     <div class="it hl">${icon('out')}<span>Add output…</span><span class="k">Ctrl+Shift+O</span></div>
@@ -514,7 +510,7 @@ const SCREENS = {
     const row = (cls, ic, name, desc, req, tag) => `<div class="pick-row ${cls}"><span class="rd"></span><span class="ic">${icon(ic)}</span><div><b>${name}</b><p>${desc}</p>${req ? `<span class="req">${icon('check')}${req}</span>` : ''}</div>${tag ? `<span class="tag2">${tag}</span>` : ''}</div>`;
     return multiviewWin(CAMS4) + dlg('Add effect to CAM 2', `<div class="dlg-b"><div class="pick">
       ${row('sel', 'bg', 'Background', 'Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.', 'Needs Background removal, already on this camera')}
-      ${row('done', 'color', 'Colour', 'One-time calibration against a colour chart, then locked.', '', 'ADDED')}
+      ${row('done', 'color', 'Colour', 'Hold a colour chart (card or tablet) in front of the camera once; BreadCamera corrects and locks it.', '', 'ADDED')}
       ${row('done', 'matte', 'Background removal', 'AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).', '', 'ADDED')}</div>
       <p class="note">New effects appear here when BreadCamera ships them. Each runs in its fixed place in the chain.</p></div>`,
       `<button class="btn">Cancel</button><button class="btn primary">${icon('plus')}Add effect</button>`);
