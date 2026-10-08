@@ -109,7 +109,7 @@ these pictures, so nothing tinted sits on or around them.
 | Strip on hover | One surface step up | `surface-hover` |
 | Keyboard focus | 1px cyan border round the whole tile; the only cyan inside the wall | `blueprint-cyan` |
 | Effect icons | Muted icons, no chip. Not cyan: an effect being on is normal, not an accent | `text-muted` |
-| Input chip | **Filled**: solid state colour, dark ink text, 4px corners | signal band solid + `ink-on-cyan`-style dark ink (`#04191D`) |
+| Input chip | **Filled**, dark ink text, 4px corners. **Green** = receiving; **yellow** = degraded (packet loss, dropped frames, reconnecting); **red** = fully down (holding the last frame or on slate, chip shows the countdown or `SLATE`). Inputs never use On-Air Red: down is Danger Rose, so it can't be read as "on air" | `signal-ready`, `signal-connecting`, `system-danger`; ink `#04191D` |
 | Output pills | **Outlined**: state-colour 1px border and dot, state-text label, no fill | signal band `*-text` |
 | Offline (Tắt) | Input chip: `signal-offline` fill with paper-white text; output: grey outline | `signal-offline` |
 

@@ -244,6 +244,23 @@ table.outs-t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .de .val { font: 500 28px var(--mono); letter-spacing: -0.02em; }
 .de .was { color: var(--dim); font: 400 13px var(--mono); }
 
+/* calibration */
+.cal-top { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
+.cal-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.cal-pic { display: grid; gap: 8px; }
+.cal-pic figcaption { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.cal-pic figcaption b { font-weight: 600; }
+.cal-pic figcaption .right { margin-left: auto; }
+.cal-pic .pic { border-radius: 6px; }
+.steps { padding-left: 20px; display: grid; gap: 8px; font-size: 13px; color: var(--muted); }
+.steps li.done { color: var(--dim); }
+.steps li.done::marker { color: var(--success); }
+.steps li.now { color: var(--text); }
+.steps b { font-weight: 600; }
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.sw { display: grid; grid-template-rows: 1fr 1fr; aspect-ratio: 1; border-radius: 3px; overflow: hidden; border: 1px solid var(--hair); }
+.sw i { display: block; }
+
 /* settings */
 .settings { max-width: 760px; padding: 20px; display: grid; gap: 16px; }
 .slate-thumb { width: 160px; aspect-ratio: 16/9; border-radius: 4px; border: 1px solid var(--hair); overflow: hidden; }
@@ -341,7 +358,26 @@ function scene(key, opts = {}) {
        <text x="80" y="31" text-anchor="middle" font-family="Inter" font-weight="600" font-size="8" fill="#F5F7FA">We'll be right back</text>
        <text x="80" y="48" text-anchor="middle" font-family="JetBrains Mono" font-size="4.5" fill="rgba(245,247,250,.55)">BREADCAMERA · SLATE</text>`
     : '';
-  return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Synthetic camera picture">${opts.slate ? frozen : bg + (s.podium ? person + `<rect x="62" y="60" width="36" height="30" fill="#1d2633"/>` : person)}</svg>${opts.noTag ? '' : '<span class="syn">synthetic</span>'}`;
+  return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Synthetic camera picture">${opts.slate ? frozen : bg + (s.podium ? person + `<rect x="62" y="60" width="36" height="30" fill="#1d2633"/>` : person)}${opts.chart ? chartSvg(opts.handles) : ''}</svg>${opts.noTag ? '' : '<span class="syn">synthetic</span>'}`;
+}
+
+/* ColorChecker Classic 24 (sRGB) and a synthetic camera reading of it */
+const CHART = ['#735244','#c29682','#627a9d','#576c43','#8580b1','#67bdaa','#d67e2c','#505ba6','#c15a63','#5e3c6c','#9dbc40','#e0a32e',
+  '#383d96','#469449','#af363c','#e7c71f','#bb5695','#0885a1','#f3f3f2','#c8c8c8','#a0a0a0','#7a7a79','#555555','#343434'];
+const shift = (hex, dr, dg, db) => '#' + [1, 3, 5].map((o, i) => Math.max(0, Math.min(255, parseInt(hex.slice(o, o + 2), 16) + [dr, dg, db][i])).toString(16).padStart(2, '0')).join('');
+const SEEN = CHART.map(h => shift(h, 22, 8, -18));
+function chartSvg(handles) {
+  const x0 = 52, y0 = 40, w = 56, h = 36, cw = w / 6, ch = h / 4;
+  let g = `<rect x="${x0 - 2}" y="${y0 - 2}" width="${w + 4}" height="${h + 4}" rx="1" fill="#141414"/>`;
+  CHART.forEach((c, i) => { const cx = x0 + (i % 6) * cw, cy = y0 + Math.floor(i / 6) * ch;
+    g += `<rect x="${cx + .7}" y="${cy + .7}" width="${cw - 1.4}" height="${ch - 1.4}" rx=".4" fill="${SEEN[i]}"/>`;
+    if (handles) g += `<rect x="${cx + cw / 2 - 1.6}" y="${cy + ch / 2 - 1.6}" width="3.2" height="3.2" fill="none" stroke="#F5F7FA" stroke-width=".35"/>`; });
+  if (handles) {
+    g += `<rect x="${x0 - 2}" y="${y0 - 2}" width="${w + 4}" height="${h + 4}" fill="none" stroke="#22D3EE" stroke-width=".45"/>`;
+    [[x0 - 2, y0 - 2], [x0 + w + 2, y0 - 2], [x0 - 2, y0 + h + 2], [x0 + w + 2, y0 + h + 2]].forEach(([x, y]) =>
+      g += `<circle cx="${x}" cy="${y}" r="1.9" fill="#08090B" stroke="#22D3EE" stroke-width=".6"/>`);
+  }
+  return `<g transform="rotate(-3 80 58)">${g}</g>`;
 }
 
 /* Data */
@@ -349,12 +385,12 @@ const OUT_NAMES = { NDI: 'NDI output', SRT: 'SRT output', SDI: 'SDI output', VCA
 const IN_NAMES = { SRT: 'SRT input', NDI: 'NDI input', SDI: 'DeckLink input', USB: 'USB input', AJA: 'AJA input' };
 const ST = { live: 'Live', conn: 'Connecting', ready: 'Ready', off: 'Offline' };
 const CAMS = [
-  { n: 1, name: 'Sân khấu trái', scene: 'stageL', in: 'SRT', st: 'live', fx: ['on','on','on'], outs: [['NDI','live'],['SDI','live']] },
-  { n: 2, name: 'MC chính – Cam 2', scene: 'mc', in: 'SRT', st: 'live', fx: ['on','on','off'], outs: [['NDI','live'],['SRT','err','retry 3s']] },
-  { n: 3, name: 'Khách mời Đà Nẵng', scene: 'guest', in: 'NDI', st: 'conn', hold: '00:04', fx: ['on','on','on'], outs: [['NDI','live']], strip: 'warn' },
-  { n: 4, name: 'Toàn cảnh hội trường', scene: 'wide', in: 'SDI', st: 'live', keyed: true, fx: ['on','on','on'], outs: [['NDI','live'],['OMT','live'],['VCAM','live'],['FS','live']], seen: '20:14' },
-  { n: 5, name: 'Bục phát biểu', scene: 'podium', in: 'USB', st: 'live', fx: ['on','on','off'], outs: [['VCAM','live']] },
-  { n: 6, name: 'Hậu trường', scene: 'back', in: 'SDI', st: 'live', fx: ['on','bad','on'], outs: [['NDI','live']] },
+  { n: 1, name: 'Sân khấu trái', scene: 'stageL', in: 'SRT', st: 'ready', deg: '2.1% packet loss, 14 dropped frames in the last minute', fx: ['on','on','on'], outs: [['NDI','live'],['SDI','live']] },
+  { n: 2, name: 'MC chính – Cam 2', scene: 'mc', in: 'SRT', st: 'ready', fx: ['on','on','off'], outs: [['NDI','live'],['SRT','err','retry 3s']] },
+  { n: 3, name: 'Khách mời Đà Nẵng', scene: 'guest', in: 'NDI', st: 'conn', hold: '00:04', fx: ['on','on','on'], outs: [['NDI','live']], strip: 'err' },
+  { n: 4, name: 'Toàn cảnh hội trường', scene: 'wide', in: 'SDI', st: 'ready', keyed: true, fx: ['on','on','on'], outs: [['NDI','live'],['OMT','live'],['VCAM','live'],['FS','live']], seen: '20:14' },
+  { n: 5, name: 'Bục phát biểu', scene: 'podium', in: 'USB', st: 'ready', fx: ['on','on','off'], outs: [['VCAM','live']] },
+  { n: 6, name: 'Hậu trường', scene: 'back', in: 'SDI', st: 'ready', fx: ['on','bad','on'], outs: [['NDI','live']] },
   { n: 7, name: 'Webcam đạo diễn', scene: 'webcam', in: 'USB', st: 'off', fx: ['on','off','off'], outs: [['NDI','off']] },
   { n: 8, name: 'Cầu nối Hà Nội', scene: 'hanoi', in: 'SRT', st: 'conn', slate: true, fx: ['on','on','on'], outs: [['NDI','live']], strip: 'err' }
 ];
@@ -364,8 +400,8 @@ const FXSTATE = { on: 'running', off: 'not used', bad: 'bypassed after an error'
 function strip(c, maxOuts = 4, frozenAll = false, dense = false) {
   const st = frozenAll ? 'off' : c.st;
   const chipText = c.slate ? 'SLATE' : (c.hold || c.in);
-  const chipCls = c.slate ? 'err' : st;
-  const chipTitle = c.slate ? `${IN_NAMES[c.in]} — signal lost, showing the slate` : c.hold ? `${IN_NAMES[c.in]} — signal lost, holding the last frame (${c.hold} left)` : `${IN_NAMES[c.in]} — ${ST[st]}`;
+  const chipCls = frozenAll ? 'off' : (c.slate || c.hold) ? 'err' : c.deg ? 'conn' : st;
+  const chipTitle = c.slate ? `${IN_NAMES[c.in]} — signal lost, showing the slate` : c.hold ? `${IN_NAMES[c.in]} — signal lost, holding the last frame (${c.hold} left)` : c.deg ? `${IN_NAMES[c.in]} — signal degraded: ${c.deg}` : `${IN_NAMES[c.in]} — ${st === 'ready' ? 'Ready, receiving' : ST[st]}`;
   const fx = FX.map(([k, label], i) => (c.fx[i] === 'off' || (dense && c.fx[i] === 'on')) ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : c.fx[i] === 'off' ? 'unused' : ''}" title="${label} — ${FXSTATE[c.fx[i]]}" aria-label="${label} — ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
   const shown = c.outs.slice(0, maxOuts), rest = c.outs.length - shown.length;
   const outs = shown.map(([k, s, note]) => {
@@ -393,7 +429,7 @@ const RAIL = (active) => `
   <div class="brand"><span class="brand-mark">${icon('cam')}</span>BreadCamera</div>
   <div class="show-pick" title="Open or switch show"><small>Show</small><span>Hội nghị Khách hàng 2026 ${icon('chev')}</span></div>
   <div class="nav ${active === 'mv' ? 'on' : ''}" tabindex="0">${icon('grid')}Multiview</div>
-  <div class="nav ${active === 'cm' ? 'on' : ''}" tabindex="0">${icon('match')}Colour match</div>
+  <div class="nav ${active === 'cm' ? 'on' : ''}" tabindex="0">${icon('match')}Calibration</div>
   <div class="spacer"></div>
   <div class="nav ${active === 'st' ? 'on' : ''}" tabindex="0">${icon('settings')}Settings</div>
   <div class="engine-line"><span>Engine <b>running · 2 h 14 min</b></span><span>Outputs keep running when this window closes.</span></div>
@@ -430,8 +466,8 @@ function effectsBlock() {
   return `<div class="fx-head"><h2>Effects</h2><div class="right"><button class="btn btn-outline btn-sm">${icon('plus')}Add effect</button></div></div>
     <div class="chain" aria-label="Processing order"><span class="node">SRT in</span>${icon('arrow')}<span class="node fxn">Colour</span>${icon('arrow')}<span class="node fxn">Background removal</span>${icon('arrow')}<span class="node">2 outputs</span></div>
     <p class="fx-note">Effects run in this fixed order. New effects show up in Add effect when BreadCamera ships them.</p>
-    ${fxPanel('color', 'Colour', `<dl class="kv"><dt>Matched to</dt><dd>CAM 1 · 20:02</dd><dt>Remaining ΔE</dt><dd>1.8</dd></dl>
-      <button class="btn btn-outline btn-sm" style="justify-self:start">${icon('match')}Open colour match</button>`)}
+    ${fxPanel('color', 'Colour', `<dl class="kv"><dt>Calibrated</dt><dd>19:40 · printed card</dd><dt>Chart ΔE</dt><dd>7.4 → 1.1</dd></dl>
+      <button class="btn btn-outline btn-sm" style="justify-self:start">${icon('match')}Recalibrate</button>`)}
     ${fxPanel('matte', 'Background removal', `${field('Quality', 'High quality', { select: true })}
       <div class="row2">${field('Choke', '1', { mono: true, unit: 'px' })}${field('Feather', '2', { mono: true, unit: 'px' })}</div>
       ${slider('Threshold', 42, '0.42')}`)}`;
@@ -453,14 +489,14 @@ const SCREENS = {
         <section class="panel">
           <div class="panel-h"><h3>Outputs</h3><div class="right"><span class="lbl" style="font-size:12px">2 outputs</span></div></div>
           <div class="block danger" role="alert">${icon('err')}<div><b>SRT output failed.</b> <span class="detail">srt://10.0.0.5:9000 refused the connection. Retrying in 3 s (attempt 4). Other outputs are not affected.</span></div></div>
-          <table class="outs-t"><thead><tr><th>Output</th><th>Destination</th><th>Sends</th><th></th></tr></thead><tbody>
-            <tr><td><span class="pill live"><i></i>NDI</span></td><td>BreadCamera (MC chính – Cam 2)</td><td><span class="chip">Keyed (fill + key)</span></td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
-            <tr><td><span class="err-chip">${icon('retry')}SRT</span></td><td class="mono">srt://10.0.0.5:9000 · caller · 6 Mb/s</td><td><span class="chip">Composited</span></td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
+          <table class="outs-t"><thead><tr><th>Output</th><th>Destination</th><th>Sends</th><th>Format</th><th></th></tr></thead><tbody>
+            <tr><td><span class="pill live"><i></i>NDI</span></td><td>BreadCamera (MC chính – Cam 2)</td><td><span class="chip">Keyed (fill + key)</span></td><td class="mono">Same as show</td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
+            <tr><td><span class="err-chip">${icon('retry')}SRT</span></td><td class="mono">srt://10.0.0.5:9000 · caller · 6 Mb/s</td><td><span class="chip">Composited</span></td><td class="mono">1280×720 · 29.97</td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
           </tbody></table>
         </section>
       </div>
       <div class="col">
-        <section class="panel"><div class="panel-h"><h3>Input</h3><div class="right"><span class="pill live"><i></i>LIVE</span></div></div>
+        <section class="panel"><div class="panel-h"><h3>Input</h3><div class="right"><span class="pill ready"><i></i>READY</span></div></div>
           <div class="panel-b">
             <div class="field"><span class="lbl">Mode</span><div class="seg"><span class="on">Caller</span><span>Listener</span></div></div>
             ${field('SRT URL', 'srt://203.0.113.24:9001?streamid=feed-2', { mono: true })}
@@ -471,45 +507,47 @@ const SCREENS = {
         <button class="btn btn-ghost-danger" style="justify-self:start">Remove camera…</button>
       </div></div></div>` };
   } },
-  colour: { label: 'Colour match', build: () => ({ rail: 'cm', html: topBar('Colour match', `<span>Reference CAM 1</span><span class="sep">·</span><span>3 targets</span>`, `<button class="btn btn-primary">${icon('match')}Match</button>`) +
+  colour: { label: 'Calibration', build: () => {
+    const cams = [['Sân khấu trái', 'stageL', 'ok', 'ΔE 7.9 → 1.1'], ['MC chính – Cam 2', 'mc', 'todo', 'Not calibrated'], ['Khách mời Đà Nẵng', 'guest', 'ok', 'ΔE 6.2 → 1.6'], ['Toàn cảnh hội trường', 'wide', 'todo', 'Not calibrated'], ['Bục phát biểu', 'podium', 'todo', 'Not calibrated']];
+    const sw = CHART.map((c, i) => `<span class="sw" title="Patch ${i + 1}"><i style="background:${c}"></i><i style="background:${SEEN[i]}"></i></span>`).join('');
+    return { rail: 'cm', html: topBar('Calibration', `<span>Printed card</span><span class="sep">·</span><span>2 of 5 calibrated</span>`, `<button class="btn btn-primary">${icon('check')}Capture CAM 2</button>`) +
     `<div class="work" style="overflow:hidden"><div class="cm">
       <div class="cm-list"><h4>Cameras</h4>
-        ${CAMS.slice(0, 5).map((c, i) => `<div class="cm-cam ${i === 1 ? 'on' : ''}">
-          ${i === 0 ? '<span></span>' : `<span class="check ${i < 4 ? 'on' : ''}">${i < 4 ? icon('check') : ''}</span>`}
-          <div class="thumb">${scene(c.scene, { noTag: true })}</div>
-          <div style="min-width:0"><div class="n">${c.name}</div>
-          ${i === 0 ? '<span class="ref-mark" style="display:inline-grid;margin-top:2px">REFERENCE</span>' : `<div class="s ${i === 1 || i === 2 ? 'ok' : ''}">${['', 'ΔE 1.8 · matched', 'ΔE 2.3 · matched', 'ΔE 7.1 · not matched', 'not selected'][i]}</div>`}</div></div>`).join('')}
+        ${cams.map(([n, sc, st, t], i) => `<div class="cm-cam ${i === 1 ? 'on' : ''}">
+          <span class="check ${st === 'ok' ? 'on' : ''}" aria-label="${st === 'ok' ? 'Calibrated' : 'Not calibrated'}">${st === 'ok' ? icon('check') : ''}</span>
+          <div class="thumb">${scene(sc, { noTag: true })}</div>
+          <div style="min-width:0"><div class="n">${n}</div><div class="s ${st === 'ok' ? 'ok' : ''}">${t}</div></div></div>`).join('')}
+        <p class="fx-note" style="padding:12px 8px 0">Calibrate every camera once before the show, under show lighting. Recalibrate only if the lighting changes.</p>
       </div>
       <div class="cm-main">
-        <div class="pair">
-          <figure><figcaption><span class="lbl">Reference</span><b>CAM 1 · Sân khấu trái</b><span class="right"><button class="link">Clear region</button></span></figcaption>
-            <div class="pic">${scene('stageL')}<div class="region" style="left:30%;top:28%;width:22%;height:48%"><span>REGION</span></div></div></figure>
-          <figure><figcaption><span class="lbl">Target</span><b>CAM 2 · MC chính – Cam 2</b><span class="right"><button class="link">Clear region</button></span></figcaption>
-            <div class="pic">${scene('mc')}<div class="region" style="left:44%;top:28%;width:22%;height:48%"><span>REGION</span></div></div></figure>
+        <div class="cal-top">
+          <div class="field"><span class="lbl">Chart</span><div class="seg"><span class="on">Printed card</span><span>Tablet screen</span></div></div>
+          <p class="fx-note" style="max-width:520px">Printed card: each camera is corrected to the card's known colours (ColorChecker Classic 24). Tablet screen: colours depend on the tablet, so every camera is matched to the first calibrated camera's view of the same tablet. <button class="link">Save chart image for a tablet…</button></p>
         </div>
-        <p class="hint-line">${icon('matte')}Drag on the picture to mark shared content (face, shirt, grey card).</p>
-        <div class="cm-bottom">
-          <section class="panel"><div class="panel-h"><h3>Trims</h3><div class="right"><button class="btn btn-outline" style="height:30px;padding:0 10px">${icon('undo')}Undo</button><button class="btn btn-ghost-danger" style="height:30px;padding:0 10px">Reset colour…</button></div></div>
-            <div class="panel-b trims">
-              ${slider('Exposure', 44, '−0.20 EV', true)}${slider('Saturation', 54, '1.04', true)}
-              ${slider('Temperature', 56, '+6', true)}${slider('Tint', 48, '−2', true)}
-              ${slider('Lift', 51, '+0.01', true)}${slider('Gamma', 50, '1.00', true)}
-              ${slider('Gain', 53, '1.03', true)}
-            </div></section>
+        <div class="cal-grid">
+          <figure class="cal-pic"><figcaption><b>CAM 2 · MC chính – Cam 2</b><span class="right"><span class="state run">Chart found · 24 / 24 patches</span></span></figcaption>
+            <div class="pic">${scene('mc', { chart: true, handles: true })}</div>
+            <p class="hint-line">${icon('matte')}Drag the four corners onto the chart's corners. Each white square is where a patch is read.</p></figure>
           <div class="col">
-            <section class="panel"><div class="panel-h"><h3>Result</h3><div class="right"><span class="state run">Locked</span></div></div>
-              <div class="panel-b"><div class="de"><span class="lbl">Remaining ΔE</span><span class="val num">1.8</span><span class="was">was 7.4</span></div>
-              <span class="hint" style="font-size:12px;color:var(--dim)">Matched at 20:02 from 1 s of video. Trims sit on top of the match.</span></div></section>
-            <section class="panel"><div class="panel-h"><h3>Import LUT</h3></div>
-              <div class="panel-b">${field('.cube file path', 'D:\\Shows\\Khách hàng 2026\\cam2_warm.cube', { mono: true })}
-              <button class="btn btn-outline" style="justify-self:start">${icon('folder')}Import LUT</button></div></section>
+            <section class="panel"><div class="panel-h"><h3>Steps</h3></div><div class="panel-b">
+              <ol class="steps"><li class="done">Hold the chart in front of the camera, square on, filling about a quarter of the picture.</li>
+              <li class="done">Use the show lighting. Avoid glare on the chart.</li>
+              <li class="now">Check the corners, then click <b>Capture CAM 2</b>.</li></ol></div></section>
+            <section class="panel"><div class="panel-h"><h3>Chart reading</h3><div class="right"><span class="mono" style="font-size:12px;color:var(--dim)">top: card · bottom: CAM 2</span></div></div>
+              <div class="panel-b"><div class="swatches">${sw}</div>
+              <div class="de"><span class="lbl">Average ΔE now</span><span class="val num">7.4</span><span class="was">target ≤ 2.0</span></div>
+              <span class="fx-note" style="padding:0">Capture takes 1 s of video, builds the correction and locks it for this camera.</span></div></section>
+            <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm">${icon('undo')}Undo last calibration</button><button class="btn btn-ghost-danger btn-sm">Clear calibration…</button></div>
           </div>
         </div>
-      </div></div></div>` }) },
+      </div></div></div>` };
+  } },
   settings: { label: 'Settings', build: () => ({ rail: 'st', html: topBar('Settings', '', `<button class="btn btn-primary">Save settings</button>`) +
     `<div class="work"><div class="settings">
       <section class="panel"><div class="panel-h"><h3>Show</h3></div><div class="panel-b">
-        <div class="row2">${field('Frame rate', '59.94', { select: true, mono: true })}${field('Hold the last frame on signal loss', '5', { mono: true, unit: 'seconds' })}</div>
+        <div class="row2">${field('Frame rate', '59.94', { select: true, mono: true })}${field('Resolution', '1920×1080', { select: true, mono: true })}</div>
+        <p class="fx-note" style="padding:0;margin-top:-6px">Every camera is processed at this format. Each output can send a smaller size or half the frame rate instead.</p>
+        ${field('Hold the last frame on signal loss', '5', { mono: true, unit: 'seconds' })}
         <div class="field"><label>Slate image</label><div style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1;display:grid;gap:6px"><div class="input"><span class="v mono" style="color:var(--dim)">Built-in slate</span>${icon('folder')}</div><span class="hint">Leave empty for the built-in slate.</span></div><div class="slate-thumb">${scene('hanoi', { slate: true, noTag: true })}</div></div></div>
       </div></section>
       <section class="panel"><div class="panel-h"><h3>Engine</h3></div><div class="panel-b">
@@ -523,11 +561,21 @@ const SCREENS = {
     base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-fx" style="width:560px"><h2 id="dlg-fx">Add effect to CAM 2</h2><div class="body">
       <div class="pick" role="radiogroup" aria-label="Effects">
         ${row('sel', 'bg', 'Background', 'Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.', `${icon('check')}Needs Background removal, already on this camera`)}
-        ${row('done', 'color', 'Colour', 'Match this camera to a reference camera, then trim by hand.', '', 'Added')}
+        ${row('done', 'color', 'Colour', 'Calibrates this camera once against a colour chart (printed card or tablet), then locks.', '', 'Added')}
         ${row('done', 'matte', 'Background removal', 'AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).', '', 'Added')}
       </div>
       <p style="font-size:12px;color:var(--dim)">The effect starts with its default settings and runs in its fixed place in the chain.</p>
       </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">${icon('plus')}Add effect</button></div></div></div>`;
+    return base;
+  } },
+  addout: { label: 'Add output', dialog: true, build: () => {
+    const base = SCREENS.detail.build();
+    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-o"><h2 id="dlg-o">Add output to CAM 2</h2><div class="body">
+      <div class="row2">${field('Output type', 'NDI', { select: true })}<div class="field"><span class="lbl">Sends</span><div class="seg" style="width:max-content"><span class="on">Keyed (fill + key)</span><span>Composited</span></div></div></div>
+      ${field('NDI source name', 'BreadCamera (MC chính – Cam 2)')}
+      <div class="row2">${field('Resolution', 'Same as show', { select: true })}${field('Frame rate', 'Half rate · 29.97', { select: true })}</div>
+      <p style="font-size:12px;color:var(--dim)">Resolution: same as show, or smaller (1280×720, 960×540). Frame rate: same as show, or half (every second frame). Other rates are not offered because converting them judders.</p>
+      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">${icon('plus')}Add output</button></div></div></div>`;
     return base;
   } },
   addcam: { label: 'Add camera', dialog: true, build: () => {
