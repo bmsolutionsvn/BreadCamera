@@ -1,7 +1,7 @@
 # BreadCamera — Design
 
 Date: 2026-10-08
-Status: approved in brainstorming, awaiting written-spec review
+Status: approved (2026-10-08). Amended 2026-10-08 for the build machine (§7.2) and M0 result (§7.1).
 
 ## 1. Purpose
 
@@ -341,7 +341,7 @@ Notes:
 
 ### 6.3 Previews
 
-- NVENC encodes a low-resolution H.264 preview for each camera: about 480×270
+- A hardware H.264 encoder (§7.2 order) encodes a low-resolution preview for each camera: about 480×270
   at 30 fps.
 - The preview is sent over the WebSocket as binary frames and decoded in the UI
   with WebCodecs into a canvas.
@@ -373,7 +373,7 @@ Notes:
 ## 7. Repo and build
 
 - Location: `F:\Coding\BreadMedia\BreadCamera`, a git repo of its own.
-- Toolchain: C++20, MSVC 2022, CMake and vcpkg.
+- Toolchain: C++20, Visual Studio 2026 (MSVC v14.5x, the build machine's only VS), and the CMake and vcpkg bundled with it.
 - vcpkg dependencies:
   - FFmpeg, built with **LGPL features only** (no x264/x265 or other GPL
     parts);
@@ -395,10 +395,20 @@ Notes:
 | libsrt | MPL-2.0 | Publish file-level changes if we modify it. |
 | ONNX Runtime | MIT | Attribution. |
 | NDI SDK | NDI SDK license | Follow the NDI branding and attribution requirements. |
-| NVIDIA Maxine VFX models | NVIDIA Community Model License or NVIDIA Open Model License, depending on the model | **Must be verified first (M0)**. |
+| NVIDIA Maxine VFX SDK + AI Green Screen model | NVIDIA Software License Agreement, Product-Specific Terms for NVIDIA AI Products, NVIDIA Community Model License | **M0 done (2026-10-08):** NGC states the Virtual Background features "are available for commercial/non-commercial use". Downloads need a free NVIDIA Developer Program (NGC) account. Ship only the runtime files the SLA marks redistributable. |
 | Blackmagic DeckLink SDK | Blackmagic SDK EULA | Redistribute only the DLLs that are allowed. |
 | AJA NTV2 | MIT | Attribution. |
 | libomt | MIT | Attribution. |
+
+### 7.2 Build machine and optional SDKs (amendment 2026-10-08)
+
+The machine that builds and tests BreadCamera overnight (Hermes) has an **AMD Radeon RX 6600** and no NVIDIA GPU. The owner chose to stay NVIDIA-first anyway, so:
+
+- Every vendor or hardware SDK (CUDA, Maxine, NDI, DeckLink, AJA NTV2, libomt) is a CMake option `BC_WITH_<NAME>` that defaults to ON when the SDK is found and switches itself OFF with a status message when it is not. A missing SDK never fails the build.
+- A test that needs an SDK, a card or an NVIDIA GPU is tagged with a doctest decorator and **skips with a printed reason** when the requirement is missing. A skip is never reported as a pass.
+- Code that cannot run on the build machine (CUDA interop, Maxine, NVENC) is written, compiled when its SDK is present, and listed as **"untested on hardware"** in `docs/superpowers/follow-ups.md` until someone runs it on an RTX machine.
+- Shader and D3D11 tests run on the real GPU when there is one, else on the WARP software adapter, so CI covers them too.
+- H.264 encoding (previews and SRT out) goes through FFmpeg and picks the first encoder that opens, in this order: `h264_nvenc`, `h264_amf`, `h264_qsv`, `h264_mf`. NVIDIA stays first; the others cost nothing and keep the previews working on the build machine.
 
 ## 8. Testing
 
@@ -454,13 +464,13 @@ There is one implementation plan per milestone. They are written in order.
 
 | # | Delivers | Done when |
 |---|---|---|
-| **M0** | Confirm the license terms of the Maxine Green Screen model for commercial redistribution. | Terms are recorded in this spec. If they don't allow it, M2 uses the ONNX backend and M6 moves earlier. |
+| **M0** | ~~Confirm the Maxine license~~ **Done 2026-10-08** (§7.1): commercial use allowed. | — |
 | **M1** | End-to-end passthrough: SRT input → decode → tick → NDI and fullscreen outputs. Also the control API, show file, supervisor and a minimal multiview UI. | 4× 1080p60 passthrough with the input-loss hold and slate working. |
 | **M2** | Matte (batched Maxine) and the background modes keyed, blur and replace. Alpha over NDI. | All 4 cameras matted within budget. Keyed output works in vMix and OBS. |
 | **M3** | Color match, trims and .cube import. | The solver test passes. Matching works on real cameras. |
 | **M4** | The remaining I/O: NDI input, DeckLink, AJA (experimental), UVC, OMT, SRT output, virtual camera, SDI output. | Every adapter works except AJA. AJA compiles and is labeled experimental. |
 | **M5** | Hardening: the soak and fault-injection tests, the installer and the Vietnamese and English strings. | §8.3 and §8.4 pass. A clean install works on a fresh Windows 11 machine. |
-| **M6** | Non-NVIDIA path: the ONNX matte backend and AMF/QSV encoders. | The 4-camera load runs on an AMD or Intel GPU at a documented, possibly lower, quality and frame rate. |
+| **M6** | Non-NVIDIA path: the ONNX matte backend (the AMF/QSV/MF encoders already come with §7.2). | The 4-camera load runs on an AMD or Intel GPU at a documented, possibly lower, quality and frame rate. |
 
 ## 10. Out of scope (later sub-projects)
 
