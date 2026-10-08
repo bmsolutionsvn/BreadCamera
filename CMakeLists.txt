@@ -57,7 +57,9 @@ endfunction()
 bc_shader(yuv_to_linear cs_5_0)
 bc_shader(bgra_to_linear cs_5_0)
 bc_shader(linear_to_bgra8 cs_5_0)
-# Task 7 adds fullscreen_vs (vs_5_0) and fullscreen_ps (ps_5_0) here
+# Task 7
+bc_shader(fullscreen_vs vs_5_0)
+bc_shader(fullscreen_ps ps_5_0)
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
@@ -74,11 +76,15 @@ add_library(bc_io STATIC
   src/io/srt_params.cpp
   src/io/ffmpeg_input.cpp
   # Task 7
+  src/io/queued_output.cpp
+  src/io/monitors.cpp
+  src/io/fullscreen_output.cpp
   # Task 8
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
+target_link_libraries(bc_io PUBLIC user32)
 
 # ---- tests ----
 add_executable(bc_tests
@@ -98,6 +104,9 @@ add_executable(bc_tests
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp
   tests/support/test_media.cpp
+  # Task 7
+  tests/queued_output_test.cpp
+  tests/fullscreen_output_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
