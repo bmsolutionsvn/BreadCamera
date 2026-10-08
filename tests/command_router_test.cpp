@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "core/utf8.h"
 #include "engine/command_router.h"
 
 using nlohmann::json;
@@ -180,4 +181,22 @@ TEST_CASE("CommandRouter: names are counted in characters, not bytes") {
   CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty}, {"input", kSrt}}}})["ok"] == true);
   CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty + "a"}, {"input", kSrt}}}})["error"]["code"] == "invalid");
   CHECK(r.show().cameras[0].name == eighty);
+}
+
+TEST_CASE("CommandRouter: the NDI name limit counts code points, not bytes") {
+  // A Vietnamese name of <= 200 characters but > 200 bytes must be accepted (spec 6.4).
+  bc::OutputConfig o;
+  o.kind = "ndi";
+  std::string many;
+  while (bc::utf8Length(many) + 16 <= 200) many += "Sân khấu trái – ";  // 16 code points, 21 bytes each
+  REQUIRE(bc::utf8Length(many) <= 200);
+  REQUIRE(many.size() > 200);
+  o.params["name"] = many;
+  CHECK_NOTHROW(bc::validateOutput(o));
+
+  std::string tooLong = many;
+  while (bc::utf8Length(tooLong) <= 200) tooLong += "ấ";
+  REQUIRE(bc::utf8Length(tooLong) == 201);
+  o.params["name"] = tooLong;
+  CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be 1 to 200 characters", std::invalid_argument);
 }

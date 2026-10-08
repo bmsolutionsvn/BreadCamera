@@ -2,6 +2,7 @@
 
 #include <stdexcept>
 
+#include "core/utf8.h"
 #include "io/ffmpeg_input.h"
 #include "io/fullscreen_output.h"
 #include "io/srt_params.h"
@@ -19,7 +20,7 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
   if (cfg.kind == "ndi") {
 #if BC_WITH_NDI
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
-    if (name.empty() || name.size() > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
+    if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
     return std::make_unique<NdiOutput>(name);
 #else
     (void)cam;

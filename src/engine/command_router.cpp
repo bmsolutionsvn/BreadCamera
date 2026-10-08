@@ -92,7 +92,7 @@ void validateOutput(const OutputConfig& o) {
     if (o.params.contains("name")) {
       if (!o.params["name"].is_string()) throw std::invalid_argument("NDI name must be text");
       const auto n = o.params["name"].get<std::string>();
-      if (n.empty() || n.size() > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
+      if (n.empty() || utf8Length(n) > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
     }
     return;
   }
