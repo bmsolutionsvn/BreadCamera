@@ -21,11 +21,29 @@ unnoticed, and nothing on this screen can change a live output.
 
 Pictures fill the work area edge to edge, like a hardware broadcast
 multiviewer. The signature is the **state strip** under each picture (a
-broadcast under-monitor display): a hairline-bounded mono band with
+broadcast under-monitor display): a hairline-bounded mono band that is
+**always exactly one row** and reads left to right like the signal path:
 
-- camera name and the input's signal state;
-- effect badges (Matte, Blur/Background, Color);
-- one compact signal pill per output (NDI, SRT, SDI, Virtual cam, Fullscreen, OMT).
+```
+[SRT] CAM 1 · Sân khấu trái       ◐ ◌ ◑  →  (NDI) (SRT) (SDI) +1   ↺ 20:14
+ in    name (ellipsis)            effects     outputs              mark
+```
+
+- **Input chip** (left): a solid, filled 4px chip in its signal-state colour
+  with a short code — `SRT`, `NDI`, `SDI`, `USB`, `AJA`.
+- **Name**: one line, cut with an ellipsis; the full name is in the tooltip.
+  The name never wraps and never pushes the outputs off the row.
+- **Effects**: three small icons (Matte, Background/Blur, Color), no text.
+- **→** then **output pills**: outlined pills (state-coloured dot and border,
+  no fill) with short codes — `NDI`, `SRT`, `SDI`, `VCAM`, `FS`, `OMT`.
+  More than fit: `+N`.
+- In vs out is told apart at a glance by **filled chip on the left vs outlined
+  pills after the arrow**. The colour of each still means its state.
+- Every code and icon carries its full Vietnamese name in a tooltip and
+  `aria-label` (e.g. `SRT` → "Đầu vào SRT — Đang phát").
+- Long messages never go on the strip: the strip shows the short form (input
+  chip reads `00:04` while holding a frame, `SLATE` once the slate is up) and
+  the full sentence is in the tooltip and on Camera detail.
 
 A state that changes keeps a mark on its strip until the operator opens that
 camera, so faults that recovered on their own (e.g. "SRT dropped 3 s at 20:14")
@@ -90,8 +108,10 @@ these pictures, so nothing tinted sits on or around them.
 | State strip | Surface, hairline top edge; name in paper white, mono labels in muted | `surface`, `hairline`, `paper-white`, `text-muted` |
 | Strip on hover | One surface step up | `surface-hover` |
 | Keyboard focus | 1px cyan border round the whole tile; the only cyan inside the wall | `blueprint-cyan` |
-| Effect badges | 4px chip, hairline border, muted text. Not cyan: an effect being on is normal, not an accent | `hairline`, `text-muted` |
-| Input and output pills | Signal pill, compact (dot + mono label) | signal band |
+| Effect icons | Muted icons, no chip. Not cyan: an effect being on is normal, not an accent | `text-muted` |
+| Input chip | **Filled**: solid state colour, dark ink text, 4px corners | signal band solid + `ink-on-cyan`-style dark ink (`#04191D`) |
+| Output pills | **Outlined**: state-colour 1px border and dot, state-text label, no fill | signal band `*-text` |
+| Offline (Tắt) | Input chip: `signal-offline` fill with paper-white text; output: grey outline | `signal-offline` |
 
 ### Exceptions (the only colour that should catch the eye)
 
@@ -99,9 +119,9 @@ these pictures, so nothing tinted sits on or around them.
 |---|---|---|
 | Output sending | Red pill, pulsing dot. **All Live dots share one clock**, so a healthy wall breathes in unison; any pill out of step or out of red is the exception | `signal-live` / `signal-live-text` |
 | Input or output reconnecting | Amber pill | `signal-connecting` / `-text` |
-| Input lost, holding last frame | Strip gets a Warning left-border block on its 8% wash: "Mất tín hiệu 00:04 · đang giữ khung hình cuối"; input pill amber | `system-warning` |
-| Slate showing (hold ran out) | Same block in Danger | `system-danger` |
-| Stage bypassed | That badge: rose text and border on rose 8% wash | `system-danger` |
+| Input lost, holding last frame | Strip gets a Warning left border on its 8% wash; input chip turns amber and reads `00:04` counting down. Tooltip: "Mất tín hiệu · đang giữ khung hình cuối" | `system-warning`, `signal-connecting` |
+| Slate showing (hold ran out) | Strip left border and wash in Danger; input chip reads `SLATE` | `system-danger` |
+| Stage bypassed | That effect icon turns rose | `system-danger` |
 | Output failed | That output: rose error chip (4px, not a pill) with retry text; never red | `system-danger` |
 | Unseen past change | Small sky mark with the time on the strip's right ("↺ 20:14") until the camera is opened | `system-info` |
 | Tick overruns > 0 | Counter in the top bar in Warning text | `system-warning` |
@@ -113,8 +133,14 @@ these pictures, so nothing tinted sits on or around them.
 - Two Bands Rule holds: broadcast state is always a pill in the signal band;
   anything wrong with BreadCamera is a left-border block or 4px chip in the
   system band. Errors never use On-Air Red.
-- Colour is never the only carrier: every pill and block has its text, and
-  error vs. state also differ in shape — safe for red/green colour blindness.
+- Colour is never the only carrier: every chip and pill has its code, in vs
+  out differ by fill and position, and error vs. state differ in shape — safe
+  for red/green colour blindness.
+- The filled input chip is the one place a signal colour is used as a fill;
+  dark ink on the solid signal colours is ≥4.5:1 (red, amber and green solids
+  all clear it with `#04191D`).
+- The strip is one row at the 4×2 tile width (~440px): input chip ~44px, name
+  takes the rest down to ~96px, three outputs ~150px, `+N` beyond that.
 - Contrast: strip text and all `*-text` signal variants are ≥4.5:1 on
   `surface`; system colours on their 8% wash are ≥4.5:1.
 - Under reduced motion the shared Live pulse becomes a static solid dot.
