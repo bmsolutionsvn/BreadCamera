@@ -102,6 +102,17 @@ function(bc_copy_runtime target)
   endif()
 endfunction()
 
+# ---- engine ----
+add_library(bc_engine STATIC
+  src/engine/adapter_factory.cpp
+  src/engine/camera.cpp
+  src/engine/engine.cpp
+  # Task 10
+  # Task 11
+)
+target_include_directories(bc_engine PUBLIC src)
+target_link_libraries(bc_engine PUBLIC bc_io winmm)
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
@@ -126,7 +137,9 @@ add_executable(bc_tests
   # Task 8
   tests/ndi_output_test.cpp
   # Task 2..14 test files
+  # Task 9
+  tests/engine_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
-target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io doctest::doctest)
+target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine doctest::doctest)
 bc_copy_runtime(bc_tests)
