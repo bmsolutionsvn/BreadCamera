@@ -41,6 +41,34 @@ target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(bc_core PUBLIC crypt32)
 
+# ---- gpu ----
+find_program(FXC fxc REQUIRED)  # Windows SDK; on PATH in the VS developer shell
+set(BC_SHADER_DIR ${CMAKE_BINARY_DIR}/shaders)
+file(MAKE_DIRECTORY ${BC_SHADER_DIR})
+set(BC_SHADER_HEADERS)
+function(bc_shader name profile)
+  set(src ${CMAKE_SOURCE_DIR}/src/gpu/shaders/${name}.hlsl)
+  set(out ${BC_SHADER_DIR}/${name}.h)
+  add_custom_command(OUTPUT ${out}
+    COMMAND ${FXC} /nologo /O3 /T ${profile} /E main /Vn g_${name} /Fh ${out} ${src}
+    DEPENDS ${src} VERBATIM)
+  set(BC_SHADER_HEADERS ${BC_SHADER_HEADERS} ${out} PARENT_SCOPE)
+endfunction()
+bc_shader(yuv_to_linear cs_5_0)
+bc_shader(bgra_to_linear cs_5_0)
+bc_shader(linear_to_bgra8 cs_5_0)
+# Task 7 adds fullscreen_vs (vs_5_0) and fullscreen_ps (ps_5_0) here
+
+add_library(bc_gpu STATIC
+  src/gpu/device.cpp
+  src/gpu/texture_pool.cpp
+  src/gpu/converter.cpp
+  src/gpu/image_io.cpp
+  ${BC_SHADER_HEADERS}
+)
+target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
+target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
@@ -53,8 +81,10 @@ add_executable(bc_tests
   tests/show_test.cpp
   tests/show_store_test.cpp
   tests/state_store_test.cpp
+  # Task 5
+  tests/gpu_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
-target_link_libraries(bc_tests PRIVATE bc_core doctest::doctest)
+target_link_libraries(bc_tests PRIVATE bc_core bc_gpu doctest::doctest)
 target_compile_definitions(bc_tests PRIVATE BC_WITH_NDI=$<BOOL:${BC_WITH_NDI}>)

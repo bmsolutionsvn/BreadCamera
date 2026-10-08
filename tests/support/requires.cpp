@@ -4,6 +4,8 @@
 #include <mutex>
 #include <set>
 
+#include "gpu/device.h"
+
 namespace bc::test {
 namespace {
 bool check(Req r, const char*& reason) {
@@ -11,9 +13,15 @@ bool check(Req r, const char*& reason) {
     case Req::Ndi:
       reason = "NDI SDK not built (BC_WITH_NDI=OFF)";
       return BC_WITH_NDI == 0;
-    case Req::HardwareGpu:
-      reason = "no hardware GPU check yet (Task 5)";
-      return true;
+    case Req::HardwareGpu: {
+      reason = "needs a hardware GPU (WARP or BC_FORCE_WARP=1 in use)";
+      try {
+        auto dev = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+        return dev->info().warp;
+      } catch (...) {
+        return true;
+      }
+    }
     case Req::H264Encoder:
       reason = "no H.264 encoder check yet (Task 10)";
       return true;
