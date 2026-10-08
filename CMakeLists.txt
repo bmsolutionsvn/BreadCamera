@@ -30,10 +30,14 @@ add_library(bc_core STATIC
   src/core/tick_schedule.cpp
   src/core/audio_delay.cpp
   # Task 3
+  src/core/secrets.cpp
+  src/core/show.cpp
+  src/core/show_store.cpp
   # Task 4
 )
 target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(bc_core PUBLIC crypt32)
 
 # ---- tests ----
 add_executable(bc_tests
@@ -44,6 +48,8 @@ add_executable(bc_tests
   tests/frame_sync_test.cpp
   tests/bounded_queue_test.cpp
   tests/audio_delay_test.cpp
+  tests/show_test.cpp
+  tests/show_store_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
