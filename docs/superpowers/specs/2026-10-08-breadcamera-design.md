@@ -566,3 +566,20 @@ There is one implementation plan per milestone. They are written in order.
 - UI languages other than English.
 - A 3840×2160 show format.
 - More than one GPU.
+
+### 10.1 Add-in roadmap (owner, 2026-10-08)
+
+The owner approved the add-ins below for later sub-projects. Each one ships as an add-in effect (§5.4). Each runs on NVIDIA Maxine when an RTX card is present and otherwise falls back to ONNX on DirectML (the M6 path), or it is marked RTX-only.
+
+In priority order:
+
+1. **Denoise and low-light enhancement.** It also removes WebRTC compression artifacts. It targets remote guests on webcams.
+2. **Super resolution.** It upscales a source below the show resolution (for example a 720p guest) to the show format.
+3. **Colour grading.** It adds manual trims and `.cube` LUT import to the Colour effect. AI relighting comes later.
+4. **Audio noise suppression and room echo removal.** This needs an audio stage type, since today's stages are video only. The stage reports the delay it adds, and the camera's video is delayed by the same amount so lips stay in sync.
+5. **Live speech-to-text captions.** These are per show, not per camera. They go out as their own output, either as text with a transparent background (fill and key) or as caption data, for the switcher to lay over the picture. Expected delay is 1–3 s. Vietnamese accuracy must be confirmed before the work is committed. Captions can be in any language; the rule that the UI is English only does not apply to them.
+
+Rejected:
+
+- **Not planned:** frame interpolation (it adds delay and artifacts; frame repeat covers 25/30 fps sources), eye-contact and head-pose correction, and skin smoothing.
+- **Never:** face or body reshaping, virtual makeup, age or gender morphing, and voice changing. The one exception is a future identity-protection pack (voice disguise with face blur), and only if a customer asks for it.
