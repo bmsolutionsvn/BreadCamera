@@ -62,6 +62,24 @@ TEST_CASE("Show: validation rejects bad files") {
   CHECK_THROWS_AS(bc::showFromJson(nlohmann::json::array()), bc::ShowError);
 }
 
+TEST_CASE("Show: outputFromJson reports ShowError, not nlohmann exceptions") {
+  nlohmann::json good = {{"id", "out1"}, {"kind", "ndi"}};
+  auto o = bc::outputFromJson(good);
+  CHECK(o.id == "out1");
+  CHECK(o.kind == "ndi");
+  CHECK(o.keyed == false);
+  CHECK(o.enabled == true);
+  CHECK(o.params == nlohmann::json::object());
+
+  nlohmann::json badKeyed = good;
+  badKeyed["keyed"] = "no";
+  CHECK_THROWS_AS(bc::outputFromJson(badKeyed), bc::ShowError);
+
+  nlohmann::json badEnabled = good;
+  badEnabled["enabled"] = "yes";
+  CHECK_THROWS_AS(bc::outputFromJson(badEnabled), bc::ShowError);
+}
+
 TEST_CASE("Show: newId gives 8 lowercase hex chars and differs") {
   auto a = bc::newId(), b = bc::newId();
   CHECK(a.size() == 8);

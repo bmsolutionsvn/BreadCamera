@@ -73,16 +73,20 @@ json outputToJson(const OutputConfig& o) {
 }
 
 OutputConfig outputFromJson(const json& j) {
-  if (!j.is_object()) throw ShowError("output must be an object");
-  OutputConfig o;
-  o.id = str(j, "id");
-  o.kind = str(j, "kind");
-  if (o.id.empty() || o.kind.empty()) throw ShowError("output id and kind must not be empty");
-  o.keyed = j.value("keyed", false);
-  o.enabled = j.value("enabled", true);
-  o.params = j.value("params", json::object());
-  if (!o.params.is_object()) throw ShowError("output params must be an object");
-  return o;
+  try {
+    if (!j.is_object()) throw ShowError("output must be an object");
+    OutputConfig o;
+    o.id = str(j, "id");
+    o.kind = str(j, "kind");
+    if (o.id.empty() || o.kind.empty()) throw ShowError("output id and kind must not be empty");
+    o.keyed = j.value("keyed", false);
+    o.enabled = j.value("enabled", true);
+    o.params = j.value("params", json::object());
+    if (!o.params.is_object()) throw ShowError("output params must be an object");
+    return o;
+  } catch (const nlohmann::json::exception& e) {
+    throw ShowError(e.what());
+  }
 }
 
 json cameraToJson(const CameraConfig& c, SecretMode mode) {
