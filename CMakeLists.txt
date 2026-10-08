@@ -86,6 +86,22 @@ target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
 target_link_libraries(bc_io PUBLIC user32)
 
+if(BC_WITH_NDI)
+  target_sources(bc_io PRIVATE src/io/ndi_output.cpp)
+  target_link_libraries(bc_io PUBLIC NDI::NDI)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_NDI=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_NDI=0)
+endif()
+
+# Copies runtime DLLs that vcpkg does not manage (NDI) next to an executable.
+function(bc_copy_runtime target)
+  if(BC_WITH_NDI)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NDI_DLL}" "$<TARGET_FILE_DIR:${target}>")
+  endif()
+endfunction()
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
@@ -107,8 +123,10 @@ add_executable(bc_tests
   # Task 7
   tests/queued_output_test.cpp
   tests/fullscreen_output_test.cpp
+  # Task 8
+  tests/ndi_output_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io doctest::doctest)
-target_compile_definitions(bc_tests PRIVATE BC_WITH_NDI=$<BOOL:${BC_WITH_NDI}>)
+bc_copy_runtime(bc_tests)
