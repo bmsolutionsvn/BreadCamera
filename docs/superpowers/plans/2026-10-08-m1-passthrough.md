@@ -2098,8 +2098,10 @@ TEST_CASE("Converter: NV12 white and black survive the round trip") {
 
 TEST_CASE("Converter: NV12 BT.709 red lands in the red channel") {
   Gpu g;
-  auto red = makeNv12(*g.dev, 16, 16, 63, 102, 240);
-  auto img = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*red, bc::PixelLayout::NV12, false), 16, 16));
+  // Height must be >= 720: yuvToRgbMatrix picks BT.709 for height >= 720 (BT.601
+  // below), and these codes are BT.709 — a shorter fixture decodes through BT.601.
+  auto red = makeNv12(*g.dev, 16, 720, 63, 102, 240);
+  auto img = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*red, bc::PixelLayout::NV12, false), 16, 720));
   checkAll(img, 0, 0, 255, 4);
 }
 
