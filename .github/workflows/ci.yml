@@ -1,0 +1,17 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: windows-2025
+    env:
+      BC_FORCE_WARP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build and test
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          cmake --preset release
+          cmake --build --preset release
+          ./build/release/bc_tests.exe

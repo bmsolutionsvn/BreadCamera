@@ -1,0 +1,25 @@
+{
+  "name": "breadcamera",
+  "version-string": "0.1.0",
+  "dependencies": [
+    {
+      "name": "ffmpeg",
+      "default-features": false,
+      "features": [
+        "avcodec",
+        "avformat",
+        "swresample",
+        "swscale",
+        "srt",
+        "nvcodec",
+        "amf"
+      ]
+    },
+    "ixwebsocket",
+    "nlohmann-json",
+    "doctest",
+    "webview2",
+    "wil"
+  ],
+  "builtin-baseline": "2750401336fb7c95f6619657a46a7e798661341c"
+}
