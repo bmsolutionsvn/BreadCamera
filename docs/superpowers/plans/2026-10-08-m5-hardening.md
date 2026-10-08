@@ -1,8 +1,10 @@
-# BreadCamera M5 — Hardening: settings, Vietnamese errors, soak and fault runs, installer Implementation Plan
+# BreadCamera M5 — Hardening: settings, error text, soak and fault runs, installer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make BreadCamera shippable: a Settings screen (show rate, hold time, slate, language, GPU/backend info), Vietnamese-first error text for every engine error code, a soak + fault-injection tool that proves spec §8.3/§8.4 against the real executables, and an Inno Setup installer that also registers the virtual camera and ships the licence notices.
+**Goal:** Make BreadCamera shippable: a Settings dialog (show format, hold time, slate, GPU/backend info), a plain headline for every engine error code, a soak + fault-injection tool that proves spec §8.3/§8.4 against the real executables, and an Inno Setup installer that also registers the virtual camera and ships the licence notices.
+
+**Amended 2026-10-08 after the UI mockup review (owner):** English only (no language setting, no translation tables, no string guard); Settings is a dialog in M1's native window, with the show resolution next to the frame rate; Tasks 1 and 2 rewritten.
 
 **Architecture:** UI work stays in `ui/`; error text is a pure mapping from the engine's stable `{code, message}` to localised copy (the English engine message is kept as detail). The soak tool `bc_soak.exe` drives real `breadcamera-engine.exe` processes over the control API with SRT test streams generated in-process, samples stats and process memory, injects faults on a schedule, and writes a CSV + verdict. The installer is an Inno Setup script built by `ISCC.exe`.
 
@@ -15,7 +17,7 @@
 ## Global Constraints
 
 - All earlier Global Constraints apply.
-- Glossary is binding (UX-CONTRACT): Sẵn sàng / Đang kết nối / Đang phát / Tắt; Vietnamese is the source, English the translation. No hard-coded user-facing string outside `ui/src/i18n.ts`.
+- The UI is English only; operator-typed names are Unicode. Output states read Ready / Connecting / Live / Offline (UX contract, in English).
 - Errors stay persistent blocks; the block shows the localised sentence first and the engine's detail second.
 - Soak pass criteria (spec §8.3): 4× 1080p60 SRT, all effects on (matte via the active backend or bypassed with an error on PCs without one — say which), every buildable output type active, **zero tick overruns**, **flat memory** (working set at the end ≤ 105 % of the 10-minute mark), **latency ≤ 50 ms** on every camera.
 - Fault criteria (spec §8.4): input killed → hold then slate then live again on return; one output receiver killed → others unaffected; stage forced to fail → bypassed for that camera only; engine killed → back with its show in < 3 s.
@@ -23,17 +25,16 @@
 
 ## Review Focus
 
-1. **A setting that would disrupt a live show** (rate change while cameras are live) — the UI asks for confirmation with a verb button ("Đổi tốc độ khung hình") and explains that every output restarts — owned by Task 1.
-2. **An engine error code the UI has never seen** — falls back to a generic Vietnamese sentence plus the English detail, never `undefined` or a raw code alone — owned by Task 2.
-3. **Hard-coded strings sneaking back into components** — a test fails the build — owned by Task 2.
+1. **A setting that would disrupt a live show** (frame rate or resolution change while cameras are live) — the UI asks first with a verb button ("Change format") and explains that every output restarts — owned by Task 1.
+2. **An engine error code the UI has never seen** — falls back to "Something went wrong." plus the engine detail, never `undefined` or a raw code alone — owned by Task 2.
+3. **A slate path that cannot be read** — Save still succeeds, the engine shows its slate warning on the Engine page, and the built-in slate is used — owned by Task 1 (engine behaviour from M1).
 4. **The soak tool itself failing silently** (engine never started, pushers never connected) — the tool exits non-zero with a reason; a run with zero samples is a failure, not a pass — owned by Task 3.
 5. **Installing over a running BreadCamera** — the installer closes the shell/engine first (asks the user), or refuses with a clear message — owned by Task 4.
 
 ## File Structure
 
 ```
-ui/src/screens/Settings.tsx, ui/src/errors.ts, ui/src/i18n.ts (language at runtime)
-ui/src/test/strings.test.ts
+ui/src/dialogs/SettingsDialog.tsx, ui/src/errors.ts
 tools/soak/soak_main.cpp            bc_soak.exe
 installer/BreadCamera.iss, installer/THIRD_PARTY_NOTICES.md, installer/LGPL-source-offer.txt
 scripts/package.ps1                 build release + UI + installer
@@ -47,43 +48,30 @@ docs/superpowers/manual-checks/m5-fresh-install.md
 
 ---
 
-### Task 1: Settings screen and runtime language
+### Task 1: The Settings dialog (show format, signal loss, engine info)
+
+Rewritten 2026-10-08 for M1's native window (spec §6.4 "Dialogs"; mockup tabs "Settings" and "Change frame rate"). English only; no language setting.
 
 **Files:**
-- Create: `ui/src/screens/Settings.tsx`
-- Modify: `ui/src/i18n.ts` (language from `localStorage`, `setLang`), `ui/src/App.tsx` (nav), `ui/src/api/protocol.ts` (`ShowJson.settings` already typed)
-- Test: `ui/src/screens/Settings.test.tsx`, `ui/src/i18n.test.ts`
+- Create: `ui/src/dialogs/SettingsDialog.tsx`
+- Modify: `ui/src/shell/TitleBar.tsx` (optional Show menu), `ui/src/App.tsx` (toolbar Settings button, Show menu, Ctrl+,), `ui/src/api/protocol.ts` (`StateTree.engine.matteBackend`), `ui/src/app.css`
+- Test: `ui/src/dialogs/SettingsDialog.test.tsx`
 
 **Interfaces:**
-- Consumes: `setSettings {rate?, holdMs?, slatePath?}` (M1), state `/engine/gpu`, `/engine/matteBackend`, `/engine/previewEncoder`, `/engine/warnings/*`.
-- Produces: `export function setLang(l: 'vi' | 'en'): void` (stores `bc.lang` in `localStorage`, reloads), `lang` read from `localStorage` (try/catch → `'vi'`), `?lang=en` still honoured for one session; `Settings({client})`.
+- Consumes: `setSettings {rate?, resolution?, holdMs?, slatePath?}` (M1 Tasks 11, 11A); state `/engine/gpu`, `/engine/matteBackend`, `/engine/previewEncoder`, `/engine/warnings/*`; M1's `Modal`, `Prop`, `ConfirmDialog`, `ErrorBlock`, `Toolbar` (`extra` slot), `TitleBar`.
+- Produces: `SettingsDialog({client, onClose})`; `TitleMenus.show?: (MenuItem | 'sep')[]` (rendered between File and Camera when given).
 
-Copy (vi / en): nav "Cài đặt" / "Settings"; "Tốc độ khung hình" / "Frame rate" with options "50", "59,94", "60" (vi uses a decimal comma) / "50", "59.94", "60"; "Giữ khung cuối khi mất tín hiệu (giây)" / "Hold the last frame on signal loss (seconds)"; "Ảnh màn chờ" / "Slate image" with hint "Để trống để dùng màn chờ mặc định." / "Leave empty for the built-in slate."; "Ngôn ngữ" / "Language" ("Tiếng Việt", "English"); "GPU", "Tách nền" / "Background removal" (backend name or "Không có" / "None"), "Bộ mã hoá xem trước" / "Preview encoder"; save button "Lưu cài đặt" / "Save settings"; confirm for a rate change: title "Đổi tốc độ khung hình?" / "Change the frame rate?", body "Mọi đầu ra sẽ khởi động lại và mất hình trong khoảng 1 giây." / "Every output restarts and loses picture for about 1 second.", primary "Đổi tốc độ khung hình" / "Change frame rate".
+Rules: three categories — **Show** (Frame rate 50 / 59.94 / 60; Resolution 1280×720 / 1920×1080; "Hold the last frame on signal loss" in seconds 0–60; Slate image path with the hint "Leave empty for the built-in slate."), **Engine** (read-only: GPU, Background removal backend or "None", Preview encoder or "None", any engine warnings as warning blocks), **About** ("BreadCamera 0.1 — BM Solutions", "Third-party licences: THIRD_PARTY_NOTICES.md in the install folder."). **Save** sends only what changed; a change of frame rate or resolution asks first: title "Change the show format?", body "Every output restarts and loses picture for about 1 second.", button **Change format**. Cancel and Escape close without saving.
 
 - [ ] **Step 1: Tests**
 
-`ui/src/i18n.test.ts`:
-```ts
-test('language comes from localStorage, defaults to Vietnamese', async () => {
-  localStorage.removeItem('bc.lang');
-  vi.resetModules();
-  expect((await import('./i18n')).lang).toBe('vi');
-  localStorage.setItem('bc.lang', 'en');
-  vi.resetModules();
-  const m = await import('./i18n');
-  expect(m.lang).toBe('en');
-  expect(m.t('signal.live')).toBe('Live');
-  localStorage.removeItem('bc.lang');
-});
-```
-
-`ui/src/screens/Settings.test.tsx`:
+`ui/src/dialogs/SettingsDialog.test.tsx`:
 ```tsx
 import { fireEvent, render, screen, within } from '@testing-library/react';
 
 import { EngineClient } from '../api/client';
 import { FakeWs } from '../test/fakeWs';
-import { Settings } from './Settings';
+import { SettingsDialog } from './SettingsDialog';
 
 function client() {
   FakeWs.all = [];
@@ -93,154 +81,213 @@ function client() {
   FakeWs.last.receive({
     type: 'snapshot',
     state: { engine: { gpu: 'AMD Radeon RX 6600', matteBackend: '', previewEncoder: 'h264_amf' } },
-    show: { settings: { rate: '60/1', holdMs: 5000, slatePath: '' }, cameras: [] },
+    show: { settings: { rate: '60000/1001', resolution: '1920x1080', holdMs: 5000, slatePath: '' }, cameras: [] },
   });
   return c;
 }
+const sent = (cmd: string) => FakeWs.last.sent.map((s) => JSON.parse(s)).filter((r) => r.cmd === cmd);
 
-test('shows engine info and saves hold time without a confirm', () => {
-  const c = client();
-  render(<Settings client={c} />);
-  expect(screen.getByText('AMD Radeon RX 6600')).toBeInTheDocument();
-  expect(screen.getByText('Không có')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Giữ khung cuối khi mất tín hiệu (giây)'), { target: { value: '8' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Lưu cài đặt' }));
-  const req = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'setSettings');
-  expect(req.args).toEqual({ holdMs: 8000, slatePath: '' });
+test('saves the hold time without asking', () => {
+  render(<SettingsDialog client={client()} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Hold the last frame on signal loss (s)'), { target: { value: '8' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(sent('setSettings')[0].args).toEqual({ holdMs: 8000 });
 });
 
-test('a rate change asks first, with a verb button', () => {
-  const c = client();
-  render(<Settings client={c} />);
-  fireEvent.mouseDown(screen.getByLabelText('Tốc độ khung hình'));
-  fireEvent.click(within(screen.getByRole('listbox')).getByText('50'));
-  fireEvent.click(screen.getByRole('button', { name: 'Lưu cài đặt' }));
-  expect(FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'setSettings')).toBeUndefined();
-  fireEvent.click(screen.getByRole('button', { name: 'Đổi tốc độ khung hình' }));
-  const req = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'setSettings');
-  expect(req.args.rate).toBe('50/1');
+test('a resolution change asks first, with a verb button', () => {
+  render(<SettingsDialog client={client()} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Resolution'), { target: { value: '1280x720' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(sent('setSettings')).toHaveLength(0);
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the show format?' })).getByRole('button', { name: 'Change format' }));
+  expect(sent('setSettings')[0].args).toEqual({ resolution: '1280x720' });
+});
+
+test('the Engine page shows the GPU and the missing matte backend', () => {
+  render(<SettingsDialog client={client()} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole('tab', { name: 'Engine' }));
+  expect(screen.getByText('AMD Radeon RX 6600')).toBeInTheDocument();
+  expect(screen.getByText('None')).toBeInTheDocument();
 });
 ```
 
 - [ ] **Step 2: Implement**
 
-`ui/src/i18n.ts` — replace the `lang` line with:
-```ts
-function initialLang(): 'vi' | 'en' {
-  try {
-    if (typeof location !== 'undefined' && new URLSearchParams(location.search).get('lang') === 'en') return 'en';
-    return localStorage.getItem('bc.lang') === 'en' ? 'en' : 'vi';
-  } catch {
-    return 'vi';
-  }
-}
-export const lang = initialLang();
-
-export function setLang(l: 'vi' | 'en') {
-  try {
-    localStorage.setItem('bc.lang', l);
-  } catch {
-    /* storage unavailable: the choice lasts for this page only */
-  }
-  location.reload();
-}
-```
-and add the keys listed in the copy table (`nav.settings`, `settings.rate`, `settings.hold`, `settings.slate`, `settings.slateHint`, `settings.language`, `settings.gpu`, `settings.matte`, `settings.none`, `settings.previewEncoder`, `settings.save`, `settings.rateTitle`, `settings.rateBody`, `settings.rateConfirm`).
-
-`ui/src/screens/Settings.tsx`:
+`ui/src/dialogs/SettingsDialog.tsx`:
 ```tsx
-import { Box, Button, MenuItem, Stack, TextField, Typography } from '@mui/material';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import type { EngineClient } from '../api/client';
 import { useEngine } from '../api/useEngine';
-import { ConfirmDialog } from '../components/ConfirmDialog';
 import { ErrorBlock } from '../components/ErrorBlock';
-import { lang, setLang, t } from '../i18n';
+import { Modal } from '../components/Modal';
+import { Prop } from '../components/Prop';
+import { ConfirmDialog } from './ConfirmDialog';
 
-const rates = [
-  { value: '50/1', vi: '50', en: '50' },
-  { value: '60000/1001', vi: '59,94', en: '59.94' },
-  { value: '60/1', vi: '60', en: '60' },
-];
+const RATES = [
+  ['50/1', '50'],
+  ['60000/1001', '59.94'],
+  ['60/1', '60'],
+] as const;
+const SIZES = [
+  ['1280x720', '1280×720'],
+  ['1920x1080', '1920×1080'],
+] as const;
+type Page = 'show' | 'engine' | 'about';
 
-export function Settings({ client }: { client: EngineClient }) {
+// Settings is a dialog, not a page (spec §6.4).
+export function SettingsDialog({ client, onClose }: { client: EngineClient; onClose: () => void }) {
   const { show, state } = useEngine(client);
-  const s = show?.settings ?? { rate: '60/1', holdMs: 5000, slatePath: '' };
+  const s = { rate: '60/1', resolution: '1920x1080', holdMs: 5000, slatePath: '', ...show?.settings };
+  const [page, setPage] = useState<Page>('show');
   const [rate, setRate] = useState(s.rate);
+  const [resolution, setResolution] = useState(s.resolution ?? '1920x1080');
   const [hold, setHold] = useState(String(s.holdMs / 1000));
   const [slate, setSlate] = useState(s.slatePath);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => {
-    setRate(s.rate);
-    setHold(String(s.holdMs / 1000));
-    setSlate(s.slatePath);
-  }, [s.rate, s.holdMs, s.slatePath]);
+  const engine = state.engine ?? {};
 
-  async function save(withRate: boolean) {
-    const args: Record<string, unknown> = { holdMs: Math.round(Number(hold) * 1000), slatePath: slate };
-    if (withRate) args.rate = rate;
+  const holdMs = Math.round(Number(hold) * 1000);
+  const holdError = !Number.isFinite(holdMs) || holdMs < 0 || holdMs > 60000 ? 'Hold is 0 to 60 seconds' : '';
+  const formatChanged = rate !== s.rate || resolution !== (s.resolution ?? '1920x1080');
+
+  async function save() {
+    const args: Record<string, unknown> = {};
+    if (rate !== s.rate) args.rate = rate;
+    if (resolution !== (s.resolution ?? '1920x1080')) args.resolution = resolution;
+    if (holdMs !== s.holdMs) args.holdMs = holdMs;
+    if (slate !== s.slatePath) args.slatePath = slate;
+    if (Object.keys(args).length === 0) return onClose();
     try {
       await client.request('setSettings', args);
-      setError('');
+      onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  const engine = state.engine ?? {};
   return (
-    <Box sx={{ p: 2, maxWidth: 640 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="h4">{t('nav.settings')}</Typography>
-        <Button variant="contained" onClick={() => (rate !== s.rate ? setConfirm(true) : save(false))}>
-          {t('settings.save')}
-        </Button>
-      </Stack>
-      {error && <ErrorBlock message={error} />}
-      <Stack spacing={2}>
-        <TextField select label={t('settings.rate')} value={rate} onChange={(e) => setRate(e.target.value)}>
-          {rates.map((r) => (
-            <MenuItem key={r.value} value={r.value}>
-              {lang === 'en' ? r.en : r.vi}
-            </MenuItem>
+    <Modal
+      title="Settings"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!!holdError} onClick={() => (formatChanged ? setConfirm(true) : save())}>
+            Save
+          </button>
+        </>
+      }
+    >
+      <div className="settings-wrap">
+        <div className="cats" role="tablist" aria-label="Settings pages">
+          {(['show', 'engine', 'about'] as Page[]).map((p) => (
+            <button key={p} role="tab" aria-selected={page === p} className={page === p ? 'on' : ''} onClick={() => setPage(p)}>
+              {p === 'show' ? 'Show' : p === 'engine' ? 'Engine' : 'About'}
+            </button>
           ))}
-        </TextField>
-        <TextField label={t('settings.hold')} type="number" inputProps={{ min: 0, max: 60, step: 0.5 }} value={hold} onChange={(e) => setHold(e.target.value)} />
-        <TextField label={t('settings.slate')} helperText={t('settings.slateHint')} value={slate} onChange={(e) => setSlate(e.target.value)} />
-        <TextField select label={t('settings.language')} value={lang} onChange={(e) => setLang(e.target.value as 'vi' | 'en')}>
-          <MenuItem value="vi">Tiếng Việt</MenuItem>
-          <MenuItem value="en">English</MenuItem>
-        </TextField>
-        <Typography variant="body2">
-          {t('settings.gpu')}: {engine.gpu}
-        </Typography>
-        <Typography variant="body2">
-          {t('settings.matte')}: {engine.matteBackend || t('settings.none')}
-        </Typography>
-        <Typography variant="body2">
-          {t('settings.previewEncoder')}: {engine.previewEncoder || t('settings.none')}
-        </Typography>
-      </Stack>
-      <ConfirmDialog
-        open={confirm}
-        title={t('settings.rateTitle')}
-        body={t('settings.rateBody')}
-        confirmLabel={t('settings.rateConfirm')}
-        onClose={() => setConfirm(false)}
-        onConfirm={() => {
-          setConfirm(false);
-          save(true);
-        }}
-      />
-    </Box>
+        </div>
+        <div className="pane" role="tabpanel">
+          {error && <ErrorBlock message={error} />}
+          {page === 'show' && (
+            <>
+              <h3>Show format</h3>
+              <Prop label="Frame rate">
+                {(id) => (
+                  <select id={id} className="ctl mono" value={rate} onChange={(e) => setRate(e.target.value)}>
+                    {RATES.map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Prop>
+              <Prop label="Resolution" hint="Every camera is processed at this format. Each output can send a smaller size or half the frame rate.">
+                {(id) => (
+                  <select id={id} className="ctl mono" value={resolution} onChange={(e) => setResolution(e.target.value)}>
+                    {SIZES.map(([v, l]) => (
+                      <option key={v} value={v}>
+                        {l}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Prop>
+              <h3>Signal loss</h3>
+              <Prop label="Hold the last frame on signal loss (s)" hint={holdError}>
+                {(id) => <input id={id} className="ctl mono" type="number" min={0} max={60} step={0.5} value={hold} onChange={(e) => setHold(e.target.value)} />}
+              </Prop>
+              <Prop label="Slate image" hint="Leave empty for the built-in slate.">
+                {(id) => <input id={id} className="ctl mono" value={slate} placeholder="C:\Shows\slate.png" onChange={(e) => setSlate(e.target.value)} />}
+              </Prop>
+            </>
+          )}
+          {page === 'engine' && (
+            <>
+              <h3>Engine</h3>
+              {Object.values(engine.warnings ?? {})
+                .filter((w) => w)
+                .map((w) => (
+                  <ErrorBlock key={w} severity="warning" message={w} />
+                ))}
+              <Prop label="GPU">{() => <span className="ro">{engine.gpu ?? '—'}</span>}</Prop>
+              <Prop label="Background removal">{() => <span className="ro">{engine.matteBackend || 'None'}</span>}</Prop>
+              <Prop label="Preview encoder">{() => <span className="ro">{engine.previewEncoder || 'None'}</span>}</Prop>
+            </>
+          )}
+          {page === 'about' && (
+            <>
+              <h3>BreadCamera 0.1 — BM Solutions</h3>
+              <p className="note">Third-party licences: THIRD_PARTY_NOTICES.md in the install folder.</p>
+            </>
+          )}
+        </div>
+      </div>
+      {confirm && (
+        <ConfirmDialog
+          title="Change the show format?"
+          body="Every output restarts and loses picture for about 1 second."
+          confirm="Change format"
+          danger={false}
+          onCancel={() => setConfirm(false)}
+          onConfirm={() => {
+            setConfirm(false);
+            save();
+          }}
+        />
+      )}
+    </Modal>
   );
 }
 ```
-(`"Tiếng Việt"` and `"English"` are language self-names and are allowed literals — the Task 2 string guard exempts them by name.)
 
-Add `matteBackend?: string` to `StateTree.engine` in `protocol.ts`. `App.tsx`: a third nav button "Cài đặt" and `view === 'settings'`.
+`ui/src/api/protocol.ts`: add `matteBackend?: string;` to `StateTree.engine`.
+
+`ui/src/shell/TitleBar.tsx`: `TitleMenus` gains `show?: (MenuItem | 'sep')[];` and, between File and Camera, `{menus.show && <Menu label="Show" items={menus.show} />}`.
+
+`ui/src/App.tsx` (`Workspace`):
+- the dialog state type gains `'settings'`;
+- `menus.show = [{ label: 'Settings…', shortcut: 'Ctrl+,', onSelect: () => setDialog('settings') }]`;
+- `<Toolbar … extra={<button className="tb" title="Settings (Ctrl+,)" onClick={() => setDialog('settings')}><Icon name="settings" />Settings</button>} />` (import `Icon`);
+- in the keydown handler: `if (e.ctrlKey && e.key === ',') { e.preventDefault(); setDialog('settings'); }`;
+- `{dialog === 'settings' && <SettingsDialog client={client} onClose={() => setDialog(null)} />}`.
+
+`ui/src/app.css` — append:
+```css
+/* settings (M5) */
+.settings-wrap { display: grid; grid-template-columns: 150px 1fr; min-height: 320px; margin: -6px -14px -14px; }
+.cats { background: var(--bm-surface); border-right: 1px solid var(--bm-border); padding: 6px; display: grid; align-content: start; gap: 2px; }
+.cats button { height: 28px; text-align: left; padding: 0 8px; border-radius: 4px; color: var(--bm-text-muted); }
+.cats button.on { background: var(--bm-brand-wash); color: var(--bm-brand); font-weight: 600; }
+.pane { padding: 12px 16px; display: grid; gap: 8px; align-content: start; }
+.pane h3 { font-size: 12px; font-weight: 600; color: var(--bm-text); }
+.pane .prop { grid-template-columns: 200px minmax(0, 1fr); }
+```
 
 Run `npm test` and `npm run build` in `ui/`.
 
@@ -248,21 +295,21 @@ Run `npm test` and `npm run build` in `ui/`.
 
 ```bash
 git add ui/src
-git commit -m "feat(ui): settings screen (rate with confirm, hold, slate, language, engine info)"
+git commit -m "feat(ui): Settings dialog with show format (confirmed), signal loss and engine info"
 ```
 
 ---
 
-### Task 2: Vietnamese-first error text and the string guard
+### Task 2: Error headlines for every engine code
 
 **Files:**
-- Create: `ui/src/errors.ts`, `ui/src/errors.test.ts`, `ui/src/test/strings.test.ts`
-- Modify: `ui/src/components/ErrorBlock.tsx` (accept `{code, message}`), every `ErrorBlock` call site that has an `ErrorInfo` (Multiview, CameraDetail, ColorMatch), `ui/src/i18n.ts` (error sentences)
+- Create: `ui/src/errors.ts`, `ui/src/errors.test.ts`
+- Modify: `ui/src/components/ErrorBlock.tsx` (accept `error?: ErrorInfo`), every `ErrorBlock` call site that shows an engine `ErrorInfo` (Inspector Input/Outputs, Effects, ColourPanel)
 
 **Interfaces:**
-- Produces: `errorText(e: ErrorInfo): { headline: string; detail: string }`; `ErrorBlock` props become `{ title?, message?, error?: ErrorInfo, severity? }` (when `error` is given, the headline is shown in bold and the engine message as the detail line).
+- Produces: `errorText(e: ErrorInfo): { headline: string; detail: string }`; `ErrorBlock` props become `{ title?, message?, error?: ErrorInfo, severity?, label? }` (when `error` is given, the headline is the bold title and the engine message the detail).
 
-Error codes from the engine (all milestones) and their Vietnamese headline (English in `en`): `input-failed` "Không mở được nguồn tín hiệu." / "The source could not be opened."; `input-ended` "Nguồn đã ngừng gửi tín hiệu." / "The source stopped sending."; `input-config` "Cấu hình nguồn không hợp lệ." / "The source settings are not valid."; `output-failed`, `srt-out-failed`, `ndi-failed`, `omt-failed`, `decklink-failed`, `aja-failed`, `vcam-failed`, `fullscreen-failed` "Đầu ra gặp lỗi và đang thử lại." / "The output failed and is retrying."; `output-config` "Cấu hình đầu ra không hợp lệ." / "The output settings are not valid."; `stage-failed` "Bước xử lý gặp lỗi nên đang được bỏ qua." / "A processing step failed and is bypassed."; `stage-overrun` "Bước xử lý quá chậm nên đang được bỏ qua." / "A processing step is too slow and is bypassed."; `matte-unavailable` "Máy này không chạy được tách nền." / "Background removal cannot run on this PC."; `background-image` "Không đọc được ảnh nền; đang dùng màu nền." / "The background image cannot be read; using the colour."; `color-lut` "Không đọc được LUT màu; chỉ dùng tinh chỉnh." / "The colour LUT cannot be read; using trims only."; `ndi-no-video` "Nguồn NDI không gửi hình." / "The NDI source sends no video."; `ndi-audio-rate` "Âm thanh NDI không phải 48 kHz nên bị bỏ qua." / "NDI audio is not 48 kHz and is ignored."; `decklink-no-signal` "Không có tín hiệu ở cổng DeckLink." / "No signal on the DeckLink input."; `capture-failed` "Không mở được thiết bị USB." / "The USB device could not be opened."; any other code "Có lỗi xảy ra." / "Something went wrong.".
+Headlines (English only): `input-failed` "The source could not be opened."; `input-ended` "The source stopped sending."; `input-config` "The source settings are not valid."; `output-failed`, `srt-out-failed`, `ndi-failed`, `omt-failed`, `decklink-failed`, `aja-failed`, `vcam-failed`, `fullscreen-failed` "The output failed and is retrying."; `output-config` "The output settings are not valid."; `stage-failed` "A processing step failed and is bypassed."; `stage-overrun` "A processing step is too slow and is bypassed."; `matte-unavailable` "Background removal cannot run on this PC."; `background-image` "The background image cannot be read; using the colour."; `color-lut` "The colour correction file cannot be read; the camera runs uncorrected."; `ndi-no-video` "The NDI source sends no video."; `ndi-audio-rate` "NDI audio is not 48 kHz and is ignored."; `decklink-no-signal` "No signal on the DeckLink input."; `capture-failed` "The camera could not be opened (USB or built-in)."; any other code "Something went wrong.".
 
 - [ ] **Step 1: Tests**
 
@@ -270,75 +317,61 @@ Error codes from the engine (all milestones) and their Vietnamese headline (Engl
 ```ts
 import { errorText } from './errors';
 
-test('known codes get a Vietnamese headline and keep the engine detail', () => {
+test('known codes get a headline and keep the engine detail', () => {
   const r = errorText({ code: 'input-failed', message: 'cannot open srt://1.2.3.4:9000: Connection refused' });
-  expect(r.headline).toBe('Không mở được nguồn tín hiệu.');
+  expect(r.headline).toBe('The source could not be opened.');
   expect(r.detail).toContain('srt://1.2.3.4:9000');
+  expect(errorText({ code: 'ndi-failed', message: 'x' }).headline).toBe('The output failed and is retrying.');
 });
 
 test('unknown codes fall back without leaking undefined', () => {
   const r = errorText({ code: 'brand-new-code', message: 'detail' });
-  expect(r.headline).toBe('Có lỗi xảy ra.');
+  expect(r.headline).toBe('Something went wrong.');
   expect(r.detail).toBe('detail');
   expect(JSON.stringify(r)).not.toContain('undefined');
 });
 ```
-
-`ui/src/test/strings.test.ts` — the guard:
-```ts
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-
-const ALLOWED = new Set(['BreadCamera', 'Multiview', 'Tiếng Việt', 'English', 'NDI', 'OMT', 'SRT', 'GPU', 'LUT', 'Lift', 'Gamma', 'Gain']);
-
-function files(dir: string): string[] {
-  return readdirSync(dir).flatMap((f) => {
-    const p = join(dir, f);
-    if (statSync(p).isDirectory()) return f === 'test' ? [] : files(p);
-    return p.endsWith('.tsx') && !p.endsWith('.test.tsx') ? [p] : [];
-  });
-}
-
-test('no hard-coded user-facing text in components', () => {
-  const offenders: string[] = [];
-  for (const f of files(join(__dirname, '..'))) {
-    const src = readFileSync(f, 'utf8');
-    for (const m of src.matchAll(/>\s*([A-Za-zÀ-ỹ][^<>{}]*?)\s*</g)) {
-      const text = m[1].trim();
-      if (text && !ALLOWED.has(text)) offenders.push(`${f}: "${text}"`);
-    }
-  }
-  expect(offenders).toEqual([]);
-});
-```
-Run `npm test` → the errors test fails (missing module); the guard reports any literal text — fix every offender by moving it into `i18n.ts`.
 
 - [ ] **Step 2: Implement**
 
 `ui/src/errors.ts`:
 ```ts
 import type { ErrorInfo } from './api/protocol';
-import { hasKey, t } from './i18n';
 
 const OUTPUT = ['output-failed', 'srt-out-failed', 'ndi-failed', 'omt-failed', 'decklink-failed', 'aja-failed', 'vcam-failed', 'fullscreen-failed'];
+const HEADLINES: Record<string, string> = {
+  'input-failed': 'The source could not be opened.',
+  'input-ended': 'The source stopped sending.',
+  'input-config': 'The source settings are not valid.',
+  'output-failed': 'The output failed and is retrying.',
+  'output-config': 'The output settings are not valid.',
+  'stage-failed': 'A processing step failed and is bypassed.',
+  'stage-overrun': 'A processing step is too slow and is bypassed.',
+  'matte-unavailable': 'Background removal cannot run on this PC.',
+  'background-image': 'The background image cannot be read; using the colour.',
+  'color-lut': 'The colour correction file cannot be read; the camera runs uncorrected.',
+  'ndi-no-video': 'The NDI source sends no video.',
+  'ndi-audio-rate': 'NDI audio is not 48 kHz and is ignored.',
+  'decklink-no-signal': 'No signal on the DeckLink input.',
+  'capture-failed': 'The camera could not be opened (USB or built-in).',
+};
 
-// Vietnamese-first sentence for the operator; the engine's English detail stays underneath.
+// A plain headline for the operator; the engine's own message stays underneath as the detail.
 export function errorText(e: ErrorInfo): { headline: string; detail: string } {
-  const key = OUTPUT.includes(e.code) ? 'err.output-failed' : `err.${e.code}`;
-  return { headline: t(hasKey(key) ? key : 'err.unknown'), detail: e.message ?? '' };
+  const code = OUTPUT.includes(e.code) ? 'output-failed' : e.code;
+  return { headline: HEADLINES[code] ?? 'Something went wrong.', detail: e.message ?? '' };
 }
 ```
-In `ui/src/i18n.ts` add `export function hasKey(k: string): k is Key { return Object.prototype.hasOwnProperty.call(vi, k); }` and the keys `err.input-failed`, `err.input-ended`, `err.input-config`, `err.output-failed`, `err.output-config`, `err.stage-failed`, `err.stage-overrun`, `err.matte-unavailable`, `err.background-image`, `err.color-lut`, `err.ndi-no-video`, `err.ndi-audio-rate`, `err.decklink-no-signal`, `err.capture-failed`, `err.unknown` to both dictionaries with the sentences above.
 
-`ErrorBlock.tsx`: accept `error?: ErrorInfo`; when present render `errorText(error).headline` as the title and `.detail` as the message. Change call sites that pass `xxx.error.message` to pass `error={xxx.error}` instead.
+`ui/src/components/ErrorBlock.tsx`: add `error?: ErrorInfo` to the props (import the type); when present, `title = errorText(error).headline` and `message = errorText(error).detail`. Change the call sites that pass `xxx.error.message` with a hand-written title (Inspector "Input failed." / "<output> failed.", Effects "<effect> bypassed.") to pass `error={xxx.error}` instead.
 
-Run `npm test` (all pass, guard clean) and `npm run build`.
+Run `npm test` and `npm run build`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add ui/src
-git commit -m "feat(ui): Vietnamese-first error sentences for every engine code; hard-coded string guard"
+git commit -m "feat(ui): plain headlines for every engine error code"
 ```
 
 ---
@@ -946,12 +979,11 @@ git commit -m "build: Inno Setup installer with VC++ runtime, virtual camera reg
 # M5 fresh-install check (owner, spec §9 M5 "a clean install works on a fresh Windows 11 machine")
 
 1. On a Windows 11 PC that never had BreadCamera or Visual Studio: run `BreadCamera-Setup-<v>.exe`.
-2. The app starts; the window shows "Chưa có camera nào…" and the GPU name in the header.
-3. Add an SRT listener camera; push a stream from OBS (`srt://<pc>:9000?mode=caller`) → "Đang phát" within 5 s, preview moving.
-4. Add an NDI output (if the NDI runtime is installed) and see it in vMix/OBS; add a Windows virtual camera output and see it in the Camera app.
-5. Close the window → outputs keep running (tray icon). Tray → "Thoát…" → the dialog's "Dừng tất cả đầu ra" stops everything.
+2. The app starts: the dark custom title bar with menus, the empty Multiview ("No cameras yet"), the Inspector, and the GPU name in the status bar. Drag the window by its title bar; minimise, maximise and restore it.
+3. Add an SRT listener camera named "Sân khấu trái" (Unicode); push a stream from OBS (`srt://<pc>:9000?mode=caller`) → the input chip turns green within 5 s, preview moving, the name shown unchanged.
+4. Add an NDI output (if the NDI runtime is installed) and see it in vMix/OBS; add a Windows virtual camera output and see it in the Camera app with the camera's name.
+5. Close the window → outputs keep running (tray icon). Tray → "Quit…" → the dialog's "Quit and stop all outputs" stops everything.
 6. Uninstall from Settings → Apps; `%APPDATA%\BreadCamera\shows` is still there.
-7. Switch to English in Settings → the app reloads in English; the glossary terms read Ready / Connecting / Live / Offline.
 ```
 
 - [ ] **Step 3: Follow-ups**
@@ -961,8 +993,7 @@ Append to `docs/superpowers/follow-ups.md`:
 ## M5
 - The 8-hour soak (`scripts/soak.ps1 -Hours 8 -Faults`) is queued as its own night run; M5 carries the 30-minute evidence.
 - Fresh-install check is a human gate: `docs/superpowers/manual-checks/m5-fresh-install.md`.
-- `@bmsolutionsvn/design` still lacks a `breadcamera` product id / account-less `BmAppShell`; the UI uses the theme only (`ui/src/App.tsx`).
-- Engine error messages stay English as detail lines under Vietnamese headlines (`ui/src/errors.ts`).
+- Engine error messages stay as detail lines under the plain headlines (`ui/src/errors.ts`).
 ```
 
 - [ ] **Step 4: Commit**
