@@ -33,6 +33,15 @@ using FramePtr = std::unique_ptr<AVFrame, FrameDel>;
 
 int64_t nowMs() { return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count(); }
 
+// Consecutive video packets that produce no frame before runOnce gives up and throws
+// (feeding the Offline + error + reconnect path, spec §3.6). A decoder that accepts
+// packets but emits nothing — the hardware-decode stall this guards — would otherwise
+// sit in `connecting` forever: the read timeout only covers packet starvation.
+// 32 is deliberately generous: real decoders emit their first frame within at most
+// ~16 input packets (reorder/DPB bound), so this tolerates 2x startup jitter and still
+// trips within about a second of video at 30 fps.
+constexpr int kMaxConsecutiveDecodeFailures = 32;
+
 std::string averr(int rc) {
   char buf[AV_ERROR_MAX_STRING_SIZE];
   av_strerror(rc, buf, sizeof(buf));
@@ -89,7 +98,14 @@ void FfmpegInput::start(InputSink& sink) {
 }
 
 void FfmpegInput::stop() {
-  stopping_ = true;
+  {
+    // Hold waitMutex_ across the store: the backoff wait evaluates its predicate
+    // under this mutex, so a notify that is not ordered by it can land between the
+    // predicate check and the wait's atomic block — a lost wakeup that costs up to
+    // the full backoff (5 s cap) before stop() gets to join.
+    std::lock_guard l(waitMutex_);
+    stopping_ = true;
+  }
   waitCv_.notify_all();
   if (thread_.joinable()) thread_.join();
 }
@@ -186,6 +202,8 @@ void FfmpegInput::runOnce() {
     }
   } cleanup{this};
 
+  int decodeFailures = 0;  // consecutive video packets that produced no frame
+
   while (!stopping_) {
     deadlineMs_ = nowMs() + opts_.readTimeout.count();
     rc = av_read_frame(fmt.get(), pkt.get());
@@ -198,11 +216,35 @@ void FfmpegInput::runOnce() {
       throw std::runtime_error("read failed on " + safeUrl() + ": " + averr(rc));
     }
     AVCodecContext* dec = pkt->stream_index == vi ? vdec.get() : (pkt->stream_index == ai ? adec.get() : nullptr);
-    if (dec && avcodec_send_packet(dec, pkt.get()) >= 0) {
-      while (avcodec_receive_frame(dec, frame.get()) >= 0) {
-        if (dec == vdec.get()) emitVideo(frame.get(), vst);
-        else emitAudio(frame.get());
-        av_frame_unref(frame.get());
+    if (dec) {
+      bool gotFrame = false;
+      std::string why;
+      const int sendRc = avcodec_send_packet(dec, pkt.get());
+      if (sendRc < 0) {
+        why = averr(sendRc);
+      } else {
+        for (;;) {
+          const int recvRc = avcodec_receive_frame(dec, frame.get());
+          if (recvRc < 0) {
+            if (recvRc != AVERROR(EAGAIN) && recvRc != AVERROR_EOF) why = averr(recvRc);
+            break;
+          }
+          gotFrame = true;
+          if (dec == vdec.get()) emitVideo(frame.get(), vst);
+          else emitAudio(frame.get());
+          av_frame_unref(frame.get());
+        }
+      }
+      if (dec == vdec.get()) {
+        if (gotFrame) {
+          decodeFailures = 0;
+        } else if (++decodeFailures >= kMaxConsecutiveDecodeFailures) {
+          // A decode that accepts packets but emits nothing must surface as an error
+          // and a reconnect, not as a silent `connecting` forever (spec §3.6).
+          throw std::runtime_error("video decode failed on " + safeUrl() + ": " +
+                                   std::to_string(decodeFailures) + " consecutive packets produced no frame" +
+                                   (why.empty() ? "" : " (" + why + ")"));
+        }
       }
     }
     av_packet_unref(pkt.get());
