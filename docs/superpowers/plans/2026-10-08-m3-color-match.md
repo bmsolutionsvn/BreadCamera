@@ -1,50 +1,59 @@
-# BreadCamera M3 — One-shot colour match Implementation Plan
+# BreadCamera M3 — One-time colour calibration with a chart Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The operator picks a reference camera and targets, optionally draws a region on each, clicks Match; BreadCamera captures ~1 s, solves white balance/exposure + Lab mean/spread + per-channel tone curves, bakes a 33³ LUT per target, and locks it; trims (exposure, temperature/tint, lift/gamma/gain, saturation), `.cube` import, undo and reset sit on top.
+**Goal:** Each camera is calibrated once against a colour chart — a printed ColorChecker Classic 24 or a tablet showing the same chart. In the camera's Colour effect the operator clicks Calibrate, holds the chart up, BreadCamera finds it (or the operator drags four corners), Capture averages ~0.5 s, solves per-channel tone curves + a 3×3 matrix, bakes a locked 33³ LUT, and reports the result in plain words.
 
-**Architecture:** Pure CPU code in `bc_core` for colour maths, the `.cube` format and the solver (unit-tested with a synthetic ΔE2000 check). A `ColorGrader` on the GPU applies the LUT (3D texture) and trims as the **first** stage (before matte, spec §3.2). The engine gains a frame-capture API; a `ColorMatchService` captures, solves off the tick thread, writes LUT files next to the show and returns paths that the router stores in the `color` stage params.
+**Rewritten 2026-10-08 after the UI mockup review (owner):** the reference-camera match with region boxes, trims and `.cube` import is replaced by chart calibration (spec §5.3, amended). Tasks 1, 3 and 4 keep their tested code (colour maths, `.cube` files for the stored LUTs, the GPU grader, the colour stage and the frame capture); the trims stay in the schema as hidden fields at neutral values. Tasks 2, 5, 6, 7 and 8 are new.
 
-**Tech Stack:** as M1/M2. No new dependencies.
+**Architecture:** Pure CPU code in `bc_core` for colour maths, chart geometry (homography), patch sampling and the solver (unit-tested with a synthetic chart and a known cast, ΔE2000). An optional chart detector in `bc_engine` uses OpenCV's `mcc` module (`BC_WITH_CHART_DETECT`); without it the operator places the corners. A `ColorGrader` on the GPU applies the LUT as the **first** stage (before matte, spec §3.2). A `ColorCalibrationService` captures frames through `Engine::capture`, samples, solves, writes the LUT next to the show and keeps the tablet reference.
 
-**Spec:** `docs/superpowers/specs/2026-10-08-breadcamera-design.md` (§5.3, §3.2, §8.1 "mean ΔE2000 below 2").
+**Tech Stack:** as M1/M2, plus OpenCV 4 with the contrib `mcc` module from vcpkg (optional: chart detection only).
+
+**Spec:** `docs/superpowers/specs/2026-10-08-breadcamera-design.md` (§5.3, §3.2, §6.4 "Calibrate", §8.1 calibration solver and chart detection).
 
 **Branch:** `bcam-m3`, cut from `bcam-m2`.
 
 ## Global Constraints
 
-- All M1 and M2 Global Constraints apply.
-- Stage order is **Color → Matte → Background**. The colour stage is a guarded stage like the others (bypass on failure/overrun, retry after 5 s).
-- The match is **one-shot and locked**: nothing changes until the operator matches again (spec §5.3). No continuous adaptation.
-- LUTs are **33³**, written as standard `.cube` files (`LUT_3D_SIZE 33`, red fastest) in `<show dir>\luts\`. The LUT works on gamma-encoded values (the pipeline's gamma 2.4), so imported `.cube` files designed for Rec.709 display-referred footage behave as expected.
-- Tone curves are clamped (|curve(x) − x| ≤ 0.15) and smoothed so a match can never produce banding or extreme shifts (spec §5.3).
-- Capture: ~1 s per camera (30 samples, every other tick) at 256×144, from the frame **before** any stage. A camera without picture (phase not `live`) fails the match with a clear message; no LUT is changed.
-- The solver's acceptance test: synthetic known transform → match → **mean ΔE2000 < 2** (spec §8.1).
+- All M1 and M2 Global Constraints apply (English-only UI, add-in effects, `BC_WITH_*` + `BC_REQUIRES`).
+- Stage order is **Color → Matte → Background**. The colour stage is a guarded stage like the others (bypass on failure/overrun, retry after 5 s); it is an add-in (`color` schema, `onAdd {"enabled": true}`).
+- Calibration is **one-time and locked**: nothing changes until the operator calibrates again (spec §5.3). No continuous adaptation.
+- The chart is the **ColorChecker Classic 24** layout (6 × 4). Printed card → target = the published sRGB values; tablet → target = the first tablet-calibrated camera's reading of the same tablet in this show (that camera keeps an identity LUT and is the reference).
+- LUTs are **33³**, written as standard `.cube` files in `<show dir>\luts\` (gamma 2.4 domain, red fastest).
+- Capture: 15 frames, every other tick, at 960×540, from the frame **before** any stage. A camera without picture fails with a clear message; no LUT changes.
+- Result ratings: mean ΔE2000 ≤ 2 **Good match**, ≤ 4 **Fair**, otherwise **Poor** (the UI shows words; numbers in the tooltip).
+- The solver's acceptance test: synthetic chart with a known cast → calibrate → **mean ΔE2000 < 2** (spec §8.1).
+- OpenCV is Apache-2.0; only the `contrib` modules that need no extra licence are built. Detection is optional: a missing `mcc` module never fails the build.
 
 ## Review Focus
 
-1. **A camera with no picture or a black/flat region** (lens cap, slate, region of one colour) — Match refuses with a readable error and changes nothing — owned by Task 2 (flat stats) and Task 5 (no-signal camera).
-2. **A malformed or huge `.cube` file** (wrong count, NaN, size 200, DOMAIN not 0..1) — import is refused with the line number, the current LUT stays — owned by Task 1 and Task 5.
-3. **Undo after two matches / reset** — undo returns to exactly the previous LUT; reset clears LUT and trims — owned by Task 5.
-4. **The LUT file disappears or is edited on disk** — the colour stage shows `color-lut` and keeps running with trims only, never black — owned by Task 4.
-5. **Extreme casts** (target 4× too bright, or strongly blue) — gains are clamped, the result is bounded and monotone, no NaN — owned by Task 2.
+1. **The corners are not on the chart, or the chart is half out of the picture** — Capture refuses with "the corners are not on the chart" and changes nothing — owned by Task 2 (sampleChart check) and Task 6.
+2. **The chart is upside down or tilted** — the result is the same as upright — owned by Task 2 (orientation test) and Task 5.
+3. **A chart that is too dark or has a clipped white patch** — Capture refuses and says what to fix (add light / lower exposure) — owned by Task 2.
+4. **The tablet reference camera is cleared or removed** — the next tablet calibration becomes the new reference; no camera is matched to a stale reading — owned by Task 6.
+5. **The LUT file disappears from disk** — the colour stage shows `color-lut` and the camera runs uncorrected, never black — owned by Task 4.
 
 ## File Structure
 
 ```
-src/core/color_math.h/.cpp     linear↔Lab, ΔE2000
-src/core/lut.h/.cpp            Lut3D type, .cube read/write, CPU apply
-src/core/color_match.h/.cpp    region sampling, solver, LUT bake
-src/gpu/color_grader.h/.cpp    3D LUT upload + trims shader
+src/core/color_math.h/.cpp     linear↔Lab, ΔE2000                         (Task 1)
+src/core/lut.h/.cpp            Lut3D type, .cube read/write, CPU apply      (Task 1)
+src/core/chart.h/.cpp          ColorChecker values, homography, sampling    (Task 2)
+src/core/calibration.h/.cpp    solver, ratings                              (Task 2)
+src/gpu/color_grader.h/.cpp    3D LUT upload + grade shader                 (Task 3)
 src/gpu/shaders/color_grade.hlsl
-src/engine/color_match_service.h/.cpp
-ui/src/screens/ColorMatch.tsx, ui/src/components/RegionPicker.tsx
+src/engine/chart_detector.h/.cpp   OpenCV mcc (BC_WITH_CHART_DETECT)        (Task 5)
+src/engine/color_calibration_service.h/.cpp                                (Task 6)
+tests/support/chart_image.h    draws a chart into a CpuImage                (Task 2)
+ui/src/calibration/*           Calibrate flow, chart overlay, chart image   (Task 7)
+docs/superpowers/manual-checks/m3-calibration.md                           (Task 8)
 ```
 
 ## Execution notes for the controller
 
-- 7 tasks → batched reviews (1–3, 4–6, 7).
+- 8 tasks → batched reviews (1–3, 4–6, 7–8).
+- Task 5 adds OpenCV (contrib) to `vcpkg.json`: the next build compiles it once (30–60 min). Expected; do not cancel. If the vcpkg build has no `mcc` module, `BC_WITH_CHART_DETECT=OFF`, the detection tests skip with a printed reason, and the manual-corner path is the product (ledger it).
 
 ---
 
@@ -408,329 +417,562 @@ git add src/core tests CMakeLists.txt
 git commit -m "feat(core): Lab/ΔE2000 colour maths and .cube LUT read/write"
 ```
 
-### Task 2: The colour-match solver
+### Task 2: Chart geometry, patch sampling and the calibration solver
 
 **Files:**
-- Create: `src/core/color_match.h`, `src/core/color_match.cpp`
-- Modify: `CMakeLists.txt`
-- Test: `tests/color_match_test.cpp`
+- Create: `src/core/chart.h`, `src/core/chart.cpp`, `src/core/calibration.h`, `src/core/calibration.cpp`, `tests/support/chart_image.h`
+- Modify: `CMakeLists.txt` (`chart.cpp`, `calibration.cpp` in `bc_core`; tests)
+- Test: `tests/chart_test.cpp`, `tests/calibration_test.cpp`
 
 **Interfaces:**
-- Consumes: `Rgb`, `Lab`, `linearToLab`, `labToLinear`, `toGamma`, `toLinearLight`, `deltaE2000`, `Lut3D` (Task 1); `CpuImage` (M1 Task 5 — `gpu/converter.h` is header-only for that struct; include it).
+- Consumes: `Rgb`, `Lab`, `linearToLab`, `toGamma`, `toLinearLight`, `deltaE2000`, `Lut3D` (Task 1); `CpuImage` (M1 Task 5 — `gpu/converter.h` declares it; include it).
 - Produces:
-  - `bc::Region { float x = 0, y = 0, w = 1, h = 1; }` (normalised 0..1), `bool bc::validRegion(const Region&)`.
-  - `std::vector<Rgb> bc::sampleRegion(const std::vector<CpuImage>& frames, const Region&, int step = 2)` — BGRA gamma-encoded bytes → **linear** samples, every `step`-th pixel in x and y.
-  - `bc::MatchResult { Lut3D lut; std::array<float,3> gains; double residualDeltaE; }`, `bc::MatchResult bc::solveColorMatch(const std::vector<Rgb>& reference, const std::vector<Rgb>& target, int lutSize = 33)` — throws `std::invalid_argument` ("not enough picture", "the region is flat") when a side has < 64 samples or a luminance spread < 0.002.
+  - `bc::ChartQuad { std::array<std::array<double, 2>, 4> c; }` — the outer corners of the 24-patch grid in normalised picture coordinates (0..1), in chart order: top-left (dark skin), top-right, bottom-right, bottom-left. `bool bc::validQuad(const ChartQuad&)`.
+  - `using bc::ChartColors = std::array<Rgb, 24>;` (linear light, row by row, 6 per row).
+  - `const ChartColors& bc::colorCheckerReference()`, `const std::array<std::array<uint8_t, 3>, 24>& bc::colorCheckerSrgb()`.
+  - `bc::Homography { std::array<double, 9> m; std::array<double, 2> map(double u, double v) const; Homography inverse() const; }`, `bc::Homography bc::chartToPicture(const ChartQuad&)` (throws `std::invalid_argument` for a degenerate quad).
+  - `bc::ChartColors bc::sampleChartRaw(const std::vector<CpuImage>& frames, const ChartQuad&)` — averages the centre 40 % of each patch over all frames, in the order the corners give; `bool bc::chartUpright(const ChartColors&)` — the neutral row is at the bottom and ramps from white to black.
+  - `bc::ChartColors bc::sampleChart(const std::vector<CpuImage>& frames, const ChartQuad&)` — `sampleChartRaw`, turned round when the chart is upside down; throws `std::invalid_argument("the corners are not on the chart")` when neither way is upright.
+  - `bc::Calibration { Lut3D lut; double deltaEBefore = 0, deltaEAfter = 0; }`, `bc::Calibration bc::solveCalibration(const ChartColors& measured, const ChartColors& target, int lutSize = 33)`, `double bc::meanDeltaE(const ChartColors&, const ChartColors&)`, `std::string_view bc::calibrationRating(double meanDeltaE)` (`"good"` ≤ 2, `"fair"` ≤ 4, else `"poor"`).
+  - Test helper `bc::test::renderChart(uint32_t w, uint32_t h, const ChartQuad&, const std::array<std::array<uint8_t,3>,24>& srgb, std::array<float, 3> cast = {1, 1, 1})` → `CpuImage` (BGRA).
 
-Algorithm (spec §5.3):
-1. **Gains** = per-channel mean(ref) / mean(target), each clamped to 0.25..4.
-2. **Lab transfer** on gained target: per channel, `(v − meanT) × clamp(stdR / stdT, 0.5, 2) + meanR` (scale 1 when `stdT < 1e-4`).
-3. **Tone curves** per RGB channel in the gamma domain: 256-bin histograms of reference and of the target after steps 1–2; curve = inverse-CDF match; smoothed with a 9-bin box; forced monotone; clamped to |curve(x) − x| ≤ 0.15.
-4. **Bake** a `lutSize`³ LUT: grid input (gamma) → linear → gains → Lab transfer → linear (clamped ≥ 0, ≤ 1) → gamma → curves.
-5. **Residual** = ΔE2000 between mean Lab of the reference and mean Lab of the corrected target.
+Solver (spec §5.3):
+1. **Refuse** when the mean luminance of the six neutrals (patches 19–24, indices 18–23) is below 0.01 ("the chart is too dark — add light on it") or the white patch (index 18) is above 0.95 ("the white patch is clipped — lower the exposure or the light on the chart").
+2. **Tone curves**, per channel, in the gamma domain: points (gamma(measured neutral), gamma(target neutral)) for the six neutrals plus (0, 0) and (1, 1); sorted by x; equal x averaged; y forced non-decreasing; linear between points; each curve clamped to |curve(x) − x| ≤ 0.25.
+3. **Matrix**: apply the curves to all 24 measured patches, back to linear; fit a 3×3 matrix to the 24 targets by least squares with a ridge pull towards identity (λ = 0.24); if its determinant is below 0.05, use identity.
+4. **Bake** a lutSize³ LUT: grid value (gamma) → curves → linear → matrix → clamp 0..1 → gamma.
+5. **ΔE**: before = `meanDeltaE(measured, target)`; after = the LUT applied (on the CPU) to the measured patches vs the target.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the test helper and the failing tests**
 
-`tests/color_match_test.cpp`:
+`tests/support/chart_image.h`:
+```cpp
+#pragma once
+#include <algorithm>
+#include <array>
+#include <cmath>
+
+#include "core/chart.h"
+#include "core/color_math.h"
+#include "gpu/converter.h"
+
+namespace bc::test {
+// Draws a 6x4 chart (patches with small gaps) into a grey picture at the given corners.
+// `cast` multiplies each patch in linear light (a camera's colour cast).
+inline bc::CpuImage renderChart(uint32_t w, uint32_t h, const bc::ChartQuad& q, const std::array<std::array<uint8_t, 3>, 24>& srgb,
+                                std::array<float, 3> cast = {1, 1, 1}) {
+  bc::CpuImage img{w, h, std::vector<uint8_t>(static_cast<size_t>(w) * h * 4)};
+  const auto inv = bc::chartToPicture(q).inverse();
+  for (uint32_t y = 0; y < h; ++y) {
+    for (uint32_t x = 0; x < w; ++x) {
+      const auto uv = inv.map((x + 0.5) / w, (y + 0.5) / h);
+      std::array<uint8_t, 3> rgb{60, 60, 60};  // background
+      if (uv[0] >= 0 && uv[0] < 1 && uv[1] >= 0 && uv[1] < 1) {
+        rgb = {20, 20, 20};  // the card between patches
+        const int col = std::min(5, static_cast<int>(uv[0] * 6)), row = std::min(3, static_cast<int>(uv[1] * 4));
+        const double fu = uv[0] * 6 - col, fv = uv[1] * 4 - row;
+        if (fu > 0.08 && fu < 0.92 && fv > 0.08 && fv < 0.92) {
+          const auto& p = srgb[static_cast<size_t>(row * 6 + col)];
+          for (int c = 0; c < 3; ++c) {
+            const float lin = std::min(1.0f, bc::toLinearLight(p[c] / 255.0f) * cast[c]);
+            rgb[c] = static_cast<uint8_t>(std::lround(bc::toGamma(lin) * 255.0f));
+          }
+        }
+      }
+      uint8_t* px = &img.bgra[(static_cast<size_t>(y) * w + x) * 4];
+      px[0] = rgb[2];
+      px[1] = rgb[1];
+      px[2] = rgb[0];
+      px[3] = 255;
+    }
+  }
+  return img;
+}
+}  // namespace bc::test
+```
+
+`tests/chart_test.cpp`:
 ```cpp
 #include <doctest/doctest.h>
 
-#include <random>
+#include <algorithm>
 
-#include "core/color_match.h"
+#include "core/chart.h"
+#include "support/chart_image.h"
 
 namespace {
-std::vector<bc::Rgb> randomColours(int n, unsigned seed) {
-  std::mt19937 rng(seed);
-  std::uniform_real_distribution<float> d(0.02f, 0.8f);
-  std::vector<bc::Rgb> out(n);
-  for (auto& c : out) c = {d(rng), d(rng), d(rng)};
-  return out;
-}
+const bc::ChartQuad kTilted{{{{0.30, 0.25}, {0.72, 0.22}, {0.74, 0.70}, {0.28, 0.72}}}};
 
-bc::Rgb cast(bc::Rgb c) {  // a known camera difference: WB shift + a tone tweak
-  return {std::pow(c.r * 1.15f, 1.1f), std::pow(c.g, 1.1f), std::pow(c.b * 0.8f, 1.1f)};
-}
-
-bc::Rgb applyLinear(const bc::Lut3D& lut, bc::Rgb lin) {
-  auto g = lut.apply({bc::toGamma(lin.r), bc::toGamma(lin.g), bc::toGamma(lin.b)});
-  return {bc::toLinearLight(g.r), bc::toLinearLight(g.g), bc::toLinearLight(g.b)};
+void checkMatchesReference(const bc::ChartColors& got) {
+  for (size_t i = 0; i < 24; ++i) {
+    const auto& want = bc::colorCheckerSrgb()[i];
+    CHECK(std::abs(bc::toGamma(got[i].r) * 255 - want[0]) <= 2.5);
+    CHECK(std::abs(bc::toGamma(got[i].g) * 255 - want[1]) <= 2.5);
+    CHECK(std::abs(bc::toGamma(got[i].b) * 255 - want[2]) <= 2.5);
+  }
 }
 }  // namespace
 
-TEST_CASE("solveColorMatch: a known cast is undone to mean ΔE2000 < 2") {
-  auto ref = randomColours(4096, 1);
-  std::vector<bc::Rgb> tgt;
-  for (auto& c : ref) tgt.push_back(cast(c));
-  auto m = bc::solveColorMatch(ref, tgt);
-  REQUIRE(m.lut.size == 33);
-  double sum = 0, before = 0;
-  for (size_t i = 0; i < ref.size(); ++i) {
-    sum += bc::deltaE2000(bc::linearToLab(ref[i]), bc::linearToLab(applyLinear(m.lut, tgt[i])));
-    before += bc::deltaE2000(bc::linearToLab(ref[i]), bc::linearToLab(tgt[i]));
-  }
-  MESSAGE("mean ΔE2000 before " << before / ref.size() << ", after " << sum / ref.size());
-  CHECK(sum / ref.size() < 2.0);
-  CHECK(m.residualDeltaE < 2.0);
+TEST_CASE("chartToPicture maps the corners, inverts, and refuses a degenerate quad") {
+  auto h = bc::chartToPicture(kTilted);
+  auto tl = h.map(0, 0), br = h.map(1, 1);
+  CHECK(tl[0] == doctest::Approx(0.30));
+  CHECK(br[1] == doctest::Approx(0.70));
+  auto back = h.inverse().map(0.74, 0.70);
+  CHECK(back[0] == doctest::Approx(1.0).epsilon(1e-6));
+  CHECK(back[1] == doctest::Approx(1.0).epsilon(1e-6));
+  CHECK_THROWS_AS(bc::chartToPicture(bc::ChartQuad{{{{0.1, 0.1}, {0.1, 0.1}, {0.1, 0.1}, {0.1, 0.1}}}}), std::invalid_argument);
+  CHECK(bc::validQuad(kTilted));
+  CHECK_FALSE(bc::validQuad(bc::ChartQuad{{{{0.3, 0.3}, {0.31, 0.3}, {0.31, 0.31}, {0.3, 0.31}}}}));  // too small
 }
 
-TEST_CASE("solveColorMatch: matching a camera to itself is (nearly) identity") {
-  auto ref = randomColours(2048, 7);
-  auto m = bc::solveColorMatch(ref, ref);
-  auto id = bc::Lut3D::identity(33);
-  double worst = 0;
-  for (size_t i = 0; i < m.lut.data.size(); ++i) {
-    worst = std::max<double>(worst, std::abs(m.lut.data[i].r - id.data[i].r));
-  }
-  CHECK(worst < 0.03);
+TEST_CASE("sampleChart reads every patch of a tilted chart") {
+  auto img = bc::test::renderChart(640, 360, kTilted, bc::colorCheckerSrgb());
+  checkMatchesReference(bc::sampleChart({img}, kTilted));
 }
 
-TEST_CASE("solveColorMatch: refuses flat or tiny regions") {
-  std::vector<bc::Rgb> flat(1000, {0.2f, 0.2f, 0.2f});
-  auto ok = randomColours(1000, 3);
-  CHECK_THROWS_AS(bc::solveColorMatch(ok, flat), std::invalid_argument);
-  CHECK_THROWS_AS(bc::solveColorMatch(ok, std::vector<bc::Rgb>(10, {0.5f, 0.5f, 0.5f})), std::invalid_argument);
+TEST_CASE("sampleChart turns an upside-down chart to the normal order") {
+  auto reversed = bc::colorCheckerSrgb();
+  std::reverse(reversed.begin(), reversed.end());  // the card held upside down
+  auto img = bc::test::renderChart(640, 360, kTilted, reversed);
+  checkMatchesReference(bc::sampleChart({img}, kTilted));
 }
 
-TEST_CASE("solveColorMatch: extreme casts stay bounded, monotone and finite") {
-  auto ref = randomColours(2048, 11);
-  std::vector<bc::Rgb> bright;
-  for (auto& c : ref) bright.push_back({std::min(c.r * 4.0f, 1.0f), std::min(c.g * 4.0f, 1.0f), std::min(c.b * 6.0f, 1.0f)});
-  auto m = bc::solveColorMatch(ref, bright);
-  for (auto& c : m.lut.data) {
-    CHECK(std::isfinite(c.r));
-    CHECK(c.r >= 0.0f);
-    CHECK(c.r <= 1.0f);
-  }
-  for (int i = 1; i < m.lut.size; ++i) CHECK(m.lut.at(i, 0, 0).r >= m.lut.at(i - 1, 0, 0).r - 1e-4f);
-  for (auto g : m.gains) CHECK(g >= 0.25f);
-}
-
-TEST_CASE("sampleRegion: picks the region and linearises") {
-  bc::CpuImage img{4, 2, std::vector<uint8_t>(4 * 2 * 4, 0)};
-  for (int i = 0; i < 4 * 2; ++i) {
-    const bool right = (i % 4) >= 2;
-    img.bgra[i * 4 + 2] = right ? 255 : 0;  // red on the right half
-  }
-  auto s = bc::sampleRegion({img}, {0.5f, 0, 0.5f, 1}, 1);
-  REQUIRE(s.size() == 4);
-  for (auto& c : s) CHECK(c.r == doctest::Approx(1.0f));
-  CHECK_FALSE(bc::validRegion({0.9f, 0, 0.5f, 1}));
-  CHECK(bc::validRegion({0, 0, 1, 1}));
+TEST_CASE("sampleChart refuses corners that are not on the chart") {
+  auto img = bc::test::renderChart(640, 360, kTilted, bc::colorCheckerSrgb());
+  bc::ChartQuad off{{{{0.02, 0.02}, {0.2, 0.02}, {0.2, 0.15}, {0.02, 0.15}}}};
+  CHECK_THROWS_WITH_AS(bc::sampleChart({img}, off), doctest::Contains("not on the chart"), std::invalid_argument);
 }
 ```
 
-Add it to `bc_tests`, `src/core/color_match.cpp` to `bc_core`.
+`tests/calibration_test.cpp`:
+```cpp
+#include <doctest/doctest.h>
+
+#include <cmath>
+
+#include "core/calibration.h"
+
+namespace {
+// A camera with channel crosstalk, more gain and a slightly different tone response.
+bc::ChartColors withCast(const bc::ChartColors& ref) {
+  bc::ChartColors out;
+  for (size_t i = 0; i < 24; ++i) {
+    const auto c = ref[i];
+    const float r = 0.85f * c.r + 0.10f * c.g + 0.02f * c.b;
+    const float g = 0.05f * c.r + 0.80f * c.g + 0.05f * c.b;
+    const float b = 0.02f * c.r + 0.08f * c.g + 0.65f * c.b;
+    out[i] = {std::pow(std::min(1.0f, r * 1.1f), 1.08f), std::pow(std::min(1.0f, g * 1.1f), 1.08f), std::pow(std::min(1.0f, b * 1.1f), 1.08f)};
+  }
+  return out;
+}
+}  // namespace
+
+TEST_CASE("solveCalibration: a camera with a known cast is corrected below 2 dE") {
+  const auto& ref = bc::colorCheckerReference();
+  auto cal = bc::solveCalibration(withCast(ref), ref);
+  MESSAGE("mean dE2000 before " << cal.deltaEBefore << ", after " << cal.deltaEAfter);
+  CHECK(cal.deltaEBefore > 5);
+  CHECK(cal.deltaEAfter < 2);
+  CHECK(cal.lut.size == 33);
+  CHECK(bc::calibrationRating(cal.deltaEAfter) == "good");
+}
+
+TEST_CASE("solveCalibration: a camera that already matches gets a near-identity LUT") {
+  const auto& ref = bc::colorCheckerReference();
+  auto cal = bc::solveCalibration(ref, ref);
+  CHECK(cal.deltaEAfter < 0.5);
+  auto mid = cal.lut.apply({0.5f, 0.5f, 0.5f});
+  CHECK(mid.r == doctest::Approx(0.5).epsilon(0.02));
+  CHECK(mid.b == doctest::Approx(0.5).epsilon(0.02));
+}
+
+TEST_CASE("solveCalibration: too dark or clipped charts are refused; an extreme cast stays bounded") {
+  const auto& ref = bc::colorCheckerReference();
+  bc::ChartColors dark;
+  for (size_t i = 0; i < 24; ++i) dark[i] = {ref[i].r * 0.005f, ref[i].g * 0.005f, ref[i].b * 0.005f};
+  CHECK_THROWS_WITH_AS(bc::solveCalibration(dark, ref), doctest::Contains("too dark"), std::invalid_argument);
+  auto clipped = ref;
+  clipped[18] = {1, 1, 1};
+  CHECK_THROWS_WITH_AS(bc::solveCalibration(clipped, ref), doctest::Contains("clipped"), std::invalid_argument);
+  bc::ChartColors blue;
+  for (size_t i = 0; i < 24; ++i) blue[i] = {ref[i].r * 0.3f, ref[i].g * 0.5f, std::min(0.9f, ref[i].b * 3.0f)};
+  auto cal = bc::solveCalibration(blue, ref);
+  for (auto& e : cal.lut.data) {
+    CHECK(std::isfinite(e.r));
+    CHECK(e.g >= 0.0f);
+    CHECK(e.b <= 1.0f);
+  }
+}
+
+TEST_CASE("calibrationRating words") {
+  CHECK(bc::calibrationRating(1.9) == "good");
+  CHECK(bc::calibrationRating(3.5) == "fair");
+  CHECK(bc::calibrationRating(6.0) == "poor");
+}
+```
+
+Add both test files to `bc_tests`.
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "solveColorMatch*,sampleRegion*"`
-Expected: build FAILS.
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "chartToPicture*,sampleChart*,solveCalibration*,calibrationRating*"`
+Expected: build FAILS — `core/chart.h` not found.
 
-- [ ] **Step 3: Implement the solver**
+- [ ] **Step 3: Chart geometry and sampling**
 
-`src/core/color_match.h`:
+`src/core/chart.h`:
 ```cpp
 #pragma once
 #include <array>
+#include <cstdint>
 #include <vector>
 
 #include "core/color_math.h"
-#include "core/lut.h"
-#include "gpu/converter.h"  // CpuImage only
+#include "gpu/converter.h"  // CpuImage
 
 namespace bc {
-struct Region {
-  float x = 0, y = 0, w = 1, h = 1;  // normalised
+// Outer corners of the 24-patch grid, normalised to the picture (0..1), in chart order:
+// top-left (dark skin), top-right, bottom-right, bottom-left.
+struct ChartQuad {
+  std::array<std::array<double, 2>, 4> c;
 };
-bool validRegion(const Region& r);
-std::vector<Rgb> sampleRegion(const std::vector<CpuImage>& frames, const Region& r, int step = 2);
+using ChartColors = std::array<Rgb, 24>;  // linear light, row by row, 6 per row
 
-struct MatchResult {
-  Lut3D lut;
-  std::array<float, 3> gains{1, 1, 1};
-  double residualDeltaE = 0;
+// ColorChecker Classic 24, published sRGB (D65) values (spec §5.3).
+const std::array<std::array<uint8_t, 3>, 24>& colorCheckerSrgb();
+const ChartColors& colorCheckerReference();  // the same, in linear light
+
+// Chart space (u across the 6 columns, v down the 4 rows, both 0..1) to the picture.
+struct Homography {
+  std::array<double, 9> m;  // a b c / d e f / g h 1
+  std::array<double, 2> map(double u, double v) const;
+  Homography inverse() const;
 };
-// spec §5.3: gains → Lab mean/spread → clamped tone curves → baked LUT.
-MatchResult solveColorMatch(const std::vector<Rgb>& reference, const std::vector<Rgb>& target, int lutSize = 33);
+Homography chartToPicture(const ChartQuad& q);  // throws std::invalid_argument for a degenerate quad
+bool validQuad(const ChartQuad& q);              // convex, inside the picture, at least 0.2 % of it
+
+ChartColors sampleChartRaw(const std::vector<CpuImage>& frames, const ChartQuad& q);
+bool chartUpright(const ChartColors& c);
+ChartColors sampleChart(const std::vector<CpuImage>& frames, const ChartQuad& q);
 }  // namespace bc
 ```
 
-`src/core/color_match.cpp`:
+`src/core/chart.cpp`:
 ```cpp
-#include "core/color_match.h"
+#include "core/chart.h"
 
 #include <algorithm>
 #include <cmath>
-#include <numeric>
 #include <stdexcept>
 
 namespace bc {
 namespace {
-struct Stats {
-  double mean[3] = {0, 0, 0};
-  double sd[3] = {0, 0, 0};
-};
-
-Stats labStats(const std::vector<Lab>& v) {
-  Stats s;
-  for (auto& c : v) {
-    s.mean[0] += c.L;
-    s.mean[1] += c.a;
-    s.mean[2] += c.b;
-  }
-  for (double& m : s.mean) m /= static_cast<double>(v.size());
-  for (auto& c : v) {
-    s.sd[0] += (c.L - s.mean[0]) * (c.L - s.mean[0]);
-    s.sd[1] += (c.a - s.mean[1]) * (c.a - s.mean[1]);
-    s.sd[2] += (c.b - s.mean[2]) * (c.b - s.mean[2]);
-  }
-  for (double& d : s.sd) d = std::sqrt(d / static_cast<double>(v.size()));
+double luma(const Rgb& c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
+double chroma(const Rgb& c) {
+  const double hi = std::max({c.r, c.g, c.b}), lo = std::min({c.r, c.g, c.b});
+  return (hi - lo) / (hi + 1e-6);
+}
+double rowChroma(const ChartColors& p, int row) {
+  double s = 0;
+  for (int i = 0; i < 6; ++i) s += chroma(p[static_cast<size_t>(row * 6 + i)]);
   return s;
-}
-
-float ch(const Rgb& c, int i) { return i == 0 ? c.r : i == 1 ? c.g : c.b; }
-
-void checkUsable(const std::vector<Rgb>& v, const char* who) {
-  if (v.size() < 64) throw std::invalid_argument(std::string("not enough picture in the ") + who + " region");
-  double lo = 1e9, hi = -1e9;
-  for (auto& c : v) {
-    const double y = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
-    lo = std::min(lo, y);
-    hi = std::max(hi, y);
-  }
-  if (hi - lo < 0.002) throw std::invalid_argument(std::string("the ") + who + " region is flat (one colour); pick a region with detail");
-}
-
-// Inverse-CDF tone curve, gamma domain, 256 points.
-std::array<float, 256> toneCurve(const std::vector<float>& ref, const std::vector<float>& tgt) {
-  auto cdf = [](const std::vector<float>& v) {
-    std::array<double, 256> h{};
-    for (float x : v) h[static_cast<size_t>(std::clamp(x, 0.0f, 1.0f) * 255.0f + 0.5f)] += 1;
-    std::partial_sum(h.begin(), h.end(), h.begin());
-    for (double& x : h) x /= h.back();
-    return h;
-  };
-  const auto cr = cdf(ref), ct = cdf(tgt);
-  std::array<float, 256> curve{};
-  size_t j = 0;
-  for (size_t i = 0; i < 256; ++i) {
-    while (j < 255 && cr[j] < ct[i]) ++j;
-    curve[i] = static_cast<float>(j) / 255.0f;
-  }
-  std::array<float, 256> smooth{};
-  for (int i = 0; i < 256; ++i) {
-    float s = 0;
-    int n = 0;
-    for (int k = std::max(0, i - 4); k <= std::min(255, i + 4); ++k, ++n) s += curve[static_cast<size_t>(k)];
-    const float x = static_cast<float>(i) / 255.0f;
-    smooth[static_cast<size_t>(i)] = std::clamp(s / static_cast<float>(n), x - 0.15f, x + 0.15f);
-  }
-  for (size_t i = 1; i < 256; ++i) smooth[i] = std::max(smooth[i], smooth[i - 1]);
-  for (auto& v : smooth) v = std::clamp(v, 0.0f, 1.0f);
-  return smooth;
-}
-
-float curveAt(const std::array<float, 256>& c, float x) {
-  const float p = std::clamp(x, 0.0f, 1.0f) * 255.0f;
-  const size_t i = std::min<size_t>(static_cast<size_t>(p), 254);
-  const float t = p - static_cast<float>(i);
-  return c[i] + (c[i + 1] - c[i]) * t;
 }
 }  // namespace
 
-bool validRegion(const Region& r) {
-  return r.x >= 0 && r.y >= 0 && r.w > 0.01f && r.h > 0.01f && r.x + r.w <= 1.0001f && r.y + r.h <= 1.0001f;
+const std::array<std::array<uint8_t, 3>, 24>& colorCheckerSrgb() {
+  static const std::array<std::array<uint8_t, 3>, 24> v{{
+      {115, 82, 68},   {194, 150, 130}, {98, 122, 157},  {87, 108, 67},   {133, 128, 177}, {103, 189, 170},
+      {214, 126, 44},  {80, 91, 166},   {193, 90, 99},   {94, 60, 108},   {157, 188, 64},  {224, 163, 46},
+      {56, 61, 150},   {70, 148, 73},   {175, 54, 60},   {231, 199, 31},  {187, 86, 149},  {8, 133, 161},
+      {243, 243, 242}, {200, 200, 200}, {160, 160, 160}, {122, 122, 121}, {85, 85, 85},    {52, 52, 52},
+  }};
+  return v;
 }
 
-std::vector<Rgb> sampleRegion(const std::vector<CpuImage>& frames, const Region& r, int step) {
-  std::vector<Rgb> out;
-  for (auto& f : frames) {
-    const int x0 = static_cast<int>(r.x * f.width), y0 = static_cast<int>(r.y * f.height);
-    const int x1 = std::min<int>(static_cast<int>((r.x + r.w) * f.width), f.width);
-    const int y1 = std::min<int>(static_cast<int>((r.y + r.h) * f.height), f.height);
-    for (int y = y0; y < y1; y += step)
-      for (int x = x0; x < x1; x += step) {
-        const uint8_t* p = &f.bgra[(static_cast<size_t>(y) * f.width + x) * 4];
-        out.push_back({toLinearLight(p[2] / 255.0f), toLinearLight(p[1] / 255.0f), toLinearLight(p[0] / 255.0f)});
+const ChartColors& colorCheckerReference() {
+  static const ChartColors lin = [] {
+    ChartColors out;
+    for (size_t i = 0; i < 24; ++i) {
+      const auto& s = colorCheckerSrgb()[i];
+      out[i] = {toLinearLight(s[0] / 255.0f), toLinearLight(s[1] / 255.0f), toLinearLight(s[2] / 255.0f)};
+    }
+    return out;
+  }();
+  return lin;
+}
+
+std::array<double, 2> Homography::map(double u, double v) const {
+  const double w = m[6] * u + m[7] * v + m[8];
+  return {(m[0] * u + m[1] * v + m[2]) / w, (m[3] * u + m[4] * v + m[5]) / w};
+}
+
+Homography Homography::inverse() const {
+  const auto& a = m;
+  const double det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6]) + a[2] * (a[3] * a[7] - a[4] * a[6]);
+  if (std::abs(det) < 1e-12) throw std::invalid_argument("the chart corners are degenerate");
+  Homography r;
+  r.m = {(a[4] * a[8] - a[5] * a[7]) / det, (a[2] * a[7] - a[1] * a[8]) / det, (a[1] * a[5] - a[2] * a[4]) / det,
+         (a[5] * a[6] - a[3] * a[8]) / det, (a[0] * a[8] - a[2] * a[6]) / det, (a[2] * a[3] - a[0] * a[5]) / det,
+         (a[3] * a[7] - a[4] * a[6]) / det, (a[1] * a[6] - a[0] * a[7]) / det, (a[0] * a[4] - a[1] * a[3]) / det};
+  return r;
+}
+
+// Unit square → quad (Heckbert): (0,0)→c0, (1,0)→c1, (1,1)→c2, (0,1)→c3.
+Homography chartToPicture(const ChartQuad& q) {
+  const auto& [p0, p1, p2, p3] = q.c;
+  const double dx1 = p1[0] - p2[0], dx2 = p3[0] - p2[0], dx3 = p0[0] - p1[0] + p2[0] - p3[0];
+  const double dy1 = p1[1] - p2[1], dy2 = p3[1] - p2[1], dy3 = p0[1] - p1[1] + p2[1] - p3[1];
+  const double den = dx1 * dy2 - dx2 * dy1;
+  if (std::abs(den) < 1e-12) throw std::invalid_argument("the chart corners are degenerate");
+  const double g = (dx3 * dy2 - dx2 * dy3) / den;
+  const double h = (dx1 * dy3 - dx3 * dy1) / den;
+  Homography r;
+  r.m = {p1[0] - p0[0] + g * p1[0], p3[0] - p0[0] + h * p3[0], p0[0],
+         p1[1] - p0[1] + g * p1[1], p3[1] - p0[1] + h * p3[1], p0[1],
+         g, h, 1.0};
+  return r;
+}
+
+bool validQuad(const ChartQuad& q) {
+  double area = 0;
+  int sign = 0;
+  for (int i = 0; i < 4; ++i) {
+    const auto& a = q.c[static_cast<size_t>(i)];
+    const auto& b = q.c[static_cast<size_t>((i + 1) % 4)];
+    const auto& c = q.c[static_cast<size_t>((i + 2) % 4)];
+    if (a[0] < -0.05 || a[0] > 1.05 || a[1] < -0.05 || a[1] > 1.05) return false;
+    area += a[0] * b[1] - b[0] * a[1];
+    const double cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+    const int s = cross > 0 ? 1 : cross < 0 ? -1 : 0;
+    if (s == 0 || (sign != 0 && s != sign)) return false;
+    sign = s;
+  }
+  return std::abs(area) / 2 >= 0.002;
+}
+
+ChartColors sampleChartRaw(const std::vector<CpuImage>& frames, const ChartQuad& q) {
+  if (frames.empty()) throw std::invalid_argument("no frames to sample");
+  const auto h = chartToPicture(q);
+  ChartColors out{};
+  for (int p = 0; p < 24; ++p) {
+    const double cu = (p % 6 + 0.5) / 6.0, cv = (p / 6 + 0.5) / 4.0;
+    double r = 0, g = 0, b = 0;
+    int n = 0;
+    for (const auto& f : frames) {
+      for (int sy = -3; sy <= 3; ++sy) {
+        for (int sx = -3; sx <= 3; ++sx) {
+          const auto xy = h.map(cu + sx * (0.2 / 6.0) / 3.0, cv + sy * (0.2 / 4.0) / 3.0);
+          const int x = std::clamp(static_cast<int>(xy[0] * f.width), 0, static_cast<int>(f.width) - 1);
+          const int y = std::clamp(static_cast<int>(xy[1] * f.height), 0, static_cast<int>(f.height) - 1);
+          const uint8_t* px = &f.bgra[(static_cast<size_t>(y) * f.width + x) * 4];
+          r += toLinearLight(px[2] / 255.0f);
+          g += toLinearLight(px[1] / 255.0f);
+          b += toLinearLight(px[0] / 255.0f);
+          ++n;
+        }
       }
+    }
+    out[static_cast<size_t>(p)] = {static_cast<float>(r / n), static_cast<float>(g / n), static_cast<float>(b / n)};
   }
   return out;
 }
 
-MatchResult solveColorMatch(const std::vector<Rgb>& reference, const std::vector<Rgb>& target, int lutSize) {
-  checkUsable(reference, "reference");
-  checkUsable(target, "target");
-  MatchResult res;
-  // 1. gains
-  for (int c = 0; c < 3; ++c) {
-    double mr = 0, mt = 0;
-    for (auto& v : reference) mr += ch(v, c);
-    for (auto& v : target) mt += ch(v, c);
-    res.gains[static_cast<size_t>(c)] = mt > 1e-6 ? std::clamp(static_cast<float>(mr / mt), 0.25f, 4.0f) : 1.0f;
-  }
-  auto gain = [&](Rgb v) { return Rgb{v.r * res.gains[0], v.g * res.gains[1], v.b * res.gains[2]}; };
-  // 2. Lab mean/spread
-  std::vector<Lab> labR, labT;
-  for (auto& v : reference) labR.push_back(linearToLab(v));
-  for (auto& v : target) labT.push_back(linearToLab(gain(v)));
-  const Stats sr = labStats(labR), st = labStats(labT);
-  double scale[3];
-  for (int i = 0; i < 3; ++i) scale[i] = st.sd[i] < 1e-4 ? 1.0 : std::clamp(sr.sd[i] / st.sd[i], 0.5, 2.0);
-  auto transfer = [&](Rgb v) {
-    Lab l = linearToLab(gain(v));
-    l.L = (l.L - st.mean[0]) * scale[0] + sr.mean[0];
-    l.a = (l.a - st.mean[1]) * scale[1] + sr.mean[1];
-    l.b = (l.b - st.mean[2]) * scale[2] + sr.mean[2];
-    Rgb o = labToLinear(l);
-    return Rgb{std::clamp(o.r, 0.0f, 1.0f), std::clamp(o.g, 0.0f, 1.0f), std::clamp(o.b, 0.0f, 1.0f)};
-  };
-  // 3. tone curves in the gamma domain
-  std::array<std::array<float, 256>, 3> curves{};
-  for (int c = 0; c < 3; ++c) {
-    std::vector<float> gr, gt;
-    for (auto& v : reference) gr.push_back(toGamma(ch(v, c)));
-    for (auto& v : target) gt.push_back(toGamma(ch(transfer(v), c)));
-    curves[static_cast<size_t>(c)] = toneCurve(gr, gt);
-  }
-  auto full = [&](Rgb lin) {
-    Rgb t = transfer(lin);
-    return Rgb{curveAt(curves[0], toGamma(t.r)), curveAt(curves[1], toGamma(t.g)), curveAt(curves[2], toGamma(t.b))};
-  };
-  // 4. bake
-  res.lut = Lut3D::identity(lutSize);
-  for (auto& e : res.lut.data) e = full({toLinearLight(e.r), toLinearLight(e.g), toLinearLight(e.b)});
-  // 5. residual on the means
-  Rgb mr{}, mc{};
-  for (auto& v : reference) {
-    mr.r += v.r / reference.size();
-    mr.g += v.g / reference.size();
-    mr.b += v.b / reference.size();
-  }
-  for (auto& v : target) {
-    auto g = res.lut.apply({toGamma(v.r), toGamma(v.g), toGamma(v.b)});
-    mc.r += toLinearLight(g.r) / target.size();
-    mc.g += toLinearLight(g.g) / target.size();
-    mc.b += toLinearLight(g.b) / target.size();
-  }
-  res.residualDeltaE = deltaE2000(linearToLab(mr), linearToLab(mc));
-  return res;
+bool chartUpright(const ChartColors& c) {
+  return rowChroma(c, 3) < rowChroma(c, 0) && rowChroma(c, 3) < rowChroma(c, 1) && luma(c[18]) >= 1.5 * luma(c[23]);
+}
+
+ChartColors sampleChart(const std::vector<CpuImage>& frames, const ChartQuad& q) {
+  if (!validQuad(q)) throw std::invalid_argument("place the four corners on the chart");
+  auto out = sampleChartRaw(frames, q);
+  if (chartUpright(out)) return out;
+  std::reverse(out.begin(), out.end());  // held upside down
+  if (chartUpright(out)) return out;
+  throw std::invalid_argument("the corners are not on the chart");
 }
 }  // namespace bc
 ```
 
-- [ ] **Step 4: Run the tests**
+- [ ] **Step 4: The solver**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "solveColorMatch*,sampleRegion*"`
-Expected: 5 cases pass; the log prints "mean ΔE2000 before X, after Y" with Y < 2.
+`src/core/calibration.h`:
+```cpp
+#pragma once
+#include <string_view>
 
-If the ΔE check fails, do **not** relax the bound (it is the spec's acceptance number). Investigate in this order and ledger each finding: (a) step 2 over-correcting — try the test with the Lab scale clamped to 1 and report both numbers; (b) the 9-bin smoothing — try 5; (c) histogram bin quantisation at the dark end. Report the numbers to the planner if none brings it under 2.
+#include "core/chart.h"
+#include "core/lut.h"
 
-- [ ] **Step 5: Commit**
+namespace bc {
+struct Calibration {
+  Lut3D lut;
+  double deltaEBefore = 0;
+  double deltaEAfter = 0;
+};
+
+// measured → target (spec §5.3): tone curves from the neutrals, a 3x3 matrix by least squares,
+// baked into a lutSize³ LUT. Throws std::invalid_argument when the chart is too dark or clipped.
+Calibration solveCalibration(const ChartColors& measured, const ChartColors& target, int lutSize = 33);
+double meanDeltaE(const ChartColors& a, const ChartColors& b);
+std::string_view calibrationRating(double meanDeltaE);
+}  // namespace bc
+```
+
+`src/core/calibration.cpp`:
+```cpp
+#include "core/calibration.h"
+
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace bc {
+namespace {
+using Mat3 = std::array<std::array<double, 3>, 3>;
+
+double luma(const Rgb& c) { return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; }
+float ch(const Rgb& c, int i) { return i == 0 ? c.r : i == 1 ? c.g : c.b; }
+
+// One tone curve: sorted, non-decreasing points in the gamma domain.
+struct Curve {
+  std::vector<std::pair<double, double>> pts;
+  double operator()(double x) const {
+    if (x <= pts.front().first) return pts.front().second;
+    for (size_t i = 1; i < pts.size(); ++i) {
+      if (x <= pts[i].first) {
+        const auto [x0, y0] = pts[i - 1];
+        const auto [x1, y1] = pts[i];
+        return x1 - x0 < 1e-9 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+      }
+    }
+    return pts.back().second;
+  }
+};
+
+Curve neutralCurve(const ChartColors& measured, const ChartColors& target, int c) {
+  std::vector<std::pair<double, double>> p{{0.0, 0.0}, {1.0, 1.0}};
+  for (size_t i = 18; i < 24; ++i) p.push_back({toGamma(ch(measured[i], c)), toGamma(ch(target[i], c))});
+  std::sort(p.begin(), p.end());
+  Curve out;
+  for (auto& [x, y] : p) {
+    if (!out.pts.empty() && std::abs(out.pts.back().first - x) < 1e-6) {
+      out.pts.back().second = (out.pts.back().second + y) / 2;
+      continue;
+    }
+    out.pts.push_back({x, y});
+  }
+  for (size_t i = 1; i < out.pts.size(); ++i) out.pts[i].second = std::max(out.pts[i].second, out.pts[i - 1].second);
+  for (auto& [x, y] : out.pts) y = std::clamp(y, x - 0.25, x + 0.25);
+  return out;
+}
+
+Rgb curved(const std::array<Curve, 3>& curves, Rgb lin) {
+  return {toLinearLight(static_cast<float>(curves[0](toGamma(lin.r)))), toLinearLight(static_cast<float>(curves[1](toGamma(lin.g)))),
+          toLinearLight(static_cast<float>(curves[2](toGamma(lin.b))))};
+}
+
+double det3(const Mat3& a) {
+  return a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+         a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+}
+
+// Solves A x = b for 3x3 A (Cramer).
+std::array<double, 3> solve3(const Mat3& a, const std::array<double, 3>& b) {
+  const double d = det3(a);
+  std::array<double, 3> x{};
+  for (int k = 0; k < 3; ++k) {
+    Mat3 m = a;
+    for (int r = 0; r < 3; ++r) m[static_cast<size_t>(r)][static_cast<size_t>(k)] = b[static_cast<size_t>(r)];
+    x[static_cast<size_t>(k)] = det3(m) / d;
+  }
+  return x;
+}
+
+// Least squares x_i·M ≈ t_i, pulled towards identity: (XᵀX + λI) M_k = Xᵀt_k + λ e_k.
+Mat3 fitMatrix(const std::vector<Rgb>& x, const ChartColors& t) {
+  constexpr double kLambda = 0.24;
+  Mat3 xtx{};
+  for (auto& v : x)
+    for (int r = 0; r < 3; ++r)
+      for (int c = 0; c < 3; ++c) xtx[static_cast<size_t>(r)][static_cast<size_t>(c)] += ch(v, r) * ch(v, c);
+  for (int i = 0; i < 3; ++i) xtx[static_cast<size_t>(i)][static_cast<size_t>(i)] += kLambda;
+  Mat3 m{};
+  for (int k = 0; k < 3; ++k) {
+    std::array<double, 3> xty{};
+    for (size_t i = 0; i < x.size(); ++i)
+      for (int r = 0; r < 3; ++r) xty[static_cast<size_t>(r)] += ch(x[i], r) * ch(t[i], k);
+    xty[static_cast<size_t>(k)] += kLambda;
+    m[static_cast<size_t>(k)] = solve3(xtx, xty);  // row k: output channel k from (r, g, b)
+  }
+  if (det3(m) < 0.05) m = {{{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};
+  return m;
+}
+
+Rgb apply(const Mat3& m, Rgb v) {
+  auto row = [&](int k) {
+    const auto& r = m[static_cast<size_t>(k)];
+    return static_cast<float>(std::clamp(r[0] * v.r + r[1] * v.g + r[2] * v.b, 0.0, 1.0));
+  };
+  return {row(0), row(1), row(2)};
+}
+}  // namespace
+
+double meanDeltaE(const ChartColors& a, const ChartColors& b) {
+  double s = 0;
+  for (size_t i = 0; i < 24; ++i) s += deltaE2000(linearToLab(a[i]), linearToLab(b[i]));
+  return s / 24;
+}
+
+std::string_view calibrationRating(double d) { return d <= 2 ? "good" : d <= 4 ? "fair" : "poor"; }
+
+Calibration solveCalibration(const ChartColors& measured, const ChartColors& target, int lutSize) {
+  double neutral = 0;
+  for (size_t i = 18; i < 24; ++i) neutral += luma(measured[i]);
+  if (neutral / 6 < 0.01) throw std::invalid_argument("the chart is too dark — add light on it");
+  if (luma(measured[18]) > 0.95) throw std::invalid_argument("the white patch is clipped — lower the exposure or the light on the chart");
+
+  const std::array<Curve, 3> curves{neutralCurve(measured, target, 0), neutralCurve(measured, target, 1), neutralCurve(measured, target, 2)};
+  std::vector<Rgb> x;
+  for (auto& m : measured) x.push_back(curved(curves, m));
+  const Mat3 mat = fitMatrix(x, target);
+
+  Calibration out;
+  out.lut.size = lutSize;
+  out.lut.data.resize(static_cast<size_t>(lutSize) * lutSize * lutSize);
+  const float n1 = static_cast<float>(lutSize - 1);
+  for (int b = 0; b < lutSize; ++b)
+    for (int g = 0; g < lutSize; ++g)
+      for (int r = 0; r < lutSize; ++r) {
+        const Rgb lin{toLinearLight(r / n1), toLinearLight(g / n1), toLinearLight(b / n1)};
+        const Rgb v = apply(mat, curved(curves, lin));
+        out.lut.data[static_cast<size_t>((b * lutSize + g) * lutSize + r)] = {toGamma(v.r), toGamma(v.g), toGamma(v.b)};
+      }
+
+  ChartColors corrected;
+  for (size_t i = 0; i < 24; ++i) {
+    const auto gOut = out.lut.apply({toGamma(measured[i].r), toGamma(measured[i].g), toGamma(measured[i].b)});
+    corrected[i] = {toLinearLight(gOut.r), toLinearLight(gOut.g), toLinearLight(gOut.b)};
+  }
+  out.deltaEBefore = meanDeltaE(measured, target);
+  out.deltaEAfter = meanDeltaE(corrected, target);
+  return out;
+}
+}  // namespace bc
+```
+Check against Task 1 before writing: `Lut3D::apply` takes and returns **gamma-encoded** values and the data layout is red-fastest (`index = (b·n + g)·n + r`); if Task 1's helpers differ, adapt here and ledger it.
+
+- [ ] **Step 5: Run the tests**
+
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "chartToPicture*,sampleChart*,solveCalibration*,calibrationRating*"`
+Expected: all pass. The first solver case prints the before/after ΔE — paste it into the report. If "after" is not below 2, do not loosen the bound: report the numbers and the per-patch worst three.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/core tests CMakeLists.txt
-git commit -m "feat(core): colour-match solver (gains, Lab transfer, tone curves) baked to a 33³ LUT"
+git commit -m "feat(core): chart geometry, patch sampling and the chart calibration solver"
 ```
 
 ### Task 3: The colour stage parameters and the GPU colour grader
@@ -744,7 +986,7 @@ git commit -m "feat(core): colour-match solver (gains, Lab transfer, tone curves
 - Consumes: `StageField`/`StageSchema`/`normalizeStageParams` (M2 Task 1); `Lut3D` (Task 1); `GpuDevice`, `TexturePool`, `Converter::kLinearFormat` (M1).
 - Produces:
   - `StageField::hidden` (`bool`, default `false`; emitted as `"hidden": true` by `schemaToJson`).
-  - Stage `color` (first in `stageSchemas()`): `enabled` bool false; `exposure` −3..3 step 0.05 = 0 (EV); `temperature` −100..100 step 1 = 0; `tint` −100..100 step 1 = 0; `lift` −0.2..0.2 step 0.005 = 0; `gamma` 0.5..2 step 0.01 = 1; `gain` 0.5..2 step 0.01 = 1; `saturation` 0..2 step 0.01 = 1; `lut` path hidden = ""; `previousLut` path hidden = "". Labels vi/en: stage "Chỉnh màu"/"Colour"; "Bật"/"Enabled"; "Phơi sáng (EV)"/"Exposure (EV)"; "Nhiệt độ màu"/"Temperature"; "Tint (xanh lá – tím)"/"Tint (green – magenta)"; "Lift"; "Gamma"; "Gain"; "Độ bão hoà"/"Saturation"; "LUT"; "LUT trước"/"Previous LUT".
+  - Stage `color` (first in `stageSchemas()`; label "Colour", description "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.", icon `color`, `onAdd {"enabled": true}`): `enabled` bool false (the on/off switch); **hidden** fields — the trims `exposure` −3..3 = 0, `temperature` −100..100 = 0, `tint` −100..100 = 0, `lift` −0.2..0.2 = 0, `gamma` 0.5..2 = 1, `gain` 0.5..2 = 1, `saturation` 0..2 = 1 (kept at neutral; the grader still supports them), `lut` path "", `previousLut` path "", `chart` enum `card`|`tablet` = `card`, `deltaE` 0..100 = 0, `deltaEBefore` 0..100 = 0, `calibratedAt` 0..4102444800 (unix seconds) = 0, `reference` bool false (Task 6 writes these).
   - `bc::GpuLut { Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv; int size; }`, `bc::ColorGrade { float exposure = 0, temperature = 0, tint = 0, lift = 0, gamma = 1, gain = 1, saturation = 1; std::shared_ptr<const GpuLut> lut; }`, `bc::ColorGrade bc::gradeFrom(const nlohmann::json& colorParams)` (no LUT), `bc::ColorGrader(GpuDevice&, TexturePool&)`: `std::shared_ptr<const GpuLut> upload(const Lut3D&)`, `TextureRef apply(const TextureRef& frame, const ColorGrade&)`, `static bool isIdentity(const ColorGrade&)`.
 
 Grade order (spec §5.3, "trims on top"): LUT (gamma domain, trilinear 3D texture) → exposure (× 2^EV, linear) → white balance (temperature T: R × (1 + T/400), B × (1 − T/400); tint t: G × (1 − t/400)) → lift/gain then gamma in the gamma domain (`g = gain·(g + lift·(1 − g)); g = g^(1/gamma)`) → saturation around BT.709 luma (linear). Alpha passes through. An identity grade with no LUT returns the input texture itself.
@@ -763,6 +1005,9 @@ TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
   bool lutHidden = false;
   for (auto& f : j["fields"]) if (f["key"] == "lut") lutHidden = f.value("hidden", false);
   CHECK(lutHidden);
+  CHECK(j["icon"] == "color");
+  CHECK(j["onAdd"]["enabled"] == true);
+  for (auto& f : j["fields"]) if (f["key"] != "enabled") CHECK(f.value("hidden", false));  // the UI shows only the switch
   CHECK_THROWS_AS(bc::normalizeStageParams("color", {{"exposure", 4}}), std::invalid_argument);
 }
 ```
@@ -858,23 +1103,29 @@ Expected: build FAILS.
 - in `schemaToJson`, after building `j`: `if (f.hidden) j["hidden"] = true;`
 - in `build()`, create the colour schema and return `{color, matte, background}`:
 ```cpp
-  StageSchema color{"color", "Chỉnh màu", "Colour", {}};
-  auto hiddenPath = [](std::string key, std::string vi, std::string en) {
-    auto f = simple(std::move(key), "path", "", std::move(vi), std::move(en));
+  StageSchema color{"color", "Colour",
+                    "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.",
+                    "color", {}, json{{"enabled", true}}, {}};
+  auto hide = [](StageField f) {
     f.hidden = true;
     return f;
   };
   color.fields = {
-      simple("enabled", "bool", false, "Bật", "Enabled"),
-      number("exposure", -3, 3, 0.05, 0, "Phơi sáng (EV)", "Exposure (EV)"),
-      number("temperature", -100, 100, 1, 0, "Nhiệt độ màu", "Temperature"),
-      number("tint", -100, 100, 1, 0, "Tint (xanh lá – tím)", "Tint (green – magenta)"),
-      number("lift", -0.2, 0.2, 0.005, 0, "Lift", "Lift"),
-      number("gamma", 0.5, 2, 0.01, 1, "Gamma", "Gamma"),
-      number("gain", 0.5, 2, 0.01, 1, "Gain", "Gain"),
-      number("saturation", 0, 2, 0.01, 1, "Độ bão hoà", "Saturation"),
-      hiddenPath("lut", "LUT", "LUT"),
-      hiddenPath("previousLut", "LUT trước", "Previous LUT"),
+      simple("enabled", "bool", false, "On"),
+      hide(number("exposure", -3, 3, 0.05, 0, "Exposure (EV)")),
+      hide(number("temperature", -100, 100, 1, 0, "Temperature")),
+      hide(number("tint", -100, 100, 1, 0, "Tint")),
+      hide(number("lift", -0.2, 0.2, 0.005, 0, "Lift")),
+      hide(number("gamma", 0.5, 2, 0.01, 1, "Gamma")),
+      hide(number("gain", 0.5, 2, 0.01, 1, "Gain")),
+      hide(number("saturation", 0, 2, 0.01, 1, "Saturation")),
+      hide(simple("lut", "path", "", "LUT")),
+      hide(simple("previousLut", "path", "", "Previous LUT")),
+      hide(enumeration("chart", {"card", "tablet"}, {"Printed card", "Tablet"}, "card", "Chart")),
+      hide(number("deltaE", 0, 100, 0.01, 0, "Colour error after")),
+      hide(number("deltaEBefore", 0, 100, 0.01, 0, "Colour error before")),
+      hide(number("calibratedAt", 0, 4102444800.0, 1, 0, "Calibrated at")),
+      hide(simple("reference", "bool", false, "Tablet reference")),
   };
 ```
 
@@ -1075,7 +1326,7 @@ Expected: all pass (also once with `BC_FORCE_WARP=1`).
 
 ```bash
 git add src tests CMakeLists.txt
-git commit -m "feat(gpu): colour stage schema and LUT + trims colour grader"
+git commit -m "feat(gpu): colour stage schema (add-in) and the LUT colour grader"
 ```
 
 ### Task 4: Colour stage in the camera, `GpuTools`, and the engine's frame capture
@@ -1092,7 +1343,7 @@ git commit -m "feat(gpu): colour stage schema and LUT + trims colour grader"
   - **Changed constructors:** `bc::Engine(GpuTools, StateStore&, AdapterFactory&)`, `bc::Camera(CameraConfig, AdapterFactory&, GpuTools, StateStore&, SyncPolicy)`.
   - `TextureRef Camera::tickRaw() const` (this tick's frame **before** any stage; the slate when there is no picture), `StageGuard& Camera::colorGuard()`, `FeedPhase Camera::tickPhase() const`.
   - `std::map<std::string, std::vector<CpuImage>> Engine::capture(const std::vector<std::string>& cameraIds, int frames = 30, int everyTicks = 2, uint32_t w = 256, uint32_t h = 144, std::chrono::milliseconds timeout = 3000ms)` — throws `std::invalid_argument` naming the camera when an id is unknown or a camera's phase is not `live` during the capture, `std::runtime_error` on timeout.
-  - State: `/cameras/<id>/stages/color/{state,error}`; a LUT that cannot be read → `{code: "color-lut", message}` while trims keep running.
+  - State: `/cameras/<id>/stages/color/{state,error}`; a LUT that cannot be read → `{code: "color-lut", message}` and the camera runs uncorrected (never black).
   - Fake input option `"gradient": true` — pixel value = colour × (0.3 + 0.7 × x / width) (so regions are not flat).
 
 Colour stage in `beginTick` (spec §3.2): after conversion, when `color.enabled` and the guard allows, `tickFrame_ = grader.apply(raw, grade)` (budget 4 ms; ponytail: fixed budget, share by camera count if many cameras grade). The slate is never graded. A repeated frame reuses the graded texture unless the parameters changed.
@@ -1281,7 +1532,7 @@ struct GpuTools {
     try {
       lutKeep = tools_.grader.upload(readCube(std::filesystem::u8path(lut)));
     } catch (const std::exception& e) {
-      lutError_ = ErrorInfo{"color-lut", std::string("the colour LUT cannot be read; using the trims only: ") + e.what()};
+      lutError_ = ErrorInfo{"color-lut", std::string("the colour LUT cannot be read; the camera runs without the correction: ") + e.what()};
     }
   }
   grade_.lut = lutKeep;
@@ -1403,104 +1654,197 @@ git add src tests CMakeLists.txt
 git commit -m "feat(engine): colour stage before matte, GpuTools bundle and frame capture for matching"
 ```
 
-### Task 5: Colour-match service and the commands (match, import, undo, reset)
+### Task 5: Chart detection (OpenCV `mcc`, optional)
 
 **Files:**
-- Create: `src/engine/color_match_service.h`, `src/engine/color_match_service.cpp`
-- Modify: `src/engine/command_router.h/.cpp` (`Effects` + 4 commands), `src/engine/engine_main.cpp`, `tests/command_router_test.cpp` (`FakeFx` gains the two new effects), `CMakeLists.txt`
-- Test: `tests/color_match_service_test.cpp`, `tests/command_router_test.cpp` (new cases)
+- Create: `src/engine/chart_detector.h`, `src/engine/chart_detector.cpp`
+- Modify: `vcpkg.json` (`opencv4` with the `contrib` feature), `CMakeLists.txt` (`BC_WITH_CHART_DETECT`), `tests/support/requires.h/.cpp` (`Req::ChartDetect`)
+- Test: `tests/chart_detector_test.cpp`
 
 **Interfaces:**
-- Consumes: `Engine::capture` (Task 4), `sampleRegion`, `solveColorMatch`, `Region`, `validRegion` (Task 2), `writeCube`, `readCube` (Task 1), `normalizeStageParams` (M2/Task 3).
-- Produces:
-  - `bc::ColorMatchService(Engine&, std::filesystem::path lutDir)`: `struct Outcome { std::string cameraId; std::string lutPath; double residualDeltaE; }`, `std::vector<Outcome> match(const std::string& referenceId, const std::vector<std::string>& targetIds, const std::map<std::string, Region>& regions)`, `std::string importCube(const std::string& cameraId, const std::filesystem::path& source)`. Both throw `std::invalid_argument` with an operator-readable message.
-  - `CommandRouter::Effects` additions: `virtual nlohmann::json colorMatch(const std::string& referenceId, const std::vector<std::string>& targetIds, const nlohmann::json& regions) = 0;` (returns `[{cameraId, lutPath, deltaE}]`), `virtual std::string importCube(const std::string& cameraId, const std::string& path) = 0;`.
-  - Commands:
-    | cmd | args | effect | result |
-    |---|---|---|---|
-    | `colorMatch` | `{referenceId, targetIds:[...], regions?: {id: {x,y,w,h}}}` | per target: `previousLut = lut`, `lut = <new file>`, `enabled = true` | `[{cameraId, deltaE}]` |
-    | `importLut` | `{cameraId, path}` | `previousLut = lut`, `lut = <copied file>`, `enabled = true` | `{}` |
-    | `undoLut` | `{cameraId}` | swap `lut` ↔ `previousLut`; `invalid` "nothing to undo" when `previousLut` is empty | `{}` |
-    | `resetColor` | `{cameraId}` | colour params back to defaults, keeping `previousLut = <old lut>` so reset can be undone | `{}` |
+- Consumes: `ChartQuad`, `chartToPicture`, `sampleChartRaw`, `chartUpright`, `validQuad` (Task 2); `CpuImage`.
+- Produces: `bool bc::chartDetectionAvailable()`; `std::optional<ChartQuad> bc::findChart(const CpuImage& frame)` — the grid corners in chart order, checked upright; `Req::ChartDetect` ("chart detection is not in this build (OpenCV mcc missing)").
 
-Validation (router, before any capture): `targetIds` 1..16 strings; every id exists; the reference is not a target; each region (if given) passes `validRegion`. The router does **not** hold the show lock while `colorMatch` captures and solves (~1.5 s); it re-takes the lock to store the results and drops results for cameras removed meanwhile.
+Rules: detection runs on the CPU off the tick thread (the service calls it); one `CCheckerDetector::process(image, MCC24, 1)` per call. `getColorCharts()` gives four points per patch in patch order; the centres of patches 1, 6, 24 and 19 (dark skin, bluish green, black, white) sit at chart coordinates (1/12, 1/8), (11/12, 1/8), (11/12, 7/8), (1/12, 7/8), so a homography through them extends to the grid corners at (−0.1, −1/6) … (1.1, 7/6) in that inner frame. If that quad is not upright, the turned-round quad (mcc numbering from the other end) is tried. Without `mcc` the functions compile and `findChart` returns `std::nullopt`.
 
-LUT files: `<lutDir>\<cameraId>-<YYYYMMDD-HHMMSS>-<n>.cube`, where `lutDir = <show dir>\luts`. Imports are validated with `readCube` and re-written (normalised) to the same folder.
+- [ ] **Step 1: Dependency and CMake**
 
-- [ ] **Step 1: Write the failing tests**
-
-In `tests/command_router_test.cpp`, extend `FakeFx`:
-```cpp
-  int matches = 0;
-  std::string importError;
-  json colorMatch(const std::string&, const std::vector<std::string>& targets, const json&) override {
-    ++matches;
-    json out = json::array();
-    for (auto& t : targets) out.push_back({{"cameraId", t}, {"lutPath", "C:/luts/" + t + "-" + std::to_string(matches) + ".cube"}, {"deltaE", 1.2}});
-    return out;
-  }
-  std::string importCube(const std::string& cam, const std::string&) override {
-    if (!importError.empty()) throw std::invalid_argument(importError);
-    return "C:/luts/" + cam + "-imported.cube";
-  }
+`vcpkg.json` — add to `dependencies`:
+```json
+{ "name": "opencv4", "default-features": false, "features": ["contrib"] }
 ```
-and append:
-```cpp
-TEST_CASE("CommandRouter: colorMatch stores LUTs, undo swaps, reset clears") {
-  FakeFx fx;
-  bc::CommandRouter r({}, fx);
-  auto a = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "A"}, {"input", kSrt}}}})["result"]["id"];
-  auto b = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "B"}, {"input", kSrt}}}})["result"]["id"];
-  auto res = call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", {b}}}}});
-  REQUIRE(res["ok"] == true);
-  CHECK(res["result"][0]["cameraId"] == b);
-  CHECK(res["result"][0]["deltaE"] == 1.2);
-  auto color = [&] { return r.show().findCamera(b.get<std::string>())->stages["color"]; };
-  CHECK(color()["enabled"] == true);
-  CHECK(color()["lut"] == "C:/luts/" + b.get<std::string>() + "-1.cube");
-  call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", {b}}}}});
-  CHECK(color()["previousLut"] == "C:/luts/" + b.get<std::string>() + "-1.cube");
-  REQUIRE(call(r, {{"cmd", "undoLut"}, {"args", {{"cameraId", b}}}})["ok"] == true);
-  CHECK(color()["lut"] == "C:/luts/" + b.get<std::string>() + "-1.cube");
-  REQUIRE(call(r, {{"cmd", "resetColor"}, {"args", {{"cameraId", b}}}})["ok"] == true);
-  CHECK(color()["lut"] == "");
-  CHECK(color()["enabled"] == false);
-  CHECK(color()["previousLut"] == "C:/luts/" + b.get<std::string>() + "-1.cube");
-}
-
-TEST_CASE("CommandRouter: colorMatch and importLut validation") {
-  FakeFx fx;
-  bc::CommandRouter r({}, fx);
-  auto a = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "A"}, {"input", kSrt}}}})["result"]["id"];
-  CHECK(call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", {a}}}}})["error"]["code"] == "invalid");
-  CHECK(call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", json::array()}}}})["error"]["code"] == "invalid");
-  CHECK(call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", {"nope"}}}}})["error"]["code"] == "not-found");
-  auto b = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "B"}, {"input", kSrt}}}})["result"]["id"];
-  json badRegion = {{b.get<std::string>(), {{"x", 0.9}, {"y", 0}, {"w", 0.5}, {"h", 1}}}};
-  CHECK(call(r, {{"cmd", "colorMatch"}, {"args", {{"referenceId", a}, {"targetIds", {b}}, {"regions", badRegion}}}})["error"]["code"] == "invalid");
-  CHECK(fx.matches == 0);
-  CHECK(call(r, {{"cmd", "undoLut"}, {"args", {{"cameraId", b}}}})["error"]["message"] == "nothing to undo");
-  fx.importError = "line 3: expected three numbers";
-  auto imp = call(r, {{"cmd", "importLut"}, {"args", {{"cameraId", b}, {"path", "C:/x.cube"}}}});
-  CHECK(imp["error"]["code"] == "invalid");
-  CHECK(imp["error"]["message"] == "line 3: expected three numbers");
-  fx.importError.clear();
-  REQUIRE(call(r, {{"cmd", "importLut"}, {"args", {{"cameraId", b}, {"path", "C:/x.cube"}}}})["ok"] == true);
-  CHECK(r.show().findCamera(b.get<std::string>())->stages["color"]["lut"] == "C:/luts/" + b.get<std::string>() + "-imported.cube");
-}
+`CMakeLists.txt`, next to the other `BC_WITH_*` options:
+```cmake
+find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
+if(OpenCV_FOUND)
+  set(BC_WITH_CHART_DETECT ON)
+else()
+  set(BC_WITH_CHART_DETECT OFF)
+  message(STATUS "Chart detection OFF: OpenCV with the mcc module not found (manual corners still work)")
+endif()
+message(STATUS "BC_WITH_CHART_DETECT=${BC_WITH_CHART_DETECT}")
+target_compile_definitions(bc_engine PUBLIC BC_WITH_CHART_DETECT=$<BOOL:${BC_WITH_CHART_DETECT}>)
+if(BC_WITH_CHART_DETECT)
+  target_link_libraries(bc_engine PUBLIC opencv_core opencv_imgproc opencv_mcc)
+endif()
 ```
+and add `src/engine/chart_detector.cpp` to `bc_engine`. The configure line must print `BC_WITH_CHART_DETECT=...`; report it.
 
-`tests/color_match_service_test.cpp`:
+- [ ] **Step 2: Write the failing tests**
+
+`tests/chart_detector_test.cpp`:
 ```cpp
 #include <doctest/doctest.h>
 
-#include <fstream>
+#include <algorithm>
+
+#include "core/chart.h"
+#include "engine/chart_detector.h"
+#include "support/chart_image.h"
+#include "support/requires.h"
+
+TEST_CASE("findChart finds a tilted chart, upright and upside down" BC_REQUIRES(bc::test::Req::ChartDetect)) {
+  const bc::ChartQuad q{{{{0.30, 0.25}, {0.72, 0.22}, {0.74, 0.70}, {0.28, 0.72}}}};
+  for (bool flipped : {false, true}) {
+    auto colors = bc::colorCheckerSrgb();
+    if (flipped) std::reverse(colors.begin(), colors.end());
+    auto img = bc::test::renderChart(960, 540, q, colors);
+    auto found = bc::findChart(img);
+    REQUIRE(found);
+    auto got = bc::sampleChart({img}, *found);
+    for (size_t i = 0; i < 24; ++i) CHECK(std::abs(bc::toGamma(got[i].g) * 255 - bc::colorCheckerSrgb()[i][1]) <= 4);
+  }
+}
+
+TEST_CASE("findChart returns nothing for a picture without a chart") {
+  bc::CpuImage grey{960, 540, std::vector<uint8_t>(960 * 540 * 4, 90)};
+  CHECK_FALSE(bc::findChart(grey));
+}
+```
+`requires`: `ChartDetect` → `reason = "chart detection is not in this build (OpenCV mcc missing)"; return !bc::chartDetectionAvailable();` (include `engine/chart_detector.h`).
+
+- [ ] **Step 3: Implement**
+
+`src/engine/chart_detector.h`:
+```cpp
+#pragma once
+#include <optional>
+
+#include "core/chart.h"
+#include "gpu/converter.h"
+
+namespace bc {
+bool chartDetectionAvailable();
+// Finds a ColorChecker 24 in the frame; corners come back in chart order (spec §5.3).
+std::optional<ChartQuad> findChart(const CpuImage& frame);
+}  // namespace bc
+```
+
+`src/engine/chart_detector.cpp`:
+```cpp
+#include "engine/chart_detector.h"
+
+#include <array>
+
+#if BC_WITH_CHART_DETECT
+#include <opencv2/imgproc.hpp>
+#include <opencv2/mcc.hpp>
+#endif
+
+namespace bc {
+bool chartDetectionAvailable() { return BC_WITH_CHART_DETECT != 0; }
+
+std::optional<ChartQuad> findChart(const CpuImage& frame) {
+#if BC_WITH_CHART_DETECT
+  cv::Mat bgra(static_cast<int>(frame.height), static_cast<int>(frame.width), CV_8UC4, const_cast<uint8_t*>(frame.bgra.data()));
+  cv::Mat bgr;
+  cv::cvtColor(bgra, bgr, cv::COLOR_BGRA2BGR);
+  auto detector = cv::mcc::CCheckerDetector::create();
+  if (!detector->process(bgr, cv::mcc::MCC24, 1)) return std::nullopt;
+  auto checker = detector->getBestColorChecker();
+  if (!checker) return std::nullopt;
+  const auto pts = checker->getColorCharts();  // 4 points per patch, patch order
+  if (pts.size() != 96) return std::nullopt;
+  auto centre = [&](int k) {
+    double x = 0, y = 0;
+    for (int i = 0; i < 4; ++i) {
+      x += pts[static_cast<size_t>(k * 4 + i)].x;
+      y += pts[static_cast<size_t>(k * 4 + i)].y;
+    }
+    return std::array<double, 2>{x / 4 / frame.width, y / 4 / frame.height};
+  };
+  // Corner patch centres → the outer corners of the 6x4 grid.
+  const auto inner = chartToPicture(ChartQuad{{centre(0), centre(5), centre(23), centre(18)}});
+  ChartQuad q{{inner.map(-0.1, -1.0 / 6), inner.map(1.1, -1.0 / 6), inner.map(1.1, 7.0 / 6), inner.map(-0.1, 7.0 / 6)}};
+  for (int turn = 0; turn < 2; ++turn) {
+    if (validQuad(q) && chartUpright(sampleChartRaw({frame}, q))) return q;
+    q.c = {q.c[2], q.c[3], q.c[0], q.c[1]};  // mcc numbered the patches from the other end
+  }
+  return std::nullopt;
+#else
+  (void)frame;
+  return std::nullopt;
+#endif
+}
+}  // namespace bc
+```
+
+ponytail: the MCC detector runs per call (~50–150 ms at 960×540); the UI polls it once a second while calibrating, never per tick.
+
+- [ ] **Step 4: Run the tests**
+
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "findChart*"` — Expected: both pass with `BC_WITH_CHART_DETECT=ON`; with it OFF the first is skipped with the reason and the second passes.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add vcpkg.json CMakeLists.txt src/engine/chart_detector.h src/engine/chart_detector.cpp tests
+git commit -m "feat(engine): optional ColorChecker detection with OpenCV mcc"
+```
+
+### Task 6: Calibration service and the commands (find, calibrate, undo, clear)
+
+**Files:**
+- Create: `src/engine/color_calibration_service.h`, `src/engine/color_calibration_service.cpp`
+- Modify: `src/engine/command_router.h/.cpp` (commands + `Effects` additions), `src/engine/engine_main.cpp` (wire the service), `tests/command_router_test.cpp` (`FakeFx` additions + cases), `CMakeLists.txt`
+- Test: `tests/color_calibration_test.cpp`, `tests/command_router_test.cpp`
+
+**Interfaces:**
+- Consumes: `Engine::capture` (Task 4), `sampleChart`, `ChartQuad`, `validQuad`, `colorCheckerReference` (Task 2), `solveCalibration`, `calibrationRating` (Task 2), `findChart`, `chartDetectionAvailable` (Task 5), `writeCube`, `Lut3D` (Task 1), `normalizeStageParams` (M2/Task 3).
+- Produces:
+  - `bc::ColorCalibrationService(Engine&, std::filesystem::path lutDir)`:
+    - `nlohmann::json find(const std::string& cameraId)` → `{"available": bool, "found": bool, "corners": [[x,y]×4]}` (`corners` only when found).
+    - `struct Result { std::string lutPath; double deltaEBefore, deltaE; std::string rating; bool reference; }`, `Result calibrate(const std::string& cameraId, const std::string& chart /* "card" | "tablet" */, const ChartQuad& q)` — throws `std::invalid_argument` with an operator-readable message.
+    - `void forget(const std::string& cameraId)` — if this camera is the tablet reference, the reference is dropped.
+  - `CommandRouter::Effects` additions: `virtual nlohmann::json findChart(const std::string& cameraId) = 0;`, `virtual nlohmann::json calibrateColor(const std::string& cameraId, const std::string& chart, const ChartQuad& q) = 0;` (returns `{lutPath, deltaEBefore, deltaE, rating, reference}`), `virtual void forgetColor(const std::string& cameraId) = 0;`.
+  - Commands:
+    | cmd | args | effect on `color` params | result |
+    |---|---|---|---|
+    | `findChart` | `{cameraId}` | — | `{available, found, corners?}` |
+    | `calibrateColor` | `{cameraId, chart: "card"\|"tablet", corners: [[x,y]×4]}` | `previousLut = lut`, `lut = <new file>`, `enabled = true`, `chart`, `deltaE`, `deltaEBefore`, `calibratedAt = <unix seconds>`, `reference` | `{deltaEBefore, deltaE, rating, reference}` |
+    | `undoColor` | `{cameraId}` | swap `lut` ↔ `previousLut`; `invalid` "nothing to undo" when `previousLut` is empty | `{}` |
+    | `clearColor` | `{cameraId}` | colour params back to defaults except `enabled` (kept) and `previousLut = <old lut>`; the service forgets a tablet reference held by this camera | `{}` |
+  - The `color` schema (Task 3) gains the hidden field `reference` (bool, default false).
+
+Rules:
+- The router validates before any capture: camera exists, `chart` is `card` or `tablet`, `corners` is four `[x, y]` number pairs forming a `validQuad`. It does **not** hold the show lock while capturing and solving (~1 s); it re-takes the lock to store the result and answers `not-found` if the camera was removed meanwhile. `removeCamera` also calls `fx_.forgetColor(id)`.
+- Capture: `engine.capture({id}, 15, 2, 960, 540)`; `find` uses one frame.
+- Card: target = `colorCheckerReference()`. Tablet: if `<lutDir>\tablet-reference.json` exists, target = its colours; else the measured colours become the reference (file `{"cameraId": id, "colors": [[r,g,b]×24]}`), this camera gets an identity LUT, `deltaE = deltaEBefore = 0`, `reference = true`.
+- LUT files: `<lutDir>\<cameraId>-<YYYYMMDD-HHMMSS>.cube` (add `-2`, `-3` … if the name exists).
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/color_calibration_test.cpp`:
+```cpp
+#include <doctest/doctest.h>
+
 #include <thread>
 
-#include "core/color_math.h"
+#include "core/calibration.h"
+#include "core/lut.h"
 #include "core/stage_params.h"
 #include "core/state_store.h"
-#include "engine/color_match_service.h"
+#include "engine/color_calibration_service.h"
 #include "engine/engine.h"
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
@@ -1512,6 +1856,8 @@ using namespace std::chrono_literals;
 using nlohmann::json;
 
 namespace {
+const bc::ChartQuad kQuad{{{{0.25, 0.22}, {0.75, 0.22}, {0.75, 0.78}, {0.25, 0.78}}}};
+
 struct Rig {
   std::unique_ptr<bc::GpuDevice> gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   bc::TexturePool pool{*gpu};
@@ -1522,637 +1868,866 @@ struct Rig {
   bc::test::FakeFactory factory{conv};
   bc::Engine engine{bc::GpuTools{conv, comp, grader}, state, factory};
   bc::test::TempDir dir;
-  bc::ColorMatchService svc{engine, dir.path / "luts"};
+  bc::ColorCalibrationService svc{engine, dir.path / "luts"};
   ~Rig() { engine.stop(); }
 };
 
-bc::CameraConfig cam(const std::string& id, std::vector<int> bgra) {
+bc::CameraConfig chartCam(const std::string& id, std::vector<float> cast) {
   bc::CameraConfig c;
   c.id = id;
   c.name = id;
   c.input.kind = "fake";
-  c.input.params = {{"tag", id}, {"bgra", bgra}, {"gradient", true}};
+  c.input.params = {{"tag", id}, {"width", 960}, {"height", 540}, {"chart", true}, {"cast", cast}};
   c.outputs = {{"o-" + id, "fake", false, true, json::object()}};
   return c;
 }
 
-bc::Lab meanLab(bc::test::FakeOutput* o) {
-  auto s = o->seen().back();
-  return bc::linearToLab({bc::toLinearLight(s.centerPixel[2] / 255.f), bc::toLinearLight(s.centerPixel[1] / 255.f),
-                          bc::toLinearLight(s.centerPixel[0] / 255.f)});
+bc::Show showOf(std::vector<bc::CameraConfig> cams) {
+  bc::Show s;
+  s.settings.width = 960;
+  s.settings.height = 540;
+  s.cameras = std::move(cams);
+  return s;
 }
 }  // namespace
 
-TEST_CASE("ColorMatchService: a cast camera ends up close to the reference") {
+TEST_CASE("Calibration: a printed card corrects a cast camera") {
   Rig r;
-  bc::Show show;
-  show.cameras.push_back(cam("ref", {60, 120, 200, 255}));
-  show.cameras.push_back(cam("tgt", {90, 120, 170, 255}));
-  r.engine.apply(show);
+  r.engine.apply(showOf({chartCam("a", {1.25f, 1.0f, 0.7f})}));
   r.engine.start();
-  std::this_thread::sleep_for(300ms);
-  const double before = bc::deltaE2000(meanLab(r.factory.output("o-ref")), meanLab(r.factory.output("o-tgt")));
-  auto out = r.svc.match("ref", {"tgt"}, {});
-  REQUIRE(out.size() == 1);
-  CHECK(std::filesystem::exists(out[0].lutPath));
-  show.cameras[1].stages = {{"color", bc::normalizeStageParams("color", {{"enabled", true}, {"lut", out[0].lutPath}})}};
-  r.engine.apply(show);
-  std::this_thread::sleep_for(300ms);
-  const double after = bc::deltaE2000(meanLab(r.factory.output("o-ref")), meanLab(r.factory.output("o-tgt")));
-  MESSAGE("ΔE2000 at the centre: before " << before << ", after " << after);
-  CHECK(after < 3.0);
-  CHECK(after < before);
+  std::this_thread::sleep_for(400ms);
+  auto res = r.svc.calibrate("a", "card", kQuad);
+  MESSAGE("card: before " << res.deltaEBefore << ", after " << res.deltaE);
+  CHECK(res.deltaEBefore > 5);
+  CHECK(res.deltaE < 2);
+  CHECK(res.rating == "good");
+  CHECK_FALSE(res.reference);
+  CHECK(bc::readCube(std::filesystem::u8path(res.lutPath)).size == 33);
 }
 
-TEST_CASE("ColorMatchService: refuses a camera without picture and a bad .cube import") {
+TEST_CASE("Calibration: tablet mode matches the second camera to the first") {
   Rig r;
-  bc::Show show;
-  show.cameras.push_back(cam("ref", {60, 120, 200, 255}));
-  show.cameras.push_back(cam("tgt", {90, 120, 170, 255}));
-  r.engine.apply(show);
+  r.engine.apply(showOf({chartCam("a", {1.2f, 1.0f, 0.8f}), chartCam("b", {0.8f, 1.0f, 1.25f})}));
   r.engine.start();
-  r.factory.input("tgt")->paused = true;
-  std::this_thread::sleep_for(5600ms);
-  CHECK_THROWS_AS(r.svc.match("ref", {"tgt"}, {}), std::invalid_argument);
-  CHECK_FALSE(std::filesystem::exists(r.dir.path / "luts") && !std::filesystem::is_empty(r.dir.path / "luts"));
-  std::ofstream(r.dir.path / "bad.cube") << "LUT_3D_SIZE 2\n0 0 0\n";
-  CHECK_THROWS_AS(r.svc.importCube("ref", r.dir.path / "bad.cube"), std::invalid_argument);
+  std::this_thread::sleep_for(400ms);
+  auto first = r.svc.calibrate("a", "tablet", kQuad);
+  CHECK(first.reference);
+  CHECK(first.deltaE == 0);
+  auto second = r.svc.calibrate("b", "tablet", kQuad);
+  CHECK_FALSE(second.reference);
+  MESSAGE("tablet: before " << second.deltaEBefore << ", after " << second.deltaE);
+  CHECK(second.deltaE < 2);
+  r.svc.forget("a");  // the reference camera is cleared
+  auto again = r.svc.calibrate("b", "tablet", kQuad);
+  CHECK(again.reference);  // b is the new reference
+}
+
+TEST_CASE("Calibration: wrong corners and a camera without picture are refused") {
+  Rig r;
+  r.engine.apply(showOf({chartCam("a", {1, 1, 1})}));
+  r.engine.start();
+  std::this_thread::sleep_for(400ms);
+  bc::ChartQuad off{{{{0.01, 0.01}, {0.15, 0.01}, {0.15, 0.1}, {0.01, 0.1}}}};
+  CHECK_THROWS_WITH_AS(r.svc.calibrate("a", "card", off), doctest::Contains("not on the chart"), std::invalid_argument);
+  r.factory.input("a")->paused = true;
+  std::this_thread::sleep_for(6000ms);
+  CHECK_THROWS_WITH_AS(r.svc.calibrate("a", "card", kQuad), doctest::Contains("no picture"), std::invalid_argument);
 }
 ```
 
-Add both new test files to `bc_tests`, `src/engine/color_match_service.cpp` to `bc_engine`.
+`tests/support/fake_input.h` — add a chart option: `FakeInput` gets `std::vector<uint8_t> image;` (public); when non-empty and its size matches `w*h*4`, the frame is uploaded from `image` instead of the solid/gradient fill. In `FakeFactory::makeInput`, when `p.value("chart", false)`:
+```cpp
+    auto cast = p.value("cast", std::vector<float>{1, 1, 1});
+    const bc::ChartQuad q{{{{0.25, 0.22}, {0.75, 0.22}, {0.75, 0.78}, {0.25, 0.78}}}};
+    in->image = bc::test::renderChart(in->width, in->height, q, bc::colorCheckerSrgb(), {cast[0], cast[1], cast[2]}).bgra;
+```
+(include `support/chart_image.h`).
+
+Append to `tests/command_router_test.cpp` — first add to `FakeFx`:
+```cpp
+  std::string lastChart;
+  std::vector<std::string> forgotten;
+  json findChart(const std::string&) override { return {{"available", false}, {"found", false}}; }
+  json calibrateColor(const std::string&, const std::string& chart, const bc::ChartQuad&) override {
+    lastChart = chart;
+    return {{"lutPath", "C:/luts/x.cube"}, {"deltaEBefore", 7.4}, {"deltaE", 1.1}, {"rating", "good"}, {"reference", false}};
+  }
+  void forgetColor(const std::string& id) override { forgotten.push_back(id); }
+```
+then:
+```cpp
+TEST_CASE("CommandRouter: calibrateColor stores the result; undo, clear and removal") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  const json corners = json::array({json::array({0.25, 0.22}), json::array({0.75, 0.22}), json::array({0.75, 0.78}), json::array({0.25, 0.78})});
+  auto res = call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "card"}, {"corners", corners}}}});
+  REQUIRE(res["ok"] == true);
+  CHECK(res["result"]["rating"] == "good");
+  auto c = r.show().cameras[0].stages["color"];
+  CHECK(c["enabled"] == true);
+  CHECK(c["lut"] == "C:/luts/x.cube");
+  CHECK(c["deltaE"] == 1.1);
+  CHECK(c["calibratedAt"].get<double>() > 1.7e9);
+  CHECK(call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "poster"}, {"corners", corners}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "card"}, {"corners", json::array()}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "undoColor"}, {"args", {{"cameraId", cam}}}})["error"]["code"] == "invalid");  // previousLut was empty
+  REQUIRE(call(r, {{"cmd", "clearColor"}, {"args", {{"cameraId", cam}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages["color"]["lut"] == "");
+  CHECK(r.show().cameras[0].stages["color"]["previousLut"] == "C:/luts/x.cube");
+  REQUIRE(call(r, {{"cmd", "undoColor"}, {"args", {{"cameraId", cam}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages["color"]["lut"] == "C:/luts/x.cube");
+  call(r, {{"cmd", "removeCamera"}, {"args", {{"id", cam}}}});
+  CHECK(fx.forgotten.size() == 2);  // clearColor and removeCamera
+}
+```
+
+Add `tests/color_calibration_test.cpp` and the service source to the build.
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "ColorMatchService*,CommandRouter*"`
-Expected: build FAILS.
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "Calibration*,CommandRouter*"` — Expected: build FAILS.
 
-- [ ] **Step 3: Implement the service**
+- [ ] **Step 3: The service**
 
-`src/engine/color_match_service.h`:
+`src/engine/color_calibration_service.h`:
 ```cpp
 #pragma once
 #include <filesystem>
-#include <map>
+#include <mutex>
 #include <string>
-#include <vector>
 
-#include "core/color_match.h"
+#include <nlohmann/json.hpp>
+
+#include "core/chart.h"
 #include "engine/engine.h"
 
 namespace bc {
-// spec §5.3: capture ~1 s, solve off the tick thread, write one LUT per target.
-class ColorMatchService {
+// One-time chart calibration (spec §5.3): capture, sample, solve, write the LUT.
+class ColorCalibrationService {
  public:
-  struct Outcome {
-    std::string cameraId;
+  struct Result {
     std::string lutPath;
-    double residualDeltaE = 0;
+    double deltaEBefore = 0;
+    double deltaE = 0;
+    std::string rating;
+    bool reference = false;
   };
-  ColorMatchService(Engine& engine, std::filesystem::path lutDir) : engine_(engine), lutDir_(std::move(lutDir)) {}
-  std::vector<Outcome> match(const std::string& referenceId, const std::vector<std::string>& targetIds,
-                             const std::map<std::string, Region>& regions);
-  std::string importCube(const std::string& cameraId, const std::filesystem::path& source);
+  ColorCalibrationService(Engine& engine, std::filesystem::path lutDir);
+  nlohmann::json find(const std::string& cameraId);
+  Result calibrate(const std::string& cameraId, const std::string& chart, const ChartQuad& q);
+  void forget(const std::string& cameraId);
 
  private:
-  std::filesystem::path newLutPath(const std::string& cameraId);
+  std::filesystem::path newLutPath(const std::string& cameraId) const;
   Engine& engine_;
   std::filesystem::path lutDir_;
-  int counter_ = 0;
+  std::mutex m_;  // one calibration at a time; guards the tablet reference file
 };
 }  // namespace bc
 ```
 
-`src/engine/color_match_service.cpp`:
+`src/engine/color_calibration_service.cpp`:
 ```cpp
-#include "engine/color_match_service.h"
+#include "engine/color_calibration_service.h"
 
 #include <chrono>
 #include <ctime>
+#include <fstream>
 #include <stdexcept>
 
+#include "core/calibration.h"
 #include "core/lut.h"
+#include "engine/chart_detector.h"
 
 namespace bc {
-std::filesystem::path ColorMatchService::newLutPath(const std::string& cameraId) {
-  const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  std::tm tm{};
-  localtime_s(&tm, &now);
-  char stamp[32];
-  std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &tm);
-  return lutDir_ / (cameraId + "-" + stamp + "-" + std::to_string(++counter_) + ".cube");
-}
+namespace {
+using nlohmann::json;
 
-std::vector<ColorMatchService::Outcome> ColorMatchService::match(const std::string& ref, const std::vector<std::string>& targets,
-                                                                 const std::map<std::string, Region>& regions) {
-  std::vector<std::string> ids{ref};
-  ids.insert(ids.end(), targets.begin(), targets.end());
-  std::map<std::string, std::vector<CpuImage>> frames;
-  try {
-    frames = engine_.capture(ids);
-  } catch (const std::invalid_argument&) {
-    throw;
-  } catch (const std::exception& e) {
-    throw std::invalid_argument(std::string("could not capture the cameras: ") + e.what());
-  }
-  auto regionOf = [&](const std::string& id) {
-    auto it = regions.find(id);
-    return it == regions.end() ? Region{} : it->second;
-  };
-  const auto refSamples = sampleRegion(frames[ref], regionOf(ref));
-  // Solve everything first, write files only when every target solved.
-  std::vector<std::pair<std::string, MatchResult>> solved;
-  for (auto& t : targets) {
-    try {
-      solved.emplace_back(t, solveColorMatch(refSamples, sampleRegion(frames[t], regionOf(t))));
-    } catch (const std::invalid_argument& e) {
-      throw std::invalid_argument("camera " + t + ": " + e.what());
-    }
-  }
-  std::vector<Outcome> out;
-  for (auto& [id, res] : solved) {
-    const auto path = newLutPath(id);
-    writeCube(path, res.lut, "BreadCamera match to " + ref);
-    out.push_back({id, path.string(), res.residualDeltaE});
-  }
+json colorsToJson(const ChartColors& c) {
+  json out = json::array();
+  for (auto& v : c) out.push_back({v.r, v.g, v.b});
   return out;
 }
+ChartColors colorsFromJson(const json& j) {
+  if (!j.is_array() || j.size() != 24) throw std::runtime_error("bad tablet reference file");
+  ChartColors out;
+  for (size_t i = 0; i < 24; ++i) out[i] = {j[i][0].get<float>(), j[i][1].get<float>(), j[i][2].get<float>()};
+  return out;
+}
+}  // namespace
 
-std::string ColorMatchService::importCube(const std::string& cameraId, const std::filesystem::path& source) {
-  Lut3D lut;
-  try {
-    lut = readCube(source);
-  } catch (const CubeError& e) {
-    throw std::invalid_argument(e.what());
+ColorCalibrationService::ColorCalibrationService(Engine& engine, std::filesystem::path lutDir)
+    : engine_(engine), lutDir_(std::move(lutDir)) {}
+
+std::filesystem::path ColorCalibrationService::newLutPath(const std::string& cameraId) const {
+  const auto t = std::time(nullptr);
+  std::tm tm{};
+  localtime_s(&tm, &t);
+  char stamp[32];
+  std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
+  auto p = lutDir_ / (cameraId + "-" + stamp + ".cube");
+  for (int n = 2; std::filesystem::exists(p); ++n) p = lutDir_ / (cameraId + "-" + stamp + "-" + std::to_string(n) + ".cube");
+  return p;
+}
+
+json ColorCalibrationService::find(const std::string& cameraId) {
+  if (!chartDetectionAvailable()) return {{"available", false}, {"found", false}};
+  auto frames = engine_.capture({cameraId}, 1, 1, 960, 540);
+  auto q = findChart(frames.at(cameraId).front());
+  if (!q) return {{"available", true}, {"found", false}};
+  json corners = json::array();
+  for (auto& c : q->c) corners.push_back({c[0], c[1]});
+  return {{"available", true}, {"found", true}, {"corners", corners}};
+}
+
+ColorCalibrationService::Result ColorCalibrationService::calibrate(const std::string& cameraId, const std::string& chart,
+                                                                   const ChartQuad& q) {
+  std::lock_guard l(m_);
+  if (!validQuad(q)) throw std::invalid_argument("place the four corners on the chart");
+  auto frames = engine_.capture({cameraId}, 15, 2, 960, 540);
+  const ChartColors measured = sampleChart(frames.at(cameraId), q);
+  std::filesystem::create_directories(lutDir_);
+  Result r;
+  ChartColors target = colorCheckerReference();
+  if (chart == "tablet") {
+    const auto refFile = lutDir_ / "tablet-reference.json";
+    if (!std::filesystem::exists(refFile)) {
+      std::ofstream(refFile) << json{{"cameraId", cameraId}, {"colors", colorsToJson(measured)}}.dump(2);
+      const auto path = newLutPath(cameraId);
+      writeCube(path, Lut3D::identity(33), "BreadCamera tablet reference");
+      return {path.u8string(), 0, 0, "good", true};
+    }
+    target = colorsFromJson(json::parse(std::ifstream(refFile))["colors"]);
   }
+  const auto cal = solveCalibration(measured, target);
   const auto path = newLutPath(cameraId);
-  writeCube(path, lut, "imported " + source.filename().string());
-  return path.string();
+  writeCube(path, cal.lut, "BreadCamera chart calibration");
+  r.lutPath = path.u8string();
+  r.deltaEBefore = cal.deltaEBefore;
+  r.deltaE = cal.deltaEAfter;
+  r.rating = std::string(calibrationRating(cal.deltaEAfter));
+  return r;
+}
+
+void ColorCalibrationService::forget(const std::string& cameraId) {
+  std::lock_guard l(m_);
+  const auto refFile = lutDir_ / "tablet-reference.json";
+  std::error_code ec;
+  if (!std::filesystem::exists(refFile, ec)) return;
+  try {
+    if (json::parse(std::ifstream(refFile)).value("cameraId", std::string()) == cameraId) std::filesystem::remove(refFile, ec);
+  } catch (const json::exception&) {
+    std::filesystem::remove(refFile, ec);  // unreadable: drop it rather than match to garbage
+  }
 }
 }  // namespace bc
 ```
+Note `Engine::capture` throws `std::invalid_argument("camera \"…\" (id) has no picture")` (Task 4), which reaches the operator unchanged.
 
-- [ ] **Step 4: Router commands and effects**
+- [ ] **Step 4: The commands**
 
-`src/engine/command_router.h` — add the two pure virtuals to `Effects` (see Interfaces).
+`src/engine/command_router.h`: add the three `Effects` methods above (include `core/chart.h`).
 
-`src/engine/command_router.cpp` — `#include "core/color_match.h"`; in `dispatch`, **before** `std::lock_guard l(m_);` handle `colorMatch`:
+`src/engine/command_router.cpp` — in the anonymous namespace:
 ```cpp
-  if (cmd == "colorMatch") {
-    const auto ref = str(args, "referenceId");
-    if (!args.contains("targetIds") || !args["targetIds"].is_array()) throw CmdError("bad-request", "targetIds must be a list");
-    std::vector<std::string> targets;
-    for (auto& t : args["targetIds"]) {
-      if (!t.is_string()) throw CmdError("bad-request", "targetIds must be text");
-      targets.push_back(t.get<std::string>());
+ChartQuad quadFrom(const json& args) {
+  const auto& c = args.contains("corners") ? args["corners"] : json();
+  if (!c.is_array() || c.size() != 4) throw CmdError("invalid", "corners must be four [x, y] points");
+  ChartQuad q;
+  for (size_t i = 0; i < 4; ++i) {
+    if (!c[i].is_array() || c[i].size() != 2 || !c[i][0].is_number() || !c[i][1].is_number()) {
+      throw CmdError("invalid", "corners must be four [x, y] points");
     }
-    if (targets.empty() || targets.size() > 16) throw CmdError("invalid", "choose 1 to 16 target cameras");
-    if (std::find(targets.begin(), targets.end(), ref) != targets.end()) throw CmdError("invalid", "the reference camera cannot also be a target");
-    const json regions = args.value("regions", json::object());
-    if (!regions.is_object()) throw CmdError("bad-request", "regions must be an object");
+    q.c[i] = {c[i][0].get<double>(), c[i][1].get<double>()};
+  }
+  if (!validQuad(q)) throw CmdError("invalid", "place the four corners on the chart");
+  return q;
+}
+```
+In `dispatch`, before the `std::lock_guard l(m_);` line:
+```cpp
+  if (cmd == "findChart" || cmd == "calibrateColor") {
+    const auto camId = str(args, "cameraId");
     {
       std::lock_guard l(m_);
-      for (auto& id : std::vector<std::string>{ref}) if (!show_.findCamera(id)) throw CmdError("not-found", "no camera " + id);
-      for (auto& id : targets) if (!show_.findCamera(id)) throw CmdError("not-found", "no camera " + id);
+      if (!show_.findCamera(camId)) throw CmdError("not-found", "no camera " + camId);
     }
-    for (auto& [id, rj] : regions.items()) {
-      if (!rj.is_object()) throw CmdError("bad-request", "a region must be an object");
-      Region rg{rj.value("x", 0.0f), rj.value("y", 0.0f), rj.value("w", 1.0f), rj.value("h", 1.0f)};
-      if (!validRegion(rg)) throw CmdError("invalid", "the region for camera " + id + " is outside the picture");
+    if (cmd == "findChart") {
+      try {
+        return fx_.findChart(camId);
+      } catch (const std::exception& e) {
+        throw CmdError("invalid", e.what());
+      }
     }
-    json outcomes;
+    const auto chart = args.value("chart", std::string("card"));
+    if (chart != "card" && chart != "tablet") throw CmdError("invalid", "chart must be card or tablet");
+    const auto q = quadFrom(args);
+    json res;
     try {
-      outcomes = fx_.colorMatch(ref, targets, regions);  // ~1.5 s, outside the show lock
+      res = fx_.calibrateColor(camId, chart, q);  // ~1 s, without the show lock
     } catch (const std::invalid_argument& e) {
       throw CmdError("invalid", e.what());
     }
     std::lock_guard l(m_);
     Show next = show_;
-    json result = json::array();
-    for (auto& o : outcomes) {
-      auto* c = next.findCamera(o["cameraId"].get<std::string>());
-      if (!c) continue;  // removed while we were matching
-      auto color = normalizeStageParams("color", c->stages.value("color", json::object()));
-      color["previousLut"] = color["lut"];
-      color["lut"] = o["lutPath"];
-      color["enabled"] = true;
-      c->stages["color"] = color;
-      result.push_back({{"cameraId", o["cameraId"]}, {"deltaE", o["deltaE"]}});
-    }
+    auto* c = next.findCamera(camId);
+    if (!c) throw CmdError("not-found", "camera " + camId + " was removed during the calibration");
+    auto p = normalizeStageParams("color", c->stages.value("color", json::object()));
+    p["previousLut"] = p["lut"];
+    p["lut"] = res["lutPath"];
+    p["enabled"] = true;
+    p["chart"] = chart;
+    p["deltaE"] = std::min(100.0, res["deltaE"].get<double>());
+    p["deltaEBefore"] = std::min(100.0, res["deltaEBefore"].get<double>());
+    p["calibratedAt"] = static_cast<double>(std::time(nullptr));
+    p["reference"] = res.value("reference", false);
+    c->stages["color"] = normalizeStageParams("color", p);
     show_ = std::move(next);
     fx_.showChanged(show_);
-    return result;
+    return {{"deltaEBefore", res["deltaEBefore"]}, {"deltaE", res["deltaE"]}, {"rating", res["rating"]}, {"reference", res.value("reference", false)}};
   }
 ```
-and inside the locked branch chain:
+and inside the locked chain:
 ```cpp
-  } else if (cmd == "importLut") {
+  } else if (cmd == "undoColor") {
     auto& c = findCam(str(args, "cameraId"));
-    std::string path;
-    try {
-      path = fx_.importCube(c.id, str(args, "path"));
-    } catch (const std::invalid_argument& e) {
-      throw CmdError("invalid", e.what());
-    }
-    auto color = normalizeStageParams("color", c.stages.value("color", json::object()));
-    color["previousLut"] = color["lut"];
-    color["lut"] = path;
-    color["enabled"] = true;
-    c.stages["color"] = color;
-  } else if (cmd == "undoLut") {
-    auto& c = findCam(str(args, "cameraId"));
-    auto color = normalizeStageParams("color", c.stages.value("color", json::object()));
-    if (color["previousLut"] == "") throw CmdError("invalid", "nothing to undo");
-    std::swap(color["lut"], color["previousLut"]);
-    color["enabled"] = true;
-    c.stages["color"] = color;
-  } else if (cmd == "resetColor") {
+    auto p = normalizeStageParams("color", c.stages.value("color", json::object()));
+    if (p["previousLut"] == "") throw CmdError("invalid", "nothing to undo");
+    std::swap(p["lut"], p["previousLut"]);
+    c.stages["color"] = normalizeStageParams("color", p);
+  } else if (cmd == "clearColor") {
     auto& c = findCam(str(args, "cameraId"));
     auto old = normalizeStageParams("color", c.stages.value("color", json::object()));
-    auto color = normalizeStageParams("color", json::object());
-    color["previousLut"] = old["lut"];
-    c.stages["color"] = color;
+    auto p = normalizeStageParams("color", json::object());
+    p["enabled"] = old["enabled"];
+    p["previousLut"] = old["lut"];
+    c.stages["color"] = normalizeStageParams("color", p);
+    fx_.forgetColor(c.id);
 ```
-Note `importLut` calls `fx_.importCube` under the show lock — it only reads and writes one small file, which is fine.
+and in the existing `removeCamera` branch add `fx_.forgetColor(camId);`. (`#include <ctime>`, `core/chart.h`, `core/stage_params.h`.)
 
-`src/engine/engine_main.cpp` — create the service after the engine: `bc::ColorMatchService colorMatch(engine, showDir / "luts");` and add to `Fx` (constructor gains a `bc::ColorMatchService&`):
-```cpp
-    json colorMatch(const std::string& ref, const std::vector<std::string>& targets, const json& regions) override {
-      std::map<std::string, bc::Region> rs;
-      for (auto& [id, r] : regions.items()) rs[id] = {r.value("x", 0.0f), r.value("y", 0.0f), r.value("w", 1.0f), r.value("h", 1.0f)};
-      json out = json::array();
-      for (auto& o : matcher.match(ref, targets, rs)) out.push_back({{"cameraId", o.cameraId}, {"lutPath", o.lutPath}, {"deltaE", o.residualDeltaE}});
-      return out;
-    }
-    std::string importCube(const std::string& cameraId, const std::string& path) override {
-      return matcher.importCube(cameraId, std::filesystem::u8path(path));
-    }
-```
-(member `bc::ColorMatchService& matcher;`).
+`src/engine/engine_main.cpp`: after the engine is created, `bc::ColorCalibrationService calib(engine, showDir / "luts");`; in the `Effects` implementation passed to `CommandRouter`, implement `findChart` → `calib.find(id)`, `calibrateColor` → the `Result` as JSON (`lutPath`, `deltaEBefore`, `deltaE`, `rating`, `reference`), `forgetColor` → `calib.forget(id)`.
 
 - [ ] **Step 5: Run the tests**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "ColorMatchService*,CommandRouter*"`
-Expected: all pass; the service test logs "ΔE2000 at the centre: before X, after Y" with Y < 3.
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "Calibration*,CommandRouter*,Colour stage*"` — Expected: all pass; paste the before/after lines. Then the whole suite.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src tests CMakeLists.txt
-git commit -m "feat(engine): colour-match service with LUT files; colorMatch/importLut/undoLut/resetColor"
+git add src/engine tests CMakeLists.txt
+git commit -m "feat(engine): chart calibration service with tablet reference, and its commands"
 ```
 
-### Task 6: UI — colour match screen with region boxes, trims, import, undo, reset
+### Task 7: UI — Calibrate in the Colour effect, solo view with chart corners, chart image for tablets
+
+Mockup: tabs "Multiview" (Colour group "✓ Good match · 19:40") and "Calibrate colour" in `docs/design/mockups/index.html`. English only.
 
 **Files:**
-- Create: `ui/src/components/RegionPicker.tsx`, `ui/src/screens/ColorMatch.tsx`
-- Modify: `ui/src/components/StageForm.tsx` (skip hidden fields), `ui/src/api/protocol.ts` (`StageField.hidden`, `Region`), `ui/src/i18n.ts` (keys), `ui/src/App.tsx` (navigation)
-- Test: `ui/src/components/RegionPicker.test.tsx`, `ui/src/screens/ColorMatch.test.tsx`
+- Create: `ui/src/calibration/chartGeometry.ts`, `ui/src/calibration/chartImage.ts`, `ui/src/calibration/useCalibration.ts`, `ui/src/calibration/CalibrationView.tsx`, `ui/src/calibration/ColourPanel.tsx`
+- Modify: `ui/src/api/protocol.ts` (`StageField.hidden`), `ui/src/inspector/StageForm.tsx` (skip hidden fields), `ui/src/inspector/Effects.tsx` (Colour group body), `ui/src/App.tsx` (calibration state, solo view, Camera menu item), `ui/src/app.css`
+- Test: `ui/src/calibration/chartGeometry.test.ts`, `ui/src/Calibration.test.tsx`
 
 **Interfaces:**
-- Consumes: commands `colorMatch`, `importLut`, `undoLut`, `resetColor`, `getStageSchemas`, `setStage` (Tasks 3, 5; M2); `StageForm`, `ConfirmDialog`, `ErrorBlock`, `PreviewCanvas` (M1/M2).
-- Produces: `RegionPicker({value, onChange, children})` (mouse-drag rectangle, normalised `{x,y,w,h}`, `null` when cleared), `ColorMatch({client})`; the header gains two nav buttons "Multiview" and "Khớp màu".
+- Consumes: commands `findChart`, `calibrateColor`, `undoColor`, `clearColor` (Task 6); the `color` params (`lut`, `previousLut`, `chart`, `deltaE`, `deltaEBefore`, `calibratedAt`, `reference`); M2's `Effects`, `StageForm`, `ConfirmDialog`; M1's `Workspace`, `Multiview`, `PreviewCanvas`, `ErrorBlock`, `Icon`.
+- Produces: `useCalibration(client)` → `{ state, start(cameraId), setChart(c), moveCorner(i, [x, y]), capture(), cancel() }` with `state = null | { cameraId, chart, corners, found, manual, busy, error, detection }`; `CalibrationView({client, cam, n, state, onCorner})`; `ColourPanel({client, cam, n, params, calibrating, onCalibrate, calib})`; `chartPoint(corners, u, v)`; `downloadChartImage()`.
 
-Copy (vi / en): nav "Multiview" / "Multiview", "Khớp màu" / "Colour match"; "Tham chiếu" / "Reference"; "Khớp theo tham chiếu" / "Match to reference"; primary button "Khớp màu" / "Match", busy "Đang khớp…" / "Matching…"; "ΔE còn lại" / "Remaining ΔE"; "Tinh chỉnh" / "Trims"; "Hoàn tác" / "Undo"; "Đặt lại màu" / "Reset colour" with body "Bỏ LUT đã khớp và mọi tinh chỉnh của camera này?" / "Drop the matched LUT and all trims for this camera?"; "Đường dẫn file .cube" / ".cube file path"; "Nhập LUT" / "Import LUT"; "Xoá vùng" / "Clear region"; hint "Kéo chuột trên hình để đánh dấu nội dung chung (mặt, áo, thẻ xám)." / "Drag on the picture to mark shared content (face, shirt, grey card)."
+Behaviour:
+- **Normal:** the Colour group shows one line — "✓ Good match · 19:40" (Fair/Poor in warning/danger colour; "Tablet reference · 19:40" for the reference camera; "Not calibrated" before the first run), the ΔE numbers and the chart type in its tooltip — and the buttons **Calibrate** (or **Calibrate again**), **Undo** (when `previousLut` is set) and **Clear…** (when `lut` is set; confirm "Clear calibration?" / "CAM n goes back to its uncorrected colours now." / **Clear calibration**).
+- **Calibrating** (one camera at a time): the Multiview area shows that camera alone at the large preview size with the chart overlay — the quad outline, four draggable corner handles and a small square where each patch is read — under a bar "CAM n · name · Calibrating colour · Other cameras keep running". The Colour group shows: an info block "Hold the chart in front of CAM n under show lighting", Chart (Printed card | Tablet), a status line ("✓ Chart found, corners placed", "Looking for the chart…", or "Drag the four corners onto the chart" when detection is not available), **Capture** (primary) and **Cancel**, the hint "Drag a corner only if it is wrong. Tablet: show the chart image at full brightness." and the link **Save chart image for a tablet…**.
+- Detection polls `findChart` once a second until the chart is found or the operator drags a corner. Default corners (before anything is found): the centre 50 % × 56 % of the picture.
+- Capture sends `calibrateColor`; on success calibrating ends and the group shows the new result; on failure the error stays as a block in the group (e.g. "the corners are not on the chart").
+- Keyboard: Escape cancels calibrating.
 
 - [ ] **Step 1: Write the failing tests**
 
-`ui/src/components/RegionPicker.test.tsx`:
-```tsx
-import { fireEvent, render, screen } from '@testing-library/react';
+`ui/src/calibration/chartGeometry.test.ts`:
+```ts
+import { chartPoint } from './chartGeometry';
 
-import { RegionPicker } from './RegionPicker';
+const q: [number, number][] = [
+  [0.3, 0.25],
+  [0.72, 0.22],
+  [0.74, 0.7],
+  [0.28, 0.72],
+];
 
-test('dragging draws a normalised region', () => {
-  const onChange = vi.fn();
-  render(
-    <RegionPicker value={null} onChange={onChange}>
-      <div style={{ width: 200, height: 100 }} />
-    </RegionPicker>,
-  );
-  const area = screen.getByTestId('region-area');
-  area.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
-  fireEvent.mouseDown(area, { clientX: 20, clientY: 10 });
-  fireEvent.mouseMove(area, { clientX: 120, clientY: 60 });
-  fireEvent.mouseUp(area, { clientX: 120, clientY: 60 });
-  expect(onChange).toHaveBeenCalledWith({ x: 0.1, y: 0.1, w: 0.5, h: 0.5 });
-});
-
-test('a click without a drag does not set a region; clear resets it', () => {
-  const onChange = vi.fn();
-  render(
-    <RegionPicker value={{ x: 0.1, y: 0.1, w: 0.5, h: 0.5 }} onChange={onChange}>
-      <div />
-    </RegionPicker>,
-  );
-  const area = screen.getByTestId('region-area');
-  area.getBoundingClientRect = () => ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
-  fireEvent.mouseDown(area, { clientX: 20, clientY: 10 });
-  fireEvent.mouseUp(area, { clientX: 21, clientY: 10 });
-  expect(onChange).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Xoá vùng' }));
-  expect(onChange).toHaveBeenCalledWith(null);
+test('chart space maps to the four corners', () => {
+  expect(chartPoint(q, 0, 0)).toEqual([0.3, 0.25]);
+  const [x, y] = chartPoint(q, 1, 1);
+  expect(x).toBeCloseTo(0.74, 6);
+  expect(y).toBeCloseTo(0.7, 6);
 });
 ```
 
-`ui/src/screens/ColorMatch.test.tsx`:
+`ui/src/Calibration.test.tsx`:
 ```tsx
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-import { EngineClient } from '../api/client';
-import { FakeWs } from '../test/fakeWs';
-import { ColorMatch } from './ColorMatch';
+import { EngineClient } from './api/client';
+import { Workspace } from './App';
+import { FakeWs } from './test/fakeWs';
 
-test('sends the match with reference and targets, then shows the remaining ΔE', async () => {
+const colorSchema = {
+  kind: 'color',
+  label: 'Colour',
+  description: 'Calibrate once against a colour chart.',
+  icon: 'color',
+  requires: [],
+  onAdd: { enabled: true },
+  fields: [
+    { key: 'enabled', type: 'bool', default: false, label: 'On' },
+    { key: 'lut', type: 'path', default: '', label: 'LUT', hidden: true },
+  ],
+};
+const at = new Date(2026, 9, 8, 19, 40).getTime() / 1000;
+function show(color: Record<string, unknown>) {
+  return {
+    schemaVersion: 1,
+    settings: { rate: '60/1', resolution: '1920x1080', holdMs: 5000, slatePath: '' },
+    cameras: [{ id: 'a', name: 'MC chính – Cam 2', input: { kind: 'srt', params: {} }, outputs: [], stages: { color } }],
+  };
+}
+const state = { cameras: { a: { name: 'MC chính – Cam 2', phase: 'live', input: { state: 'live', error: null, health: 'receiving' }, stages: { color: { state: 'active', error: null } } } } };
+
+async function setup(color: Record<string, unknown>) {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
   FakeWs.last.open();
-  FakeWs.last.receive({
-    type: 'snapshot',
-    state: { cameras: { a: { name: 'A', phase: 'live' }, b: { name: 'B', phase: 'live' } } },
-    show: {
-      cameras: [
-        { id: 'a', name: 'A', input: { kind: 'srt', params: {} }, outputs: [], stages: {} },
-        { id: 'b', name: 'B', input: { kind: 'srt', params: {} }, outputs: [], stages: {} },
-      ],
-    },
-  });
-  render(<ColorMatch client={c} />);
-  fireEvent.click(screen.getByLabelText('Khớp theo tham chiếu: B'));
-  fireEvent.click(screen.getByRole('button', { name: 'Khớp màu' }));
-  const req = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'colorMatch');
-  expect(req.args).toEqual({ referenceId: 'a', targetIds: ['b'], regions: {} });
-  FakeWs.last.receive({ id: req.id, ok: true, result: [{ cameraId: 'b', deltaE: 1.4 }] });
-  await waitFor(() => expect(screen.getByText(/1\.4/)).toBeInTheDocument());
+  FakeWs.last.receive({ type: 'snapshot', state, show: show(color) });
+  render(<Workspace client={c} />);
+  const req = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'getStageSchemas');
+  FakeWs.last.receive({ id: req.id, ok: true, result: [colorSchema] });
+  const insp = screen.getByRole('complementary', { name: 'Inspector' });
+  await waitFor(() => within(insp).getByRole('group', { name: 'Colour' }));
+  return within(insp).getByRole('group', { name: 'Colour' });
+}
+
+test('a calibrated camera shows the result in words, with the numbers in the tooltip', async () => {
+  const group = await setup({ enabled: true, lut: 'C:/l.cube', previousLut: '', chart: 'card', deltaE: 1.1, deltaEBefore: 7.4, calibratedAt: at, reference: false });
+  const line = within(group).getByText(/Good match · 19:40/);
+  expect(line.closest('[title]')).toHaveAttribute('title', expect.stringContaining('7.4'));
+  expect(within(group).getByRole('button', { name: 'Calibrate again' })).toBeInTheDocument();
+  expect(within(group).queryByRole('button', { name: 'Undo' })).toBeNull();
+});
+
+test('Calibrate shows the camera alone, looks for the chart and captures with the corners', async () => {
+  const group = await setup({ enabled: true, lut: '', previousLut: '', chart: 'card', deltaE: 0, deltaEBefore: 0, calibratedAt: 0, reference: false });
+  expect(within(group).getByText('Not calibrated')).toBeInTheDocument();
+  fireEvent.click(within(group).getByRole('button', { name: 'Calibrate' }));
+  expect(screen.getByText('Calibrating colour')).toBeInTheDocument();
+  const find = FakeWs.last.lastRequest();
+  expect(find.cmd).toBe('findChart');
+  FakeWs.last.receive({ id: find.id, ok: true, result: { available: true, found: true, corners: [[0.3, 0.25], [0.72, 0.22], [0.74, 0.7], [0.28, 0.72]] } });
+  await waitFor(() => expect(within(group).getByText(/Chart found/)).toBeInTheDocument());
+  fireEvent.click(within(group).getByRole('radio', { name: 'Tablet' }));
+  fireEvent.click(within(group).getByRole('button', { name: 'Capture' }));
+  const cal = FakeWs.last.lastRequest();
+  expect(cal.cmd).toBe('calibrateColor');
+  expect(cal.args).toEqual({ cameraId: 'a', chart: 'tablet', corners: [[0.3, 0.25], [0.72, 0.22], [0.74, 0.7], [0.28, 0.72]] });
+  FakeWs.last.receive({ id: cal.id, ok: true, result: { deltaEBefore: 6, deltaE: 1.2, rating: 'good', reference: false } });
+  await waitFor(() => expect(screen.queryByText('Calibrating colour')).toBeNull());
+});
+
+test('a failed capture keeps calibrating and shows why', async () => {
+  const group = await setup({ enabled: true, lut: '', previousLut: '', chart: 'card', deltaE: 0, deltaEBefore: 0, calibratedAt: 0, reference: false });
+  fireEvent.click(within(group).getByRole('button', { name: 'Calibrate' }));
+  fireEvent.click(within(group).getByRole('button', { name: 'Capture' }));
+  const cal = FakeWs.last.sent.map((s) => JSON.parse(s)).filter((r) => r.cmd === 'calibrateColor').pop();
+  FakeWs.last.receive({ id: cal.id, ok: false, error: { code: 'invalid', message: 'the corners are not on the chart' } });
+  await waitFor(() => expect(within(group).getByRole('alert')).toHaveTextContent('the corners are not on the chart'));
+  expect(screen.getByText('Calibrating colour')).toBeInTheDocument();
 });
 ```
 
-Run `npm test` in `ui/` — Expected: FAIL.
+Run `PATH="/c/Program Files/nodejs:$PATH" npm test` in `ui/` — Expected: FAIL.
 
-- [ ] **Step 2: Types, strings, hidden fields**
+- [ ] **Step 2: Geometry, the chart image, the calibration hook**
 
-`protocol.ts`: add `hidden?: boolean;` to `StageField`; add `export interface Region { x: number; y: number; w: number; h: number }`.
+`ui/src/api/protocol.ts`: add `hidden?: boolean;` to `StageField`. `ui/src/inspector/StageForm.tsx`: change `schema.fields.slice(1)` to `schema.fields.slice(1).filter((f) => !f.hidden)`.
 
-`i18n.ts`: add the keys `'nav.multiview'`, `'nav.color'`, `'color.reference'`, `'color.target'`, `'color.match'`, `'color.matching'`, `'color.residual'`, `'color.trims'`, `'color.undo'`, `'color.reset'`, `'color.resetBody'`, `'color.importPath'`, `'color.import'`, `'region.clear'`, `'region.hint'` to `vi` and `en` with the copy above.
+`ui/src/calibration/chartGeometry.ts`:
+```ts
+export type Pt = [number, number];
 
-`StageForm.tsx`: iterate `schema.fields.filter((f) => !f.hidden)` instead of `schema.fields`.
+// Chart space (u across 6 columns, v down 4 rows) → picture, through the four grid corners
+// (top-left, top-right, bottom-right, bottom-left). Same maths as src/core/chart.cpp.
+export function chartPoint(q: Pt[], u: number, v: number): Pt {
+  const [p0, p1, p2, p3] = q;
+  const dx1 = p1[0] - p2[0], dx2 = p3[0] - p2[0], dx3 = p0[0] - p1[0] + p2[0] - p3[0];
+  const dy1 = p1[1] - p2[1], dy2 = p3[1] - p2[1], dy3 = p0[1] - p1[1] + p2[1] - p3[1];
+  const den = dx1 * dy2 - dx2 * dy1 || 1e-12;
+  const g = (dx3 * dy2 - dx2 * dy3) / den;
+  const h = (dx1 * dy3 - dx3 * dy1) / den;
+  const a = p1[0] - p0[0] + g * p1[0], b = p3[0] - p0[0] + h * p3[0];
+  const d = p1[1] - p0[1] + g * p1[1], e = p3[1] - p0[1] + h * p3[1];
+  const w = g * u + h * v + 1;
+  return [(a * u + b * v + p0[0]) / w, (d * u + e * v + p0[1]) / w];
+}
 
-- [ ] **Step 3: Implement `RegionPicker`**
+export const DEFAULT_CORNERS: Pt[] = [
+  [0.25, 0.22],
+  [0.75, 0.22],
+  [0.75, 0.78],
+  [0.25, 0.78],
+];
+```
 
-`ui/src/components/RegionPicker.tsx`:
-```tsx
-import { Box, Button } from '@mui/material';
-import { useRef, useState, type ReactNode } from 'react';
+`ui/src/calibration/chartImage.ts`:
+```ts
+// The ColorChecker 24 layout in sRGB, for showing on a tablet (spec §5.3). Same values as src/core/chart.cpp.
+const SRGB = [
+  '#735244', '#c29682', '#627a9d', '#576c43', '#8580b1', '#67bdaa',
+  '#d67e2c', '#505ba6', '#c15a63', '#5e3c6c', '#9dbc40', '#e0a32e',
+  '#383d96', '#469449', '#af363c', '#e7c71f', '#bb5695', '#0885a1',
+  '#f3f3f2', '#c8c8c8', '#a0a0a0', '#7a7a79', '#555555', '#343434',
+];
 
-import type { Region } from '../api/protocol';
-import { t } from '../i18n';
-
-const round = (v: number) => Math.round(v * 1000) / 1000;
-
-// Drag a box over the picture; values are normalised 0..1 (spec §5.3 region boxes).
-export function RegionPicker({ value, onChange, children }: { value: Region | null; onChange: (r: Region | null) => void; children: ReactNode }) {
-  const area = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
-  const norm = (e: { clientX: number; clientY: number }) => {
-    const r = area.current!.getBoundingClientRect();
-    return { x: Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1), y: Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1) };
-  };
-  const shown = drag
-    ? { x: Math.min(drag.x0, drag.x1), y: Math.min(drag.y0, drag.y1), w: Math.abs(drag.x1 - drag.x0), h: Math.abs(drag.y1 - drag.y0) }
-    : value;
-  return (
-    <Box>
-      <Box
-        ref={area}
-        data-testid="region-area"
-        sx={{ position: 'relative', cursor: 'crosshair', userSelect: 'none' }}
-        onMouseDown={(e) => {
-          const p = norm(e);
-          setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
-        }}
-        onMouseMove={(e) => {
-          if (!drag) return;
-          const p = norm(e);
-          setDrag({ ...drag, x1: p.x, y1: p.y });
-        }}
-        onMouseUp={(e) => {
-          if (!drag) return;
-          const p = norm(e);
-          const r = { x: Math.min(drag.x0, p.x), y: Math.min(drag.y0, p.y), w: Math.abs(p.x - drag.x0), h: Math.abs(p.y - drag.y0) };
-          setDrag(null);
-          if (r.w > 0.02 && r.h > 0.02) onChange({ x: round(r.x), y: round(r.y), w: round(r.w), h: round(r.h) });
-        }}
-      >
-        {children}
-        {shown && (
-          <Box
-            sx={{
-              position: 'absolute',
-              left: `${shown.x * 100}%`,
-              top: `${shown.y * 100}%`,
-              width: `${shown.w * 100}%`,
-              height: `${shown.h * 100}%`,
-              border: 2,
-              borderColor: 'warning.main',
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-      </Box>
-      <Button size="small" disabled={!value} onClick={() => onChange(null)}>
-        {t('region.clear')}
-      </Button>
-    </Box>
-  );
+// Saves breadcamera-chart.png through the WebView2 download prompt.
+export function downloadChartImage() {
+  const c = document.createElement('canvas');
+  c.width = 2048;
+  c.height = 1536;
+  const ctx = c.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = '#141414';
+  ctx.fillRect(0, 0, c.width, c.height);
+  const cell = 300, gap = 30, x0 = (c.width - 6 * cell) / 2, y0 = (c.height - 4 * cell) / 2;
+  SRGB.forEach((hex, i) => {
+    ctx.fillStyle = hex;
+    ctx.fillRect(x0 + (i % 6) * cell + gap / 2, y0 + Math.floor(i / 6) * cell + gap / 2, cell - gap, cell - gap);
+  });
+  c.toBlob((blob) => {
+    if (!blob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'breadcamera-chart.png';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
 }
 ```
 
-- [ ] **Step 4: Implement the screen**
-
-`ui/src/screens/ColorMatch.tsx`:
-```tsx
-import { Box, Button, Card, CardContent, Checkbox, FormControlLabel, Radio, Stack, TextField, Typography } from '@mui/material';
-import { useEffect, useMemo, useState } from 'react';
+`ui/src/calibration/useCalibration.ts`:
+```ts
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { EngineClient } from '../api/client';
-import type { Region, StageSchemaJson } from '../api/protocol';
-import { useEngine } from '../api/useEngine';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { ErrorBlock } from '../components/ErrorBlock';
-import { RegionPicker } from '../components/RegionPicker';
-import { StageForm } from '../components/StageForm';
-import { t } from '../i18n';
-import { PreviewCanvas } from '../preview/PreviewCanvas';
+import { DEFAULT_CORNERS, type Pt } from './chartGeometry';
 
-export function ColorMatch({ client }: { client: EngineClient }) {
-  const { show, state } = useEngine(client);
-  const cameras = show?.cameras ?? [];
-  const [reference, setReference] = useState<string>('');
-  const [targets, setTargets] = useState<string[]>([]);
-  const [regions, setRegions] = useState<Record<string, Region>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const [results, setResults] = useState<{ cameraId: string; deltaE: number }[]>([]);
-  const [schema, setSchema] = useState<StageSchemaJson | null>(null);
-  const [lutPath, setLutPath] = useState<Record<string, string>>({});
-  const [resetFor, setResetFor] = useState<string | null>(null);
-  const ref = reference || cameras[0]?.id || '';
-  const ids = useMemo(() => cameras.map((c) => c.id), [cameras]);
+export interface CalibrationState {
+  cameraId: string;
+  chart: 'card' | 'tablet';
+  corners: Pt[];
+  found: boolean;
+  manual: boolean;
+  detection: boolean | null; // null = not asked yet
+  busy: boolean;
+  error: string;
+}
 
-  useEffect(() => client.setPreviewSubscription(ids, 'small'), [client, ids]);
+// One camera at a time (spec §6.4): find the chart, let the operator fix the corners, capture.
+export function useCalibration(client: EngineClient) {
+  const [state, setState] = useState<CalibrationState | null>(null);
+  const live = useRef<CalibrationState | null>(null);
+  live.current = state;
+
   useEffect(() => {
-    client
-      .request<StageSchemaJson[]>('getStageSchemas')
-      .then((all) => setSchema(all.find((s) => s.kind === 'color') ?? null))
-      .catch(() => setSchema(null));
+    if (!state || state.found || state.manual || state.busy || state.detection === false) return;
+    let stop = false;
+    const look = () =>
+      client
+        .request<{ available: boolean; found: boolean; corners?: Pt[] }>('findChart', { cameraId: state.cameraId })
+        .then((r) => {
+          if (stop || !live.current || live.current.manual) return;
+          setState({ ...live.current, detection: r.available, found: r.found, corners: r.found && r.corners ? r.corners : live.current.corners });
+        })
+        .catch(() => {});
+    look();
+    const t = setInterval(look, 1000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, state?.cameraId, state?.found, state?.manual, state?.busy, state?.detection]);
+
+  const start = useCallback(
+    (cameraId: string) => setState({ cameraId, chart: 'card', corners: DEFAULT_CORNERS, found: false, manual: false, detection: null, busy: false, error: '' }),
+    [],
+  );
+  const cancel = useCallback(() => setState(null), []);
+  const setChart = useCallback((chart: 'card' | 'tablet') => setState((s) => (s ? { ...s, chart } : s)), []);
+  const moveCorner = useCallback((i: number, p: Pt) => setState((s) => (s ? { ...s, manual: true, corners: s.corners.map((c, k) => (k === i ? p : c)) } : s)), []);
+  const capture = useCallback(async () => {
+    const s = live.current;
+    if (!s) return;
+    setState({ ...s, busy: true, error: '' });
+    try {
+      await client.request('calibrateColor', { cameraId: s.cameraId, chart: s.chart, corners: s.corners });
+      setState(null);
+    } catch (e) {
+      setState({ ...s, busy: false, error: e instanceof Error ? e.message : String(e) });
+    }
   }, [client]);
 
-  async function match() {
-    setBusy(true);
-    setError('');
-    try {
-      const regs: Record<string, Region> = {};
-      for (const id of [ref, ...targets]) if (regions[id]) regs[id] = regions[id];
-      setResults(await client.request<{ cameraId: string; deltaE: number }[]>('colorMatch', { referenceId: ref, targetIds: targets, regions: regs }));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+  return { state, start, cancel, setChart, moveCorner, capture };
+}
+export type Calibration = ReturnType<typeof useCalibration>;
+```
 
-  const run = (cmd: string, args: Record<string, unknown>) => client.request(cmd, args).catch((e: Error) => setError(e.message));
+- [ ] **Step 3: The solo view and the Colour panel**
+
+`ui/src/calibration/CalibrationView.tsx`:
+```tsx
+import { useEffect, useRef, type PointerEvent } from 'react';
+
+import type { EngineClient } from '../api/client';
+import type { CameraConfig } from '../api/protocol';
+import { Icon } from '../components/Icon';
+import { PreviewCanvas } from '../preview/PreviewCanvas';
+import { chartPoint, type Pt } from './chartGeometry';
+import type { CalibrationState } from './useCalibration';
+
+// The calibrating camera alone, with the chart corners on top (spec §6.4).
+export function CalibrationView({ client, cam, n, state, onCorner }: { client: EngineClient; cam: CameraConfig; n: number; state: CalibrationState; onCorner: (i: number, p: Pt) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const drag = useRef<number | null>(null);
+  useEffect(() => client.setPreviewSubscription([cam.id], 'large'), [client, cam.id]);
+
+  function at(e: PointerEvent): Pt {
+    const r = box.current!.getBoundingClientRect();
+    return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
+  }
+  const q = state.corners;
+  const squares: Pt[] = [];
+  for (let p = 0; p < 24; p++) squares.push(chartPoint(q, ((p % 6) + 0.5) / 6, (Math.floor(p / 6) + 0.5) / 4));
 
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-        <Typography variant="h4">{t('nav.color')}</Typography>
-        <Button variant="contained" disabled={busy || targets.length === 0} onClick={match}>
-          {busy ? t('color.matching') : t('color.match')}
-        </Button>
-      </Stack>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-        {t('region.hint')}
-      </Typography>
-      {error && <ErrorBlock message={error} />}
-      {results.map((r) => (
-        <Typography key={r.cameraId} variant="body2">
-          {cameras.find((c) => c.id === r.cameraId)?.name ?? r.cameraId}: {t('color.residual')} {r.deltaE.toFixed(1)}
-        </Typography>
-      ))}
-      <Box sx={{ display: 'grid', gap: 2, mt: 2, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
-        {cameras.map((cam) => {
-          const isRef = cam.id === ref;
-          const colorErr = state.cameras?.[cam.id]?.stages?.color?.error;
-          return (
-            <Card key={cam.id} variant="outlined">
-              <RegionPicker value={regions[cam.id] ?? null} onChange={(r) => setRegions((m) => { const n = { ...m }; if (r) n[cam.id] = r; else delete n[cam.id]; return n; })}>
-                <PreviewCanvas client={client} cameraId={cam.id} />
-              </RegionPicker>
-              <CardContent>
-                <Typography variant="h6">{cam.name}</Typography>
-                <FormControlLabel
-                  control={<Radio checked={isRef} onChange={() => { setReference(cam.id); setTargets((ts) => ts.filter((x) => x !== cam.id)); }} />}
-                  label={t('color.reference')}
-                />
-                <FormControlLabel
-                  disabled={isRef}
-                  control={
-                    <Checkbox
-                      checked={targets.includes(cam.id)}
-                      inputProps={{ 'aria-label': `${t('color.target')}: ${cam.name}` }}
-                      onChange={(e) => setTargets((ts) => (e.target.checked ? [...ts, cam.id] : ts.filter((x) => x !== cam.id)))}
-                    />
-                  }
-                  label={t('color.target')}
-                />
-                {colorErr && <ErrorBlock message={colorErr.message} />}
-                <Typography variant="subtitle2" sx={{ mt: 1 }}>
-                  {t('color.trims')}
-                </Typography>
-                {schema && (
-                  <StageForm schema={schema} values={cam.stages?.color ?? {}} onChange={(p) => run('setStage', { cameraId: cam.id, stage: 'color', params: p })} />
-                )}
-                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                  <Button size="small" onClick={() => run('undoLut', { cameraId: cam.id })}>
-                    {t('color.undo')}
-                  </Button>
-                  <Button size="small" color="error" onClick={() => setResetFor(cam.id)}>
-                    {t('color.reset')}
-                  </Button>
-                </Stack>
-                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                  <TextField size="small" label={t('color.importPath')} value={lutPath[cam.id] ?? ''} onChange={(e) => setLutPath((m) => ({ ...m, [cam.id]: e.target.value }))} sx={{ flex: 1 }} />
-                  <Button size="small" disabled={!lutPath[cam.id]} onClick={() => run('importLut', { cameraId: cam.id, path: lutPath[cam.id] })}>
-                    {t('color.import')}
-                  </Button>
-                </Stack>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </Box>
-      <ConfirmDialog
-        open={resetFor !== null}
-        title={t('color.reset')}
-        body={t('color.resetBody')}
-        confirmLabel={t('color.reset')}
-        onClose={() => setResetFor(null)}
-        onConfirm={() => {
-          if (resetFor) run('resetColor', { cameraId: resetFor });
-          setResetFor(null);
-        }}
-      />
-    </Box>
+    <section className="center" aria-label="Calibrating">
+      <div className="solo-bar">
+        <Icon name="chart" size={14} />
+        <b>
+          CAM {n} · {cam.name}
+        </b>
+        <span>Calibrating colour</span>
+        <span className="right">Other cameras keep running</span>
+      </div>
+      <div className="cal-view">
+        <div
+          className="pic cal-pic"
+          ref={box}
+          onPointerMove={(e) => drag.current !== null && onCorner(drag.current, at(e))}
+          onPointerUp={() => (drag.current = null)}
+          onPointerLeave={() => (drag.current = null)}
+        >
+          <PreviewCanvas client={client} cameraId={cam.id} size="large" />
+          <svg className="chart-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Chart corners">
+            <polygon points={q.map((p) => p.join(',')).join(' ')} />
+            {squares.map(([x, y], i) => (
+              <rect key={i} x={x - 0.006} y={y - 0.009} width={0.012} height={0.018} className="sample" />
+            ))}
+          </svg>
+          {q.map(([x, y], i) => (
+            <button
+              key={i}
+              className="corner"
+              aria-label={`Chart corner ${i + 1}`}
+              style={{ left: `${x * 100}%`, top: `${y * 100}%` }}
+              onPointerDown={(e) => {
+                (e.target as Element).setPointerCapture?.(e.pointerId);
+                drag.current = i;
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 ```
-Note: trims go out per change without debounce here (sliders are coarse); if the reviewer flags request floods, reuse CameraDetail's 150 ms debounce pattern.
 
-`ui/src/App.tsx`: replace the `selected` state with `const [view, setView] = useState<'multiview' | 'color'>('multiview');` alongside `selected`; add two header buttons before the GPU text:
+`ui/src/calibration/ColourPanel.tsx`:
 ```tsx
-        <Button onClick={() => { setSelected(null); setView('multiview'); }}>{t('nav.multiview')}</Button>
-        <Button onClick={() => { setSelected(null); setView('color'); }}>{t('nav.color')}</Button>
+import { useState } from 'react';
+
+import type { EngineClient } from '../api/client';
+import type { CameraConfig } from '../api/protocol';
+import { ErrorBlock } from '../components/ErrorBlock';
+import { Icon } from '../components/Icon';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { clock } from '../state/marks';
+import { downloadChartImage } from './chartImage';
+import type { Calibration } from './useCalibration';
+
+const WORDS = { good: ['Good match', 'ok-line'], fair: ['Fair match', 'warn-line'], poor: ['Poor match — check the lighting and glare', 'bad-line'] } as const;
+const rating = (d: number) => (d <= 2 ? 'good' : d <= 4 ? 'fair' : 'poor');
+
+// The Colour effect's body: the result in words, or the calibrate controls (spec §5.3, §6.4).
+export function ColourPanel({ client, cam, n, calib }: { client: EngineClient; cam: CameraConfig; n: number; calib: Calibration }) {
+  const [clearing, setClearing] = useState(false);
+  const [error, setError] = useState('');
+  const p = (cam.stages?.color ?? {}) as Record<string, unknown>;
+  const s = calib.state?.cameraId === cam.id ? calib.state : null;
+
+  if (s) {
+    const status = s.found ? '✓ Chart found, corners placed' : s.detection === false || s.manual ? `Drag the four corners onto the chart` : 'Looking for the chart…';
+    return (
+      <>
+        <ErrorBlock severity="info" title="Calibrating." message={`Hold the chart in front of CAM ${n} under show lighting.`} />
+        {s.error && <ErrorBlock title="Capture failed." message={s.error} />}
+        <div className="prop">
+          <label>Chart</label>
+          <span className="seg" role="radiogroup" aria-label="Chart">
+            {(['card', 'tablet'] as const).map((c) => (
+              <button key={c} role="radio" aria-checked={s.chart === c} className={s.chart === c ? 'on' : ''} onClick={() => calib.setChart(c)}>
+                {c === 'card' ? 'Printed card' : 'Tablet'}
+              </button>
+            ))}
+          </span>
+        </div>
+        <div className="prop">
+          <label>Status</label>
+          <span className={s.found ? 'ok-line' : 'ro'}>{status}</span>
+        </div>
+        <div className="row-btns">
+          <button className="btn primary" disabled={s.busy} onClick={calib.capture}>
+            <Icon name="check" size={14} />
+            {s.busy ? 'Capturing…' : 'Capture'}
+          </button>
+          <button className="btn" onClick={calib.cancel}>
+            Cancel
+          </button>
+        </div>
+        <p className="note">Drag a corner only if it is wrong. Tablet: show the chart image at full brightness.</p>
+        <button className="link" onClick={downloadChartImage}>
+          Save chart image for a tablet…
+        </button>
+      </>
+    );
+  }
+
+  const lut = String(p.lut ?? '');
+  const at = Number(p.calibratedAt ?? 0) * 1000;
+  const d = Number(p.deltaE ?? 0);
+  const [word, cls] = WORDS[rating(d)];
+  const tip = `Average colour error ${Number(p.deltaEBefore ?? 0).toFixed(1)} before, ${d.toFixed(1)} after (ΔE2000) · ${p.chart === 'tablet' ? 'tablet' : 'printed card'}`;
+  async function run(cmd: string) {
+    try {
+      await client.request(cmd, { cameraId: cam.id });
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return (
+    <>
+      {error && <ErrorBlock message={error} />}
+      <div className="prop">
+        <label>Calibration</label>
+        {!lut ? (
+          <span className="ro">Not calibrated</span>
+        ) : p.reference ? (
+          <span className="ok-line" title="The other tablet cameras are matched to this one">
+            Tablet reference · {clock(at)}
+          </span>
+        ) : (
+          <span className={cls} title={tip}>
+            {rating(d) === 'good' && <Icon name="check" size={12} />}
+            {word} · {clock(at)}
+          </span>
+        )}
+      </div>
+      <div className="row-btns">
+        <button className="btn" disabled={calib.state !== null} onClick={() => calib.start(cam.id)}>
+          <Icon name="chart" size={14} />
+          {lut ? 'Calibrate again' : 'Calibrate'}
+        </button>
+        {String(p.previousLut ?? '') && (
+          <button className="btn" onClick={() => run('undoColor')}>
+            Undo
+          </button>
+        )}
+        {lut && (
+          <button className="btn ghost-danger" onClick={() => setClearing(true)}>
+            Clear…
+          </button>
+        )}
+      </div>
+      {clearing && (
+        <ConfirmDialog
+          title="Clear calibration?"
+          body={`CAM ${n} goes back to its uncorrected colours now.`}
+          confirm="Clear calibration"
+          onCancel={() => setClearing(false)}
+          onConfirm={async () => {
+            await run('clearColor');
+            setClearing(false);
+          }}
+        />
+      )}
+    </>
+  );
+}
 ```
-and render `view === 'color' ? <ColorMatch client={client} /> : selected ? <CameraDetail .../> : <Multiview .../>` (import `Button`, `ColorMatch`).
+
+- [ ] **Step 4: Wire it in**
+
+- `ui/src/inspector/Effects.tsx`: add a prop `calib: Calibration` (import the type from `../calibration/useCalibration`) and, inside each group's `group-b`, right before `<StageForm …/>`: `{s.kind === 'color' && <ColourPanel client={client} cam={cam} n={n} calib={calib} />}` (import `ColourPanel`).
+- `ui/src/App.tsx` (`Workspace`):
+  - `const calib = useCalibration(client);` (import); pass `calib={calib}` to `<Effects …/>`;
+  - render the centre as `{calib.state && calibCam ? <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} /> : <Multiview … />}`, where `calibIndex = cameras.findIndex((c) => c.id === calib.state?.cameraId)` and `calibCam = cameras[calibIndex]` (if the camera disappears, call `calib.cancel()` in an effect);
+  - while calibrating, keep the Inspector on that camera (`selected` follows `calib.state.cameraId`);
+  - Escape cancels: in the existing keydown handler, `if (e.key === 'Escape' && calib.state) calib.cancel();`;
+  - `menus.camera` gains `{ label: 'Calibrate colour…', shortcut: 'Ctrl+K', disabled: !cam || !cam.stages || !('color' in cam.stages), onSelect: () => cam && calib.start(cam.id) }` and Ctrl+K in the keydown handler does the same.
+- `ui/src/app.css` — append:
+```css
+/* calibration (M3) */
+.solo-bar { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bm-brand-wash); color: var(--bm-text-muted); border-bottom: 1px solid var(--bm-border-subtle); }
+.solo-bar svg { color: var(--bm-brand); }
+.solo-bar b { color: var(--bm-text); font-weight: 600; }
+.solo-bar .right { margin-left: auto; color: var(--bm-text-dim); }
+.cal-view { flex: 1; display: grid; place-items: center; padding: 10px; min-height: 0; }
+.cal-pic { position: relative; height: 100%; max-width: 100%; touch-action: none; }
+.chart-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.chart-overlay polygon { fill: none; stroke: var(--bm-brand); stroke-width: 0.002; vector-effect: non-scaling-stroke; }
+.chart-overlay .sample { fill: none; stroke: var(--bm-text); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.corner { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--bm-bg); border: 2px solid var(--bm-brand); cursor: grab; }
+.corner:active { cursor: grabbing; }
+.ok-line, .warn-line, .bad-line { display: inline-flex; align-items: center; gap: 5px; }
+.ok-line { color: var(--bm-success); }
+.warn-line { color: var(--bm-warning); }
+.bad-line { color: var(--bm-danger); }
+.row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.link { color: var(--bm-text-muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--bm-border-strong); justify-self: start; }
+```
 
 - [ ] **Step 5: Run the UI tests and build**
 
-In `ui/`: `npm test` (all pass) and `npm run build`.
+In `ui/`: `npm test` (all pass) and `npm run build`. Compare once with the mockup's "Calibrate colour" tab (screenshot in the report).
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add ui/src
-git commit -m "feat(ui): colour match screen with region boxes, trims, LUT import, undo and reset"
+git commit -m "feat(ui): calibrate colour in the Colour effect, with a solo view and chart corners"
 ```
 
-### Task 7: M3 acceptance — two SRT cameras with a colour cast, matched end to end; follow-ups
+### Task 8: M3 acceptance — a cast camera calibrated end to end on the GPU; the human check; follow-ups
 
 **Files:**
-- Modify: `tests/support/test_media.h/.cpp` (`cbShift`, `crShift`; constant chroma), `docs/superpowers/follow-ups.md`, `CMakeLists.txt`
-- Create: `tests/e2e_m3_test.cpp`
+- Create: `tests/e2e_m3_test.cpp`, `docs/superpowers/manual-checks/m3-calibration.md`
+- Modify: `tests/support/fake_output.h` (keep the last image), `docs/superpowers/follow-ups.md`, `CMakeLists.txt`
 
 **Interfaces:**
-- Consumes: `ColorMatchService` (Task 5), `Engine` with `GpuTools` (Task 4), `writeTestTs`/`TsPusher`, `HybridFactory` pattern (M1/M2 acceptance — re-declare locally).
-- Produces: spec §9 M3 evidence ("matching works on real cameras" — stood in by two real SRT/decoded streams with a known chroma cast; a person still has to try two physical cameras, see Step 4).
+- Consumes: `ColorCalibrationService` (Task 6), `Engine` with `GpuTools` (Task 4), the fake chart input (Task 6), `sampleChart`, `meanDeltaE`, `colorCheckerReference` (Task 2).
+- Produces: spec §9 M3 evidence ("calibration works with a printed card and with a tablet" — stood in by rendered charts with known casts through the real GPU path; a person checks real cameras, Step 4).
 
-- [ ] **Step 1: Give the test clip a controllable cast**
+- [ ] **Step 1: Keep the last output image**
 
-`tests/support/test_media.h`: `void writeTestTs(const std::filesystem::path& path, int width, int height, int fps, int seconds, bool withAudio = true, int cbShift = 0, int crShift = 0);`
-
-`tests/support/test_media.cpp`: same parameters; replace the chroma fill with constant planes:
-```cpp
-    const auto u = static_cast<uint8_t>(std::clamp(128 + cbShift, 16, 240));
-    const auto v = static_cast<uint8_t>(std::clamp(128 + crShift, 16, 240));
-    for (int y = 0; y < height / 2; ++y)
-      for (int x = 0; x < width / 2; ++x) {
-        vf->data[1][y * vf->linesize[1] + x] = u;
-        vf->data[2][y * vf->linesize[2] + x] = v;
-      }
-```
-(`#include <algorithm>`). Luma still moves, so every earlier test that needs motion still has it. Run the M1/M2 suites once to confirm nothing depended on moving chroma.
+`tests/support/fake_output.h`: in `deliver`, also keep `frame.bgra` (when set) in a member under the existing mutex, and add `std::shared_ptr<const bc::CpuImage> lastImage() const`.
 
 - [ ] **Step 2: Write the acceptance test**
 
@@ -2162,10 +2737,10 @@ git commit -m "feat(ui): colour match screen with region boxes, trims, LUT impor
 
 #include <thread>
 
-#include "core/color_math.h"
+#include "core/calibration.h"
 #include "core/stage_params.h"
 #include "core/state_store.h"
-#include "engine/color_match_service.h"
+#include "engine/color_calibration_service.h"
 #include "engine/engine.h"
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
@@ -2173,113 +2748,111 @@ git commit -m "feat(ui): colour match screen with region boxes, trims, LUT impor
 #include "support/fake_input.h"
 #include "support/requires.h"
 #include "support/temp_dir.h"
-#include "support/test_media.h"
 
 using namespace std::chrono_literals;
 using nlohmann::json;
-using Clock = std::chrono::steady_clock;
 
 namespace {
-struct HybridFactory : bc::AdapterFactory {
-  bc::DefaultAdapterFactory real;
-  bc::test::FakeFactory fake;
-  HybridFactory(bc::GpuDevice& g, bc::TexturePool& p, bc::Converter& c) : real(g, p), fake(c) {}
-  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override { return real.makeInput(cfg); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig& cam) override {
-    return fake.makeOutput(cfg, cam);
-  }
-};
+const bc::ChartQuad kQuad{{{{0.25, 0.22}, {0.75, 0.22}, {0.75, 0.78}, {0.25, 0.78}}}};
 
-// Mean colour of the centre pixel over the last `window` of output frames, as Lab.
-bc::Lab meanCentre(bc::test::FakeOutput* o, std::chrono::milliseconds window) {
-  const auto since = Clock::now() - window;
-  double r = 0, g = 0, b = 0;
-  int n = 0;
-  for (auto& s : o->seen()) {
-    if (s.at < since) continue;
-    r += bc::toLinearLight(s.centerPixel[2] / 255.f);
-    g += bc::toLinearLight(s.centerPixel[1] / 255.f);
-    b += bc::toLinearLight(s.centerPixel[0] / 255.f);
-    ++n;
-  }
-  return bc::linearToLab({static_cast<float>(r / n), static_cast<float>(g / n), static_cast<float>(b / n)});
+bc::CameraConfig chartCam(const std::string& id, std::vector<float> cast) {
+  bc::CameraConfig c;
+  c.id = id;
+  c.name = id;
+  c.input.kind = "fake";
+  c.input.params = {{"tag", id}, {"width", 960}, {"height", 540}, {"chart", true}, {"cast", cast}};
+  c.outputs = {{"o-" + id, "fake", false, true, json::object()}};
+  return c;
 }
 }  // namespace
 
-TEST_CASE("M3 acceptance: a chroma-cast SRT camera is matched to the reference" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
-  bc::test::TempDir dir;
-  bc::test::writeTestTs(dir.path / "ref.ts", 1280, 720, 60, 6, true, 0, 0);
-  bc::test::writeTestTs(dir.path / "cast.ts", 1280, 720, 60, 6, true, 22, -18);
+TEST_CASE("M3 acceptance: printed card and tablet calibration through the GPU" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
   bc::ColorGrader grader(*gpu, pool);
   bc::StateStore state;
-  HybridFactory factory(*gpu, pool, conv);
+  bc::test::FakeFactory factory(conv);
   bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
-  bc::ColorMatchService svc(engine, dir.path / "luts");
+  bc::test::TempDir dir;
+  bc::ColorCalibrationService svc(engine, dir.path / "luts");
 
   bc::Show show;
-  for (int i = 0; i < 2; ++i) {
-    bc::CameraConfig c;
-    c.id = i == 0 ? "ref" : "cast";
-    c.name = c.id;
-    c.input.kind = "srt";
-    c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47941 + i}};
-    c.outputs.push_back({"o-" + c.id, "fake", false, true, {}});
-    show.cameras.push_back(c);
-  }
+  show.settings.width = 960;
+  show.settings.height = 540;
+  show.cameras = {chartCam("card", {1.25f, 1.0f, 0.7f}), chartCam("t1", {1.2f, 1.0f, 0.8f}), chartCam("t2", {0.8f, 1.0f, 1.25f})};
   engine.apply(show);
   engine.start();
-  bc::test::TsPusher p0(dir.path / "ref.ts", "srt://127.0.0.1:47941?mode=caller", true);
-  bc::test::TsPusher p1(dir.path / "cast.ts", "srt://127.0.0.1:47942?mode=caller", true);
-  std::this_thread::sleep_for(8s);  // connect + one full luma cycle
+  std::this_thread::sleep_for(500ms);
 
-  const double before = bc::deltaE2000(meanCentre(factory.fake.output("o-ref"), 4s), meanCentre(factory.fake.output("o-cast"), 4s));
-  auto out = svc.match("ref", {"cast"}, {});
-  REQUIRE(out.size() == 1);
-  show.cameras[1].stages = {{"color", bc::normalizeStageParams("color", {{"enabled", true}, {"lut", out[0].lutPath}})}};
+  auto card = svc.calibrate("card", "card", kQuad);
+  auto t1 = svc.calibrate("t1", "tablet", kQuad);
+  auto t2 = svc.calibrate("t2", "tablet", kQuad);
+  REQUIRE(t1.reference);
+  auto setLut = [&](size_t i, const std::string& lut) {
+    show.cameras[i].stages = {{"color", bc::normalizeStageParams("color", {{"enabled", true}, {"lut", lut}})}};
+  };
+  setLut(0, card.lutPath);
+  setLut(1, t1.lutPath);
+  setLut(2, t2.lutPath);
   engine.apply(show);
-  std::this_thread::sleep_for(5s);
-  const double after = bc::deltaE2000(meanCentre(factory.fake.output("o-ref"), 4s), meanCentre(factory.fake.output("o-cast"), 4s));
-  MESSAGE("SRT cameras, mean centre ΔE2000: before " << before << ", after " << after << ", solver residual " << out[0].residualDeltaE);
-  CHECK(before > 5.0);
-  CHECK(after < 3.0);
-  p0.stop();
-  p1.stop();
+  std::this_thread::sleep_for(800ms);
+
+  auto seen = [&](const std::string& id) { return bc::sampleChart({*factory.output("o-" + id)->lastImage()}, kQuad); };
+  const double cardAfter = bc::meanDeltaE(seen("card"), bc::colorCheckerReference());
+  const double tabletAfter = bc::meanDeltaE(seen("t1"), seen("t2"));
+  MESSAGE("card: solver " << card.deltaEBefore << " -> " << card.deltaE << ", through the GPU " << cardAfter);
+  MESSAGE("tablet: solver " << t2.deltaEBefore << " -> " << t2.deltaE << ", camera-to-camera through the GPU " << tabletAfter);
+  CHECK(cardAfter < 2.5);
+  CHECK(tabletAfter < 2.5);
   engine.stop();
 }
 ```
+(The GPU bound is 2.5, not 2: the 33³ LUT is sampled trilinearly on the GPU and the output is 8-bit.)
 
 Add it to `bc_tests`.
 
 - [ ] **Step 3: Run it**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "M3 acceptance*"`
-Expected: PASS with the before/after line in the log (paste it into the report). If `after` is ≥ 3, report the numbers; do not relax the bound.
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "M3 acceptance*"` — Expected: PASS; paste both MESSAGE lines. If a bound fails, report the numbers; do not relax it.
 
-- [ ] **Step 4: Follow-ups and the human check**
+- [ ] **Step 4: The human check and follow-ups**
+
+`docs/superpowers/manual-checks/m3-calibration.md`:
+```markdown
+# M3 manual check — colour calibration on real cameras
+
+A person does this; it is not self-certified (spec §9 M3).
+
+1. Two physical cameras on the same scene, show lighting on.
+2. Printed ColorChecker Classic 24: on CAM 1, Colour → Calibrate, hold the card up, check the corners, Capture. Note the words shown (Good/Fair/Poor) and the tooltip numbers. Repeat on CAM 2.
+3. Judge by eye on a calibrated monitor: skin tones and the grey row look the same on both cameras.
+4. Tablet: Save chart image for a tablet…, show it full screen at full brightness. Clear both calibrations; calibrate CAM 1 with "Tablet" (it becomes the reference), then CAM 2. Judge again.
+5. Upside-down card, tilted card, card too small in the picture: note what happens.
+6. Record: date, cameras, lighting, results, and anything that looked wrong.
+```
 
 Append to `docs/superpowers/follow-ups.md`:
 ```markdown
 ## M3
-- Real-camera colour match is a **human check**: point two physical cameras at the same scene, Match, and judge by eye (spec §9 M3 "matching works on real cameras"). Automated evidence uses two synthetic SRT streams (`tests/e2e_m3_test.cpp`).
-- Scopes (waveform/vectorscope) are still out of scope; they would make checking a match easier (spec §10).
-- The colour stage budget is a fixed 4 ms (`src/engine/camera.cpp`, `beginTick`).
-- Colour trims from the colour-match screen are sent per change without debounce (`ui/src/screens/ColorMatch.tsx`).
+- Real-camera calibration is a **human check** (`docs/superpowers/manual-checks/m3-calibration.md`). Automated evidence uses rendered charts with known casts (`tests/e2e_m3_test.cpp`).
+- Chart detection depends on OpenCV's `mcc` module (`BC_WITH_CHART_DETECT`); without it the operator places the corners (`src/engine/chart_detector.cpp`).
+- The tablet chart's colours are only as good as the tablet; tablet mode matches cameras to each other, not to absolute colour (`src/engine/color_calibration_service.cpp`).
+- Trims stay in the colour schema as hidden fields at neutral values; manual trims are out of scope (spec §10) (`src/core/stage_params.cpp`).
+- OpenCV (Apache-2.0) must be listed in the M5 licence notices (`installer/THIRD_PARTY_NOTICES.md`).
 ```
 Add any `ponytail:` comment or deferred minor from this run.
 
 - [ ] **Step 5: Full verification**
 
-1. `scripts/test.ps1` (all) — record passed/skipped and reasons.
+1. `scripts/test.ps1` (all) — passed/skipped and reasons, with the configure line `BC_WITH_*=` values (incl. `BC_WITH_CHART_DETECT`).
 2. `ui/`: `npm test`, `npm run build`.
 3. `BC_FORCE_WARP=1` run — record.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests docs/superpowers/follow-ups.md CMakeLists.txt
-git commit -m "test: M3 acceptance (SRT cameras matched end to end) and follow-ups"
+git add tests docs/superpowers CMakeLists.txt
+git commit -m "test: M3 acceptance (card and tablet calibration through the GPU), manual check and follow-ups"
 ```
