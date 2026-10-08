@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BreadCamera Mockups</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --cyan: #22D3EE; --cyan-hover: #67E8F9; --cyan-wash: rgba(34,211,238,0.13); --ink: #04191D;
+  --plate: #08090B; --rail: #060709; --surface: #0E1013; --surface-hover: #13161B; --surface-raised: #16191F;
+  --hair: rgba(255,255,255,0.10); --hair-subtle: rgba(255,255,255,0.06); --hair-strong: rgba(255,255,255,0.18);
+  --tick: rgba(255,255,255,0.28);
+  --text: #F5F7FA; --muted: rgba(245,247,250,0.62); --dim: rgba(245,247,250,0.50); --disabled: rgba(245,247,250,0.34);
+  --live: #EF4444; --live-t: #FF6B6B; --conn: #F59E0B; --conn-t: #FBBF24; --ready: #22C55E; --ready-t: #4ADE80;
+  --off: rgba(245,247,250,0.30); --off-t: rgba(245,247,250,0.50);
+  --danger: #FB7185; --warning: #FBBF24; --success: #4ADE80; --info: #38BDF8;
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace;
+  --ease: cubic-bezier(.2,0,0,1);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body { background: var(--plate); color: var(--text); font: 400 14px/1.5 var(--sans); caret-color: var(--cyan); overflow: hidden; }
+::selection { background: var(--cyan-wash); color: var(--text); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--hair-strong); border-radius: 999px; border: 3px solid var(--plate); }
+::-webkit-scrollbar-track { background: transparent; }
+.num, .mono { font-family: var(--mono); font-feature-settings: 'tnum' 1, 'lnum' 1; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+/* mockup chrome (not part of the app) */
+.mockbar { height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: #000; border-bottom: 1px solid var(--hair); overflow-x: auto; white-space: nowrap; }
+.mockbar .tag { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-right: 8px; }
+.mockbar button { font: 500 12px var(--sans); color: var(--muted); background: none; border: 1px solid transparent; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.mockbar button:hover { color: var(--text); background: var(--surface-hover); }
+.mockbar button[aria-selected="true"] { color: var(--text); border-color: var(--hair-strong); }
+.mockbar .note { margin-left: auto; font-size: 12px; color: var(--dim); padding-left: 16px; }
+
+/* app shell */
+.app { display: grid; grid-template-columns: 208px 1fr; height: calc(100vh - 40px); }
+.rail { background: var(--rail); border-right: 1px solid var(--hair); display: flex; flex-direction: column; padding: 12px 8px; gap: 2px; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 14px; font-weight: 700; letter-spacing: -0.02em; }
+.brand-mark { width: 20px; height: 20px; border: 1px solid var(--cyan); border-radius: 4px; display: grid; place-items: center; color: var(--cyan); }
+.show-pick { margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.show-pick small { display: block; font-size: 12px; color: var(--dim); }
+.show-pick span { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; }
+.nav { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; transition: background .12s var(--ease), color .12s var(--ease); }
+.nav:hover { background: var(--surface-hover); color: var(--text); }
+.nav.on { background: var(--cyan-wash); color: var(--cyan); font-weight: 700; }
+.rail .spacer { flex: 1; }
+.engine-line { padding: 10px 10px 4px; border-top: 1px solid var(--hair-subtle); margin-top: 6px; font-size: 12px; color: var(--dim); display: grid; gap: 2px; }
+.engine-line b { font-weight: 500; color: var(--muted); }
+.stop-all { margin: 6px 2px 0; height: 32px; border-radius: 6px; border: 1px solid var(--hair); background: none; color: var(--danger); font: 600 13px var(--sans); cursor: pointer; }
+.stop-all:hover { border-color: var(--danger); }
+
+.main { display: grid; grid-template-rows: 56px 1fr; min-width: 0; min-height: 0; }
+.top { display: flex; align-items: center; gap: 16px; padding: 0 16px 0 20px; border-bottom: 1px solid var(--hair); background: var(--plate); }
+.top h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.top h1 .cam-id { font: 500 13px var(--mono); color: var(--dim); letter-spacing: 0; }
+.meta { display: flex; gap: 14px; color: var(--muted); font: 400 13px var(--mono); white-space: nowrap; }
+.meta .sep { color: var(--disabled); }
+.top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.btn { height: 36px; padding: 0 16px; border-radius: 6px; font: 600 14px var(--sans); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border: 1px solid transparent; transition: background .12s var(--ease), border-color .12s var(--ease); white-space: nowrap; }
+.btn-primary { background: var(--cyan); color: var(--ink); }
+.btn-primary:hover { background: var(--cyan-hover); }
+.btn-outline { background: none; color: var(--text); border-color: var(--hair-strong); }
+.btn-outline:hover { background: var(--surface-hover); }
+.btn-danger { background: var(--danger); color: #2A0A10; }
+.btn-ghost-danger { background: none; color: var(--danger); border-color: var(--hair); }
+.btn-ghost-danger:hover { border-color: var(--danger); }
+.btn:focus-visible, .nav:focus-visible, .tile:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
+.icon-btn { width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--hair); background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.icon-btn:hover { color: var(--text); background: var(--surface-hover); }
+
+.work { position: relative; min-height: 0; overflow: auto; }
+
+/* multiview wall */
+.wall-wrap { height: 100%; display: flex; flex-direction: column; }
+.wall-area { flex: 1; min-height: 0; display: grid; place-items: center; padding: 2px; }
+.wall { display: grid; gap: 2px; }
+.tile { display: flex; flex-direction: column; background: var(--surface); cursor: pointer; min-width: 0; position: relative; overflow: hidden; }
+.pic { aspect-ratio: 16 / 9; background: #000; overflow: hidden; position: relative; }
+.pic svg { display: block; width: 100%; height: 100%; }
+.strip { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-top: 1px solid var(--hair); font-size: 13px; transition: background .12s var(--ease); min-width: 0; }
+.tile:hover .strip { background: var(--surface-hover); }
+.strip.warn { box-shadow: inset 2px 0 0 var(--warning); background: rgba(251,191,36,0.08); }
+.strip.err { box-shadow: inset 2px 0 0 var(--danger); background: rgba(251,113,133,0.08); }
+.tile:hover .strip.warn { background: rgba(251,191,36,0.12); }
+.tile:hover .strip.err { background: rgba(251,113,133,0.12); }
+.in-chip { height: 20px; min-width: 38px; padding: 0 6px; border-radius: 4px; display: inline-grid; place-items: center; font: 600 11px var(--mono); letter-spacing: .06em; color: var(--ink); flex: none; }
+.in-chip.live { background: var(--live); } .in-chip.conn { background: var(--conn); } .in-chip.ready { background: var(--ready); }
+.in-chip.off { background: var(--off); color: var(--text); }
+.in-chip.err { background: var(--danger); color: #2A0A10; }
+.cam-no { font: 500 12px var(--mono); color: var(--dim); flex: none; }
+.cam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.fx { display: flex; gap: 4px; color: var(--muted); flex: none; }
+.fx svg.i { width: 14px; height: 14px; }
+.fx .bad { color: var(--danger); }
+.fx .unused { color: var(--disabled); }
+.flow { color: var(--disabled); flex: none; } .flow svg.i { width: 14px; height: 14px; }
+.outs { display: flex; gap: 4px; flex: none; }
+.pill { height: 20px; padding: 0 7px 0 6px; border-radius: 999px; border: 1px solid; display: inline-flex; align-items: center; gap: 5px; font: 500 11px var(--mono); letter-spacing: .06em; }
+.pill i { width: 6px; height: 6px; border-radius: 50%; }
+.pill.live { color: var(--live-t); border-color: rgba(239,68,68,.55); } .pill.live i { background: var(--live); animation: pulse 2s ease-in-out infinite alternate; }
+.pill.conn { color: var(--conn-t); border-color: rgba(245,158,11,.55); } .pill.conn i { background: var(--conn); }
+.pill.ready { color: var(--ready-t); border-color: rgba(34,197,94,.55); } .pill.ready i { background: var(--ready); }
+.pill.off { color: var(--off-t); border-color: var(--hair-strong); } .pill.off i { background: var(--off); }
+.err-chip { height: 20px; padding: 0 6px; border-radius: 4px; border: 1px solid rgba(251,113,133,.6); background: rgba(251,113,133,.08); color: var(--danger); display: inline-flex; align-items: center; gap: 4px; font: 500 11px var(--mono); letter-spacing: .06em; }
+.err-chip svg.i { width: 12px; height: 12px; }
+.more { font: 500 11px var(--mono); color: var(--muted); padding: 0 2px; }
+.seen { display: inline-flex; align-items: center; gap: 3px; color: var(--info); font: 500 11px var(--mono); flex: none; }
+.seen svg.i { width: 12px; height: 12px; }
+@keyframes pulse { from { opacity: 1; } to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pill.live i { animation: none; } }
+
+/* blocks */
+.block { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; font-size: 13px; border-left: 2px solid; }
+.block svg.i { margin-top: 2px; }
+.block b { font-weight: 600; }
+.block .detail { color: var(--muted); }
+.block.warning { border-color: var(--warning); background: rgba(251,191,36,0.08); color: var(--text); } .block.warning svg { color: var(--warning); }
+.block.danger { border-color: var(--danger); background: rgba(251,113,133,0.08); } .block.danger svg { color: var(--danger); }
+.warn-chip { height: 24px; padding: 0 8px; border-radius: 4px; background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.4); color: var(--warning); font: 500 12px var(--mono); display: inline-flex; align-items: center; gap: 6px; }
+
+/* empty */
+.empty { height: 100%; display: grid; place-items: center; }
+.empty > div { max-width: 420px; text-align: center; display: grid; justify-items: center; gap: 10px; }
+.empty-frame { width: 168px; aspect-ratio: 16/9; border: 1px dashed var(--hair-strong); border-radius: 6px; display: grid; place-items: center; color: var(--dim); margin-bottom: 8px; position: relative; }
+.empty h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.empty p { color: var(--muted); }
+
+/* detail + panels */
+.detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px; align-items: start; }
+.col { display: grid; gap: 16px; min-width: 0; }
+.panel { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; overflow: hidden; }
+.panel-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--hair-subtle); }
+.panel-h h3 { font-size: 14px; font-weight: 600; }
+.panel-h .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.panel-b { padding: 14px 16px 16px; display: grid; gap: 14px; }
+.state { height: 22px; padding: 0 8px; border-radius: 4px; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; display: inline-flex; align-items: center; border: 1px solid; }
+.state.run { color: var(--success); border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.08); }
+.state.bypass { color: var(--danger); border-color: rgba(251,113,133,.5); background: rgba(251,113,133,.08); }
+.state.unused { color: var(--dim); border-color: var(--hair); }
+.field { display: grid; gap: 6px; }
+.field label, .lbl { font-size: 13px; font-weight: 500; color: var(--muted); }
+.field .hint { font-size: 12px; color: var(--dim); }
+.input { height: 40px; border-radius: 4px; background: var(--surface); border: 1px solid var(--hair); color: var(--text); padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 400 14px var(--sans); min-width: 0; }
+.input:hover { border-color: var(--hair-strong); }
+.input.focus { border-color: var(--cyan); }
+.input .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.input .v.mono { font-size: 13px; }
+.input .unit { color: var(--dim); font: 400 12px var(--mono); }
+.input svg.i { color: var(--dim); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: 6px; padding: 2px; gap: 2px; }
+.seg span { height: 30px; padding: 0 12px; display: grid; place-items: center; border-radius: 4px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.seg span.on { background: var(--surface-raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-strong); }
+.switch { width: 34px; height: 20px; border-radius: 999px; background: var(--hair-strong); position: relative; flex: none; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--text); }
+.switch.on { background: var(--cyan); } .switch.on::after { left: 17px; background: var(--ink); }
+.slider { display: grid; grid-template-columns: 1fr 84px; gap: 12px; align-items: center; }
+.track { height: 4px; border-radius: 2px; background: var(--hair-strong); position: relative; }
+.track .fill { position: absolute; inset: 0 auto 0 0; background: rgba(245,247,250,.62); border-radius: 2px; }
+.track .knob { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: var(--text); transform: translate(-50%, -50%); box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.track .zero { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--tick); }
+.sl-v { white-space: nowrap; height: 28px; border: 1px solid var(--hair); border-radius: 4px; display: grid; place-items: center end; padding: 0 8px; font: 400 13px var(--mono); }
+.kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; }
+.kv dt { color: var(--muted); } .kv dd { font-family: var(--mono); font-size: 13px; }
+.preview-big .pic { border-radius: 6px 6px 0 0; }
+.preview-big .strip { border: 1px solid var(--hair); border-top: none; border-radius: 0 0 6px 6px; height: 36px; }
+table.outs-t { width: 100%; border-collapse: collapse; font-size: 13px; }
+.outs-t th { text-align: left; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 8px 16px; border-bottom: 1px solid var(--hair-subtle); }
+.outs-t td { padding: 10px 16px; border-bottom: 1px solid var(--hair-subtle); vertical-align: middle; }
+.outs-t tr:last-child td { border-bottom: none; }
+.outs-t td.mono { font-size: 12px; color: var(--muted); }
+.outs-t tr.err-row td { padding: 0; }
+.chip { height: 22px; padding: 0 8px; border-radius: 4px; border: 1px solid var(--hair); color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; }
+
+/* colour match */
+.cm { display: grid; grid-template-columns: 288px minmax(0,1fr); height: 100%; min-height: 0; }
+.cm-list { border-right: 1px solid var(--hair); padding: 12px 8px; overflow: auto; display: grid; align-content: start; gap: 2px; }
+.cm-list h4 { font-size: 12px; font-weight: 500; color: var(--dim); padding: 4px 8px 8px; }
+.cm-cam { display: grid; grid-template-columns: 16px 64px 1fr; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.cm-cam:hover { background: var(--surface-hover); }
+.cm-cam.on { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--hair-strong); }
+.cm-cam .thumb { aspect-ratio: 16/9; border-radius: 3px; overflow: hidden; background: #000; }
+.cm-cam .thumb svg { display: block; width: 100%; height: 100%; }
+.cm-cam .n { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cm-cam .s { font: 400 12px var(--mono); color: var(--dim); white-space: nowrap; }
+.cm-cam .s.ok { color: var(--success); }
+.check { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--hair-strong); display: grid; place-items: center; }
+.check.on { background: var(--text); border-color: var(--text); color: var(--plate); }
+.check svg.i { width: 12px; height: 12px; stroke-width: 2.25; }
+.ref-mark { font: 500 10px var(--mono); letter-spacing: .08em; color: var(--cyan); border: 1px solid var(--cyan); border-radius: 4px; padding: 0 4px; height: 16px; display: grid; place-items: center; }
+.cm-main { padding: 16px; overflow: auto; display: grid; gap: 16px; align-content: start; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.pair figure { display: grid; gap: 8px; }
+.pair figcaption { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pair figcaption .lbl { color: var(--muted); }
+.pair figcaption b { font-weight: 600; }
+.pair figcaption .right { margin-left: auto; }
+.pair .pic { border-radius: 6px; }
+.region { position: absolute; border: 1px solid rgba(245,247,250,.55); }
+.region::before, .region::after { content: ''; position: absolute; width: 10px; height: 10px; border: 2px solid var(--text); }
+.region::before { left: -2px; top: -2px; border-right: none; border-bottom: none; }
+.region::after { right: -2px; bottom: -2px; border-left: none; border-top: none; }
+.region span { position: absolute; left: 0; top: -22px; font: 500 11px var(--mono); letter-spacing: .06em; color: var(--text); background: rgba(8,9,11,.8); padding: 2px 6px; border-radius: 3px; }
+.link { color: var(--muted); font-size: 13px; background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hair-strong); }
+.link:hover { color: var(--text); }
+.hint-line { font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.cm-bottom { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 16px; align-items: start; }
+.trims { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+.de { display: flex; align-items: baseline; gap: 10px; }
+.de .val { font: 500 28px var(--mono); letter-spacing: -0.02em; }
+.de .was { color: var(--dim); font: 400 13px var(--mono); }
+
+/* settings */
+.settings { max-width: 760px; padding: 20px; display: grid; gap: 16px; }
+.slate-thumb { width: 160px; aspect-ratio: 16/9; border-radius: 4px; border: 1px solid var(--hair); overflow: hidden; }
+.slate-thumb svg { display: block; width: 100%; height: 100%; }
+
+/* dialog */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.62); display: grid; place-items: center; z-index: 10; }
+.dialog { width: 520px; max-width: calc(100% - 32px); background: var(--surface-raised); border: 1px solid var(--hair); border-radius: 6px; box-shadow: 0 24px 64px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4); }
+.dialog h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; padding: 20px 24px 0; }
+.dialog .body { padding: 12px 24px 4px; display: grid; gap: 14px; color: var(--muted); }
+.dialog .body strong { color: var(--text); font-weight: 600; }
+.dialog .body .field label { color: var(--muted); }
+.dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 20px 24px 20px; }
+.dialog .input { background: var(--surface); }
+.list-out { display: grid; gap: 4px; font: 400 12px var(--mono); color: var(--muted); border: 1px solid var(--hair); border-radius: 4px; padding: 10px 12px; background: var(--surface); }
+.list-out div { display: flex; gap: 8px; align-items: center; }
+
+.syn { position: absolute; right: 6px; top: 6px; font: 500 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.42); pointer-events: none; }
+.screen[hidden] { display: none; }
+</style>
+</head>
+<body>
+<nav class="mockbar" role="tablist" aria-label="Mockup screens">
+  <span class="tag">Mockup</span>
+</nav>
+<div class="app">
+  <aside class="rail" id="rail"></aside>
+  <div class="main" id="main"></div>
+</div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <pattern id="checker" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#141414"/><rect width="8" height="8" fill="#1F1F1F"/><rect x="8" y="8" width="8" height="8" fill="#1F1F1F"/>
+    </pattern>
+  </defs>
+</svg>
+
+<script>
+const I = {
+  matte: '<path d="M8 8.2a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"/><path d="M3.5 13.5c.6-2.3 2.3-3.6 4.5-3.6s3.9 1.3 4.5 3.6"/><path d="M1.5 4V2.5a1 1 0 0 1 1-1H4M12 1.5h1.5a1 1 0 0 1 1 1V4M14.5 12v1.5a1 1 0 0 1-1 1H12M4 14.5H2.5a1 1 0 0 1-1-1V12"/>',
+  bg: '<rect x="1.5" y="3" width="13" height="10" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="m14.5 10.5-3.5-3.5-6 6"/>',
+  color: '<circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v13"/><path d="M8 4.5h4.6M8 8h6.5M8 11.5h4.6"/>',
+  arrow: '<path d="M2.5 8h11M9.5 4l4 4-4 4"/>',
+  seen: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.8h2.8"/><path d="M8 5v3.2l2 1.3"/>',
+  grid: '<rect x="1.5" y="2.5" width="5.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="5.5" height="4.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="4.5" rx="1"/><rect x="9" y="9" width="5.5" height="4.5" rx="1"/>',
+  match: '<rect x="1.5" y="3.5" width="5.5" height="9" rx="1"/><rect x="9" y="3.5" width="5.5" height="9" rx="1"/><path d="M7 8h2"/>',
+  settings: '<path d="M2 4.5h7M12 4.5h2M2 11.5h2M7 11.5h7"/><circle cx="10.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
+  back: '<path d="M13 8H3M7 4 3 8l4 4"/>',
+  chev: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
+  warn: '<path d="M8 2 1.5 13.5h13L8 2Z"/><path d="M8 6.5v3M8 11.6v.1"/>',
+  err: '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.6M8 10.9v.1"/>',
+  retry: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v2.8h-2.8"/>',
+  check: '<path d="m3.5 8.5 3 3 6-7"/>',
+  cam: '<rect x="1.5" y="4" width="9.5" height="8" rx="1.5"/><path d="m11 7 3.5-2v6L11 9"/>',
+  more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
+  folder: '<path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.5 1.5h6.3a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8Z"/>',
+  undo: '<path d="M5 3.5 2 6.5l3 3"/><path d="M2 6.5h7.5a4 4 0 0 1 0 8H7"/>',
+  power: '<path d="M8 1.5v6"/><path d="M4.4 4a5.5 5.5 0 1 0 7.2 0"/>'
+};
+const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${I[n]}</svg>`;
+
+/* Synthetic camera pictures: flat SVG scenes, labelled as synthetic. */
+const SCENES = {
+  stageL: { wall: '#1b2440', floor: '#121620', led: '#2d4a8a', skin: '#c99b7e', shirt: '#2a2f3a', x: 64 },
+  mc:     { wall: '#3a2c22', floor: '#1d1712', led: '#7a5636', skin: '#d4a684', shirt: '#6b1f2a', x: 86 },
+  guest:  { wall: '#22322c', floor: '#141b18', led: '#3f6b58', skin: '#b98a6a', shirt: '#d8d4cc', x: 78 },
+  wide:   { wall: '#151a24', floor: '#0e1118', led: '#3b4f7a', skin: '#c49579', shirt: '#1e2a44', x: 40, crowd: true },
+  podium: { wall: '#2a2a30', floor: '#16161a', led: '#55505e', skin: '#cfa182', shirt: '#24364d', x: 80, podium: true },
+  back:   { wall: '#2b2620', floor: '#18150f', led: '#5d4a2c', skin: '#b78868', shirt: '#3c3c3c', x: 70 },
+  webcam: { wall: '#1e1e22', floor: '#141416', led: '#333338', skin: '#c19272', shirt: '#4a4f57', x: 80, close: true },
+  hanoi:  { wall: '#26302a', floor: '#141a16', led: '#47604f', skin: '#c79a7c', shirt: '#30353f', x: 80 }
+};
+function scene(key, opts = {}) {
+  const s = SCENES[key];
+  const bg = opts.keyed
+    ? `<rect width="160" height="90" fill="url(#checker)"/>`
+    : `<rect width="160" height="90" fill="${s.wall}"/>
+       <rect x="14" y="10" width="54" height="30" fill="${s.led}" opacity=".55"/>
+       <rect x="92" y="10" width="54" height="30" fill="${s.led}" opacity=".4"/>
+       <rect y="62" width="160" height="28" fill="${s.floor}"/>
+       ${s.crowd ? Array.from({length: 18}, (_, i) => `<circle cx="${6 + i * 9}" cy="${80 + (i % 2) * 3}" r="4.2" fill="#0a0c10"/>`).join('') : ''}
+       ${s.podium ? `<rect x="62" y="56" width="36" height="34" fill="#1d2633"/>` : ''}`;
+  const sc = s.close ? 1.7 : (s.crowd ? .7 : 1);
+  const cx = s.x, top = s.close ? 26 : (s.crowd ? 44 : 30);
+  const person = `<g transform="translate(${cx} ${top}) scale(${sc})">
+      <path d="M-15 46 C-15 30 -9 25 0 25 C9 25 15 30 15 46 Z" fill="${s.shirt}"/>
+      <rect x="-3" y="18" width="6" height="8" fill="${s.skin}"/>
+      <ellipse cx="0" cy="11" rx="7.2" ry="8.6" fill="${s.skin}"/>
+      <path d="M-7.4 9 C-7 1.5 7 1.5 7.4 9 C5 5.5 -5 5.5 -7.4 9 Z" fill="#1a1410"/>
+    </g>`;
+  const frozen = opts.slate
+    ? `<rect width="160" height="90" fill="#0b0d12"/><rect x="40" y="36" width="80" height="1" fill="#22D3EE" opacity=".7"/>
+       <text x="80" y="31" text-anchor="middle" font-family="Inter" font-weight="600" font-size="8" fill="#F5F7FA">We'll be right back</text>
+       <text x="80" y="48" text-anchor="middle" font-family="JetBrains Mono" font-size="4.5" fill="rgba(245,247,250,.55)">BREADCAMERA · SLATE</text>`
+    : '';
+  return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Synthetic camera picture">${opts.slate ? frozen : bg + (s.podium ? person + `<rect x="62" y="60" width="36" height="30" fill="#1d2633"/>` : person)}</svg>${opts.noTag ? '' : '<span class="syn">synthetic</span>'}`;
+}
+
+/* Data */
+const OUT_NAMES = { NDI: 'NDI output', SRT: 'SRT output', SDI: 'SDI output', VCAM: 'Virtual camera', FS: 'Fullscreen', OMT: 'OMT output' };
+const IN_NAMES = { SRT: 'SRT input', NDI: 'NDI input', SDI: 'DeckLink input', USB: 'USB input', AJA: 'AJA input' };
+const ST = { live: 'Live', conn: 'Connecting', ready: 'Ready', off: 'Offline' };
+const CAMS = [
+  { n: 1, name: 'Sân khấu trái', scene: 'stageL', in: 'SRT', st: 'live', fx: ['on','on','on'], outs: [['NDI','live'],['SDI','live']] },
+  { n: 2, name: 'MC chính – Cam 2', scene: 'mc', in: 'SRT', st: 'live', fx: ['on','on','on'], outs: [['NDI','live'],['SRT','err','retry 3s']] },
+  { n: 3, name: 'Khách mời Đà Nẵng', scene: 'guest', in: 'NDI', st: 'conn', hold: '00:04', fx: ['on','on','on'], outs: [['NDI','live']], strip: 'warn' },
+  { n: 4, name: 'Toàn cảnh hội trường', scene: 'wide', in: 'SDI', st: 'live', keyed: true, fx: ['on','on','on'], outs: [['NDI','live'],['OMT','live'],['VCAM','live'],['FS','live']], seen: '20:14' },
+  { n: 5, name: 'Bục phát biểu', scene: 'podium', in: 'USB', st: 'live', fx: ['on','off','on'], outs: [['VCAM','live']] },
+  { n: 6, name: 'Hậu trường', scene: 'back', in: 'SDI', st: 'live', fx: ['bad','on','on'], outs: [['NDI','live']] },
+  { n: 7, name: 'Webcam đạo diễn', scene: 'webcam', in: 'USB', st: 'off', fx: ['off','off','on'], outs: [['NDI','off']] },
+  { n: 8, name: 'Cầu nối Hà Nội', scene: 'hanoi', in: 'SRT', st: 'conn', slate: true, fx: ['on','on','on'], outs: [['NDI','live']], strip: 'err' }
+];
+const FX = [['matte', 'Background removal'], ['bg', 'Background'], ['color', 'Colour match']];
+const FXSTATE = { on: 'running', off: 'not used', bad: 'bypassed after an error' };
+
+function strip(c, maxOuts = 4, frozenAll = false, dense = false) {
+  const st = frozenAll ? 'off' : c.st;
+  const chipText = c.slate ? 'SLATE' : (c.hold || c.in);
+  const chipCls = c.slate ? 'err' : st;
+  const chipTitle = c.slate ? `${IN_NAMES[c.in]} — signal lost, showing the slate` : c.hold ? `${IN_NAMES[c.in]} — signal lost, holding the last frame (${c.hold} left)` : `${IN_NAMES[c.in]} — ${ST[st]}`;
+  const fx = FX.map(([k, label], i) => (dense && c.fx[i] === 'on') ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : c.fx[i] === 'off' ? 'unused' : ''}" title="${label} — ${FXSTATE[c.fx[i]]}" aria-label="${label} — ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
+  const shown = c.outs.slice(0, maxOuts), rest = c.outs.length - shown.length;
+  const outs = shown.map(([k, s, note]) => {
+    if (frozenAll) s = 'off';
+    if (s === 'err') return `<span class="err-chip" title="${OUT_NAMES[k]} — failed, ${note}">${icon('retry')}${k}</span>`;
+    return `<span class="pill ${s}" title="${OUT_NAMES[k]} — ${ST[s]}" aria-label="${OUT_NAMES[k]} — ${ST[s]}"><i></i>${k}</span>`;
+  }).join('') + (rest > 0 ? `<span class="more" title="${c.outs.slice(maxOuts).map(o => OUT_NAMES[o[0]]).join(', ')}">+${rest}</span>` : '');
+  return `<div class="strip ${frozenAll ? '' : (c.strip || '')}">
+    <span class="in-chip ${chipCls}" title="${chipTitle}" aria-label="${chipTitle}">${chipText}</span>
+    ${dense ? '' : `<span class="cam-no">CAM ${c.n}</span>`}
+    <span class="cam-name" title="${c.name}">${c.name}</span>
+    ${fx ? `<span class="fx">${fx}</span>` : ''}
+    <span class="flow">${icon('arrow')}</span>
+    <span class="outs">${outs}</span>
+    ${c.seen && !frozenAll ? `<span class="seen" title="NDI output dropped for 3 s at 20:14 and recovered. Open the camera to clear this mark.">${icon('seen')}${c.seen}</span>` : ''}
+  </div>`;
+}
+function tile(c, maxOuts, frozenAll, dense) {
+  return `<div class="tile" tabindex="0" aria-label="CAM ${c.n} ${c.name}, open camera">
+    <div class="pic">${scene(c.scene, { keyed: c.keyed, slate: c.slate })}</div>${strip(c, maxOuts, frozenAll, dense)}</div>`;
+}
+
+/* Shell */
+const RAIL = (active) => `
+  <div class="brand"><span class="brand-mark">${icon('cam')}</span>BreadCamera</div>
+  <div class="show-pick" title="Open or switch show"><small>Show</small><span>Hội nghị Khách hàng 2026 ${icon('chev')}</span></div>
+  <div class="nav ${active === 'mv' ? 'on' : ''}" tabindex="0">${icon('grid')}Multiview</div>
+  <div class="nav ${active === 'cm' ? 'on' : ''}" tabindex="0">${icon('match')}Colour match</div>
+  <div class="spacer"></div>
+  <div class="nav ${active === 'st' ? 'on' : ''}" tabindex="0">${icon('settings')}Settings</div>
+  <div class="engine-line"><span>Engine <b>running · 2 h 14 min</b></span><span>Outputs keep running when this window closes.</span></div>
+  <button class="stop-all">Stop all outputs…</button>`;
+
+function topBar(title, meta, right, back) {
+  return `<header class="top">${back ? `<button class="icon-btn" aria-label="Back to Multiview">${icon('back')}</button>` : ''}
+    <h1>${title}</h1><div class="meta">${meta}</div><div class="right">${right}</div></header>`;
+}
+const metaShow = (n, extra = '') => `<span>59.94 fps</span><span class="sep">·</span><span>GPU 61%</span><span class="sep">·</span><span>${n} cameras</span>${extra}`;
+const addCam = `<button class="btn btn-primary">${icon('plus')}Add camera</button>`;
+
+function multiview(cams, { frozen = false, extraMeta = '', banner = '' } = {}) {
+  const dense = cams.length > 4;
+  return {
+    rail: 'mv',
+    html: topBar('Multiview', metaShow(cams.length, extraMeta), addCam) +
+      `<div class="work"><div class="wall-wrap">${banner}<div class="wall-area"><div class="wall" data-n="${cams.length}">
+        ${cams.map(c => tile(c, dense ? 2 : 4, frozen, dense)).join('')}</div></div></div></div>`
+  };
+}
+
+function field(label, value, { mono = false, unit = '', select = false, focus = false, hint = '' } = {}) {
+  return `<div class="field"><label>${label}</label><div class="input ${focus ? 'focus' : ''}"><span class="v ${mono ? 'mono' : ''}">${value}</span>${unit ? `<span class="unit">${unit}</span>` : ''}${select ? icon('chev') : ''}</div>${hint ? `<span class="hint">${hint}</span>` : ''}</div>`;
+}
+function slider(label, pct, val, center = false) {
+  return `<div class="field"><span class="lbl">${label}</span><div class="slider"><div class="track">${center ? '<span class="zero"></span>' : ''}<span class="fill" style="${center ? `left:${Math.min(50, pct)}%;width:${Math.abs(pct - 50)}%` : `width:${pct}%`}"></span><span class="knob" style="left:${pct}%"></span></div><span class="sl-v">${val}</span></div></div>`;
+}
+
+const SCREENS = {
+  multiview: { label: 'Multiview', build: () => multiview(CAMS.slice(0, 4)) },
+  eight: { label: 'Multiview · 8 cameras', build: () => multiview(CAMS, { extraMeta: `<span class="warn-chip" title="The GPU missed its frame deadline 3 times in the last minute.">${icon('warn')}3 tick overruns</span>` }) },
+  empty: { label: 'Multiview · empty', build: () => ({ rail: 'mv', html: topBar('Multiview', metaShow(0), addCam) +
+    `<div class="work"><div class="empty"><div><div class="empty-frame">${icon('cam')}</div><h2>No cameras yet</h2>
+     <p>Add an SRT, NDI, capture card or USB camera with <b style="color:var(--text);font-weight:600">Add camera</b>. Each camera can send to several outputs.</p></div></div></div>` }) },
+  restart: { label: 'Engine restarting', build: () => multiview(CAMS.slice(0, 4), { frozen: true,
+    banner: `<div class="block warning" role="status">${icon('retry')}<div><b>Engine restarting.</b> <span class="detail">The engine stopped unexpectedly and is reloading this show. Outputs come back in about 3 seconds. Pictures below are the last frames received.</span></div></div>` }) },
+  detail: { label: 'Camera detail', build: () => {
+    const c = CAMS[1];
+    return { rail: 'mv', html: topBar(`MC chính – Cam 2 <span class="cam-id">CAM 2</span>`, `<span>SRT caller</span><span class="sep">·</span><span>1920×1080 59.94</span><span class="sep">·</span><span>8.4 Mb/s</span>`, `<button class="btn btn-primary">${icon('plus')}Add output</button>`, true) +
+    `<div class="work"><div class="detail">
+      <div class="col">
+        <div class="preview-big"><div class="pic">${scene('mc')}</div>${strip(c)}</div>
+        <section class="panel">
+          <div class="panel-h"><h3>Outputs</h3><div class="right"><span class="lbl" style="font-size:12px">2 outputs</span></div></div>
+          <div class="block danger" role="alert">${icon('err')}<div><b>SRT output failed.</b> <span class="detail">srt://10.0.0.5:9000 refused the connection. Retrying in 3 s (attempt 4). Other outputs are not affected.</span></div></div>
+          <table class="outs-t"><thead><tr><th>Output</th><th>Destination</th><th>Sends</th><th></th></tr></thead><tbody>
+            <tr><td><span class="pill live"><i></i>NDI</span></td><td>BreadCamera (MC chính – Cam 2)</td><td><span class="chip">Keyed (fill + key)</span></td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
+            <tr><td><span class="err-chip">${icon('retry')}SRT</span></td><td class="mono">srt://10.0.0.5:9000 · caller · 6 Mb/s</td><td><span class="chip">Composited</span></td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
+          </tbody></table>
+        </section>
+      </div>
+      <div class="col">
+        <section class="panel"><div class="panel-h"><h3>Input</h3><div class="right"><span class="pill live"><i></i>LIVE</span></div></div>
+          <div class="panel-b">
+            <div class="field"><span class="lbl">Mode</span><div class="seg"><span class="on">Caller</span><span>Listener</span></div></div>
+            ${field('SRT URL', 'srt://203.0.113.24:9001?streamid=feed-2', { mono: true })}
+            <div class="row2">${field('Latency', '120', { mono: true, unit: 'ms' })}${field('Passphrase', '••••••••••••')}</div>
+            <dl class="kv"><dt>Received</dt><dd>8.4 Mb/s · H.264</dd><dt>Dropped frames</dt><dd>0</dd><dt>Round trip</dt><dd>34 ms</dd></dl>
+          </div></section>
+        <section class="panel"><div class="panel-h"><h3>Background removal</h3><div class="right"><span class="state run">Running</span><span class="switch on" role="switch" aria-checked="true" aria-label="Background removal"></span></div></div>
+          <div class="panel-b">
+            ${field('Quality', 'High quality', { select: true })}
+            <div class="row2">${field('Choke', '1', { mono: true, unit: 'px' })}${field('Feather', '2', { mono: true, unit: 'px' })}</div>
+            ${slider('Threshold', 42, '0.42')}
+          </div></section>
+        <section class="panel"><div class="panel-h"><h3>Background</h3><div class="right"><span class="state run">Running</span></div></div>
+          <div class="panel-b">
+            ${field('Background mode', 'Blur', { select: true })}
+            ${slider('Blur', 30, '24 px')}
+          </div></section>
+        <section class="panel"><div class="panel-h"><h3>Colour</h3><div class="right"><span class="state run">Running</span></div></div>
+          <div class="panel-b"><dl class="kv"><dt>Matched to</dt><dd>CAM 1 · 20:02</dd><dt>Remaining ΔE</dt><dd>1.8</dd></dl>
+            <button class="btn btn-outline" style="justify-self:start">${icon('match')}Open colour match</button></div></section>
+        <button class="btn btn-ghost-danger" style="justify-self:start">Remove camera…</button>
+      </div></div></div>` };
+  } },
+  colour: { label: 'Colour match', build: () => ({ rail: 'cm', html: topBar('Colour match', `<span>Reference CAM 1</span><span class="sep">·</span><span>3 targets</span>`, `<button class="btn btn-primary">${icon('match')}Match</button>`) +
+    `<div class="work" style="overflow:hidden"><div class="cm">
+      <div class="cm-list"><h4>Cameras</h4>
+        ${CAMS.slice(0, 5).map((c, i) => `<div class="cm-cam ${i === 1 ? 'on' : ''}">
+          ${i === 0 ? '<span></span>' : `<span class="check ${i < 4 ? 'on' : ''}">${i < 4 ? icon('check') : ''}</span>`}
+          <div class="thumb">${scene(c.scene, { noTag: true })}</div>
+          <div style="min-width:0"><div class="n">${c.name}</div>
+          ${i === 0 ? '<span class="ref-mark" style="display:inline-grid;margin-top:2px">REFERENCE</span>' : `<div class="s ${i === 1 || i === 2 ? 'ok' : ''}">${['', 'ΔE 1.8 · matched', 'ΔE 2.3 · matched', 'ΔE 7.1 · not matched', 'not selected'][i]}</div>`}</div></div>`).join('')}
+      </div>
+      <div class="cm-main">
+        <div class="pair">
+          <figure><figcaption><span class="lbl">Reference</span><b>CAM 1 · Sân khấu trái</b><span class="right"><button class="link">Clear region</button></span></figcaption>
+            <div class="pic">${scene('stageL')}<div class="region" style="left:30%;top:28%;width:22%;height:48%"><span>REGION</span></div></div></figure>
+          <figure><figcaption><span class="lbl">Target</span><b>CAM 2 · MC chính – Cam 2</b><span class="right"><button class="link">Clear region</button></span></figcaption>
+            <div class="pic">${scene('mc')}<div class="region" style="left:44%;top:28%;width:22%;height:48%"><span>REGION</span></div></div></figure>
+        </div>
+        <p class="hint-line">${icon('matte')}Drag on the picture to mark shared content (face, shirt, grey card).</p>
+        <div class="cm-bottom">
+          <section class="panel"><div class="panel-h"><h3>Trims</h3><div class="right"><button class="btn btn-outline" style="height:30px;padding:0 10px">${icon('undo')}Undo</button><button class="btn btn-ghost-danger" style="height:30px;padding:0 10px">Reset colour…</button></div></div>
+            <div class="panel-b trims">
+              ${slider('Exposure', 44, '−0.20 EV', true)}${slider('Saturation', 54, '1.04', true)}
+              ${slider('Temperature', 56, '+6', true)}${slider('Tint', 48, '−2', true)}
+              ${slider('Lift', 51, '+0.01', true)}${slider('Gamma', 50, '1.00', true)}
+              ${slider('Gain', 53, '1.03', true)}
+            </div></section>
+          <div class="col">
+            <section class="panel"><div class="panel-h"><h3>Result</h3><div class="right"><span class="state run">Locked</span></div></div>
+              <div class="panel-b"><div class="de"><span class="lbl">Remaining ΔE</span><span class="val num">1.8</span><span class="was">was 7.4</span></div>
+              <span class="hint" style="font-size:12px;color:var(--dim)">Matched at 20:02 from 1 s of video. Trims sit on top of the match.</span></div></section>
+            <section class="panel"><div class="panel-h"><h3>Import LUT</h3></div>
+              <div class="panel-b">${field('.cube file path', 'D:\\Shows\\Khách hàng 2026\\cam2_warm.cube', { mono: true })}
+              <button class="btn btn-outline" style="justify-self:start">${icon('folder')}Import LUT</button></div></section>
+          </div>
+        </div>
+      </div></div></div>` }) },
+  settings: { label: 'Settings', build: () => ({ rail: 'st', html: topBar('Settings', '', `<button class="btn btn-primary">Save settings</button>`) +
+    `<div class="work"><div class="settings">
+      <section class="panel"><div class="panel-h"><h3>Show</h3></div><div class="panel-b">
+        <div class="row2">${field('Frame rate', '59.94', { select: true, mono: true })}${field('Hold the last frame on signal loss', '5', { mono: true, unit: 'seconds' })}</div>
+        <div class="field"><label>Slate image</label><div style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1;display:grid;gap:6px"><div class="input"><span class="v mono" style="color:var(--dim)">Built-in slate</span>${icon('folder')}</div><span class="hint">Leave empty for the built-in slate.</span></div><div class="slate-thumb">${scene('hanoi', { slate: true, noTag: true })}</div></div></div>
+      </div></section>
+      <section class="panel"><div class="panel-h"><h3>Engine</h3></div><div class="panel-b">
+        <dl class="kv"><dt>GPU</dt><dd>NVIDIA GeForce RTX 4070 · driver 581.57</dd><dt>Background removal</dt><dd>NVIDIA Maxine AI Green Screen</dd><dt>Preview encoder</dt><dd>NVENC H.264</dd><dt>Show file</dt><dd>D:\\Shows\\Hội nghị Khách hàng 2026.bcshow</dd></dl>
+      </div></section>
+    </div></div>` }) },
+  addcam: { label: 'Add camera', dialog: true, build: () => {
+    const base = multiview(CAMS.slice(0, 3));
+    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-t"><h2 id="dlg-t">Add camera</h2><div class="body">
+      ${field('Name', 'Khách mời Đà Nẵng', { focus: true, hint: 'Any language works, including Vietnamese.' })}
+      <div class="row2">${field('Input type', 'SRT', { select: true })}<div class="field"><span class="lbl">Mode</span><div class="seg" style="width:max-content"><span class="on">Caller</span><span>Listener</span></div></div></div>
+      ${field('SRT URL', 'srt://203.0.113.24:9001?streamid=feed-3', { mono: true })}
+      <div class="row2">${field('Latency', '120', { mono: true, unit: 'ms' })}${field('Passphrase', '', { hint: 'Optional. Stored encrypted on this PC.' })}</div>
+      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">Add camera</button></div></div></div>`;
+    return base;
+  } },
+  stopall: { label: 'Stop all outputs', dialog: true, build: () => {
+    const base = multiview(CAMS.slice(0, 4));
+    base.html += `<div class="scrim"><div class="dialog" role="alertdialog" aria-labelledby="dlg-s"><h2 id="dlg-s">Stop all outputs?</h2><div class="body">
+      <p>Every receiver loses picture now: <strong>9 outputs on 4 cameras</strong> in show <strong>Hội nghị Khách hàng 2026</strong>.</p>
+      <div class="list-out"><div><span class="pill live"><i></i>NDI</span>4 receivers in OBS/vMix</div><div><span class="pill live"><i></i>SDI</span>1 key + fill pair</div><div><span class="pill live"><i></i>VCAM</span>1 virtual camera</div><div><span class="pill live"><i></i>OMT</span>1 · <span class="pill live"><i></i>FS</span>1 · <span class="err-chip">SRT</span>1 retrying</div></div>
+      <p>The engine and this show stay open. Start outputs again from each camera.</p>
+      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-danger">${icon('power')}Stop all outputs</button></div></div></div>`;
+    return base;
+  } },
+  rate: { label: 'Change frame rate', dialog: true, build: () => {
+    const base = SCREENS.settings.build();
+    base.html += `<div class="scrim"><div class="dialog" role="alertdialog" aria-labelledby="dlg-r"><h2 id="dlg-r">Change the frame rate?</h2><div class="body">
+      <p>From <strong class="num">59.94</strong> to <strong class="num">50</strong> fps. Every output restarts and loses picture for about 1 second.</p>
+      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">Change frame rate</button></div></div></div>`;
+    return base;
+  } }
+};
+
+/* sizing: keep every tile 16:9 and the whole wall inside the work area */
+const GRID = { 1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [3, 2], 6: [3, 2], 7: [4, 2], 8: [4, 2] };
+function sizeWall() {
+  document.querySelectorAll('.wall').forEach(w => {
+    const n = +w.dataset.n, [cols, rows] = GRID[n], area = w.parentElement;
+    const W = area.clientWidth - 4, H = area.clientHeight - 4, strip = 33, gap = 2;
+    const byW = (W - gap * (cols - 1)) / cols;
+    const byH = ((H - gap * (rows - 1)) / rows - strip) * 16 / 9;
+    const tw = Math.floor(Math.min(byW, byH));
+    w.style.gridTemplateColumns = `repeat(${cols}, ${tw}px)`;
+  });
+}
+
+const bar = document.querySelector('.mockbar');
+function show(id) {
+  const s = SCREENS[id].build();
+  document.getElementById('rail').innerHTML = RAIL(s.rail);
+  document.getElementById('main').innerHTML = s.html;
+  bar.querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.id === id));
+  try { history.replaceState(null, '', '#' + id); } catch (e) {}
+  sizeWall();
+}
+Object.entries(SCREENS).forEach(([id, s]) => {
+  const b = document.createElement('button');
+  b.role = 'tab'; b.dataset.id = id; b.textContent = s.label;
+  b.onclick = () => show(id);
+  bar.appendChild(b);
+});
+bar.insertAdjacentHTML('beforeend', '<span class="note">Pictures are synthetic. Camera and show names are user data.</span>');
+addEventListener('resize', sizeWall);
+show(SCREENS[location.hash.slice(1)] ? location.hash.slice(1) : 'multiview');
+</script>
+</body>
+</html>
