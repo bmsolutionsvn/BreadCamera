@@ -354,8 +354,9 @@ result is locked; the operator calibrates again only if the lighting changes.
   Connecting, Live, Offline.
 - Every input reports its health as one of:
   - **receiving** — frames arriving cleanly (shown green);
-  - **degraded** — SRT packet loss above 1 %, or any dropped or repeated
-    frame in the last 10 s, or reconnecting (shown yellow);
+  - **degraded** — a gap of more than 100 ms between frames at any time in
+    the last 10 s, or reconnecting (shown yellow). Ordinary frame repeats,
+    such as a 30 fps camera on a 60 fps show, do not count;
   - **down** — no frames; holding the last frame or showing the slate (shown
     red, with the hold countdown or `SLATE`);
   - **offline** — not started (shown grey).

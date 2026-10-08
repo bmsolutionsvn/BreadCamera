@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A working BreadCamera skeleton: SRT cameras in → GPU decode → master tick (frame sync, hold, slate) → NDI and fullscreen out, driven by a token-protected localhost control API, a crash-safe show file, a supervising WebView2 shell and a minimal multiview UI.
+**Goal:** A working BreadCamera skeleton: SRT cameras in → GPU decode → master tick (frame sync, hold, slate) → NDI and fullscreen out, driven by a token-protected localhost control API, a crash-safe show file, a supervising WebView2 shell and the native UI window (title bar, toolbar, Multiview, Inspector, status bar), with the show format and per-output format.
+
+**Amended 2026-10-08 after the UI mockup review (owner):** English-only UI with Unicode names; native pro-tool window (Task 13 rewritten, Task 12 custom title bar); new Task 11A (show resolution, per-output size and half rate, input health, name limits in characters). The approved mockup is `docs/design/mockups/index.html`.
 
 **Architecture:** Headless `breadcamera-engine.exe` (C++20, one D3D11 device, FFmpeg decode, compute-shader colour conversion, per-output worker threads behind drop-oldest queues) plus `BreadCamera.exe` (Win32 + WebView2 host, engine supervisor, tray). The React UI talks to the engine over WebSocket on 127.0.0.1. Pure logic (timing, show file, state, routing, supervision) lives in libraries with doctest unit tests; GPU code is tested on the real GPU or the WARP software adapter.
 
@@ -21,14 +23,14 @@
 - Never black (spec §1, §3.6): every code path that produces an output frame emits the held frame or the slate, never nothing and never an all-zero frame.
 - Control API binds **127.0.0.1 only**; every WebSocket connection must present the per-launch token (spec §6.1).
 - Secrets (`passphrase`) are DPAPI-encrypted on disk and redacted (`{"set":true}`) in anything sent to the UI (spec §6.2).
-- Signal states are exactly `ready`, `connecting`, `live`, `offline`; errors are separate `{code,message}` objects (spec §6.1). UI copy is Vietnamese first with exact glossary terms: Sẵn sàng, Đang kết nối, Đang phát, Tắt. Errors are persistent blocks, never toasts; destructive actions use a confirm dialog whose primary button is a verb (spec §6.4).
-- Show rate is one of `50/1`, `60000/1001`, `60/1` (spec §1.3).
+- Signal states are exactly `ready`, `connecting`, `live`, `offline`; errors are separate `{code,message}` objects (spec §6.1). Inputs additionally report health `receiving | degraded | down | offline` (Task 11A). The UI is **English only**; names the operator types are Unicode end to end and limited in characters, not bytes. Errors are persistent blocks, never toasts; destructive actions use a confirm dialog whose primary button is a verb (spec §6.4).
+- Show rate is one of `50/1`, `60000/1001`, `60/1`; show resolution is `1280x720` or `1920x1080` (spec §1.3). An output may send 1280×720 or 960×540 and/or half rate (spec §4.3).
 - Commit subjects use conventional prefixes (`build:`, `feat:`, `test:`, `docs:`); one commit per task (plus fix commits).
 
 ## Review Focus
 
 1. **An input that never connects or stalls mid-stream** (listener with no caller, caller to a dead host, network pull) — `stop()` must return within 1 s, and every output must keep receiving frames (held, then slate) — owned by Task 6 (stop-while-listening test) and Task 9 (hold→slate test).
-2. **Resolution change mid-stream** (a camera switches 1080p → 720p) — the converter and pool must follow the new size without a crash or a stuck frame — owned by Task 9 (size-switch test).
+2. **Resolution change mid-stream** (a camera switches 1080p → 720p) — every output keeps the show size with no crash, gap or stuck frame — owned by Task 11A (size-switch test).
 3. **Hostile or malformed control messages** (non-JSON text, wrong types, unknown commands, huge payloads) — an error response, never a crash or a hung connection — owned by Task 11 (garbage-message test).
 4. **Corrupt or hand-edited show file, or a missing slate image** — the engine still starts from last-known-good or defaults, with a visible warning in the state tree — owned by Task 3 (corrupt-main test) and Task 9 (missing-slate test).
 5. **Engine restarts while the UI is open** — the UI reconnects and replaces its state from the new snapshot, with no stale cameras — owned by Task 13 (reconnect test).
@@ -59,14 +61,14 @@ Libraries: `bc_core` (no GPU), `bc_gpu`, `bc_io`, `bc_engine`, `bc_shell`; execu
 
 ## Not in M1 (later milestones)
 
-- Camera detail screen with stage panels, matte, background modes — M2.
-- Colour match screen — M3.
+- Effects in the Inspector (Add effect, stage groups), matte, background modes — M2.
+- Colour calibration in the Colour effect — M3.
 - NDI/DeckLink/AJA/UVC inputs, OMT/SRT/virtual camera/SDI outputs — M4.
-- Settings screen (show rate, hold time, slate image, GPU/backend), installer, full vi/en strings, soak tests — M5.
+- Settings dialog (show rate and resolution, hold time, slate image, GPU/backend), installer, error text, soak tests — M5.
 
 ## Execution notes for the controller
 
-- 14 tasks → **batched reviews** (batches: 1–3, 4–6, 7–9, 10–12, 13–14).
+- 15 tasks (1–11, 11A, 12–14) → **batched reviews** (batches: 1–3, 4–6, 7–9, 10–11A, 12–13, 14).
 - The first `scripts/build.ps1` builds FFmpeg and friends through vcpkg (20–40 min). That is expected; do not cancel it.
 - The NDI SDK may be missing on the build PC. Task 8 must still compile with `BC_WITH_NDI=OFF` and its tests must report as skipped.
 
@@ -7160,6 +7162,471 @@ git add src/engine tests CMakeLists.txt
 git commit -m "feat(engine): token-protected control API, command router and engine executable"
 ```
 
+### Task 11A: Show format, per-output format, input health and Unicode names
+
+Added 2026-10-08 after the UI mockup review (spec §3.2 "To RGBA", §4.3 "Output format", §6.1 input health, §6.4 "Names are Unicode end to end"). It changes code from Tasks 3, 5, 9 and 11; the excerpts below are the only regions it touches.
+
+**Files:**
+- Create: `src/core/input_health.h`, `src/gpu/shaders/fit_linear.hlsl`
+- Modify: `src/core/show.h`, `src/core/show.cpp` (Task 3), `src/core/utf8.h` (Task 5), `src/gpu/converter.h`, `src/gpu/converter.cpp` (Task 5), `src/engine/camera.h`, `src/engine/camera.cpp`, `src/engine/engine.h`, `src/engine/engine.cpp` (Task 9), `src/engine/command_router.cpp` (Task 11), `CMakeLists.txt` (`bc_shader(fit_linear cs_5_0)`)
+- Test: `tests/show_test.cpp`, `tests/gpu_test.cpp`, `tests/engine_test.cpp`, `tests/command_router_test.cpp`, new `tests/input_health_test.cpp`
+
+**Interfaces:**
+- Consumes: `Show`, `ShowSettings`, `OutputConfig`, `showToJson`/`showFromJson` (Task 3); `Converter`, `TextureRef`, `toUtf8`/`toWide` (Task 5); `Camera`, `Engine`, `FeedPhase`, `SignalState` (Tasks 2, 4, 9); `CommandRouter`, `validateOutput` (Task 11).
+- Produces:
+  - `ShowSettings` gains `int width = 1920; int height = 1080;` (JSON `settings.resolution`: `"1280x720"` or `"1920x1080"`; missing → `"1920x1080"`).
+  - `OutputConfig` gains, **after** `params`, `int width = 0; int height = 0; bool halfRate = false;` (0×0 = same as show). JSON `outputs[].format`: `{"width": 0, "height": 0, "halfRate": false}`; missing → those defaults. Allowed sizes: 0×0, 1280×720, 960×540.
+  - `std::optional<std::pair<int, int>> bc::parseShowResolution(std::string_view)`, `std::string bc::resolutionStr(int w, int h)` (`"1920x1080"`), `bool bc::isOutputSize(int w, int h)`.
+  - `size_t bc::utf8Length(std::string_view)` (code points) in `core/utf8.h`.
+  - `TextureRef bc::Converter::fit(const GpuTexture& linear, uint32_t w, uint32_t h)` — scales a linear texture into w×h, keeping its aspect, with black bars.
+  - `void bc::Camera::setFormat(uint32_t w, uint32_t h)`.
+  - `std::string_view bc::inputHealth(SignalState input, FeedPhase phase, bool stutteredInLast10s)` → `"receiving" | "degraded" | "down" | "offline"`.
+  - State: `/cameras/<id>/input/health`, `/engine/resolution`.
+  - Commands: `setSettings` accepts `resolution`; `addOutput.output.format` and `updateOutput.format` accept `{width, height, halfRate}`.
+
+Rules:
+- Every camera's frame is fitted to the show size right after conversion; the slate is made at the show size. A 4:3 or 1:1 input is letterboxed, never stretched.
+- Per output: frames of the output's size are made once per tick per distinct size (shared by outputs of that size); the CPU readback is made once per size, only if an output of that size `needsCpu()`. A fullscreen output ignores the size (it scales to its monitor).
+- A half-rate output gets the even ticks only, with `rate = {num, den * 2}`, `tick = index / 2`, and both ticks' audio (the odd tick's samples first), so its audio never has a gap.
+- Health (spec §6.1): `Holding`/`Slate` → `down`; `NoSignal` → `offline`; `Live` with the input `Connecting`/`Offline` or a stutter (a gap > 100 ms between fresh frames) in the last 10 s → `degraded`; otherwise `receiving`.
+- Names (camera, show, NDI) are UTF-8 everywhere; the 1..80 limit counts code points, not bytes.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/input_health_test.cpp`:
+```cpp
+#include <doctest/doctest.h>
+
+#include "core/input_health.h"
+
+using bc::FeedPhase;
+using bc::SignalState;
+
+TEST_CASE("inputHealth: phases and stutter map to the four operator states") {
+  CHECK(bc::inputHealth(SignalState::Live, FeedPhase::Live, false) == "receiving");
+  CHECK(bc::inputHealth(SignalState::Live, FeedPhase::Live, true) == "degraded");
+  CHECK(bc::inputHealth(SignalState::Connecting, FeedPhase::Live, false) == "degraded");
+  CHECK(bc::inputHealth(SignalState::Live, FeedPhase::Holding, false) == "down");
+  CHECK(bc::inputHealth(SignalState::Offline, FeedPhase::Slate, false) == "down");
+  CHECK(bc::inputHealth(SignalState::Connecting, FeedPhase::NoSignal, false) == "offline");
+}
+```
+
+Append to `tests/show_test.cpp`:
+```cpp
+TEST_CASE("Show: resolution and output format round-trip, and old files load with defaults") {
+  auto s = sampleShow();
+  s.settings.width = 1280;
+  s.settings.height = 720;
+  s.cameras[0].outputs[0].width = 960;
+  s.cameras[0].outputs[0].height = 540;
+  s.cameras[0].outputs[0].halfRate = true;
+  auto j = bc::showToJson(s, bc::SecretMode::Plain);
+  CHECK(j["settings"]["resolution"] == "1280x720");
+  CHECK(j["cameras"][0]["outputs"][0]["format"] == nlohmann::json{{"width", 960}, {"height", 540}, {"halfRate", true}});
+  CHECK(bc::showFromJson(j) == s);
+
+  j["settings"].erase("resolution");
+  j["cameras"][0]["outputs"][0].erase("format");
+  auto old = bc::showFromJson(j);
+  CHECK(old.settings.width == 1920);
+  CHECK(old.settings.height == 1080);
+  CHECK(old.cameras[0].outputs[0].width == 0);
+  CHECK_FALSE(old.cameras[0].outputs[0].halfRate);
+}
+
+TEST_CASE("Show: unsupported sizes are rejected") {
+  auto j = bc::showToJson(sampleShow(), bc::SecretMode::Plain);
+  j["settings"]["resolution"] = "3840x2160";
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+  j["settings"]["resolution"] = "1920x1080";
+  j["cameras"][0]["outputs"][0]["format"] = {{"width", 800}, {"height", 600}, {"halfRate", false}};
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+}
+
+TEST_CASE("Show: Unicode names survive the file unchanged") {
+  auto s = sampleShow();
+  s.cameras[0].name = "Sân khấu trái – Cam 2 📷";
+  auto back = bc::showFromJson(nlohmann::json::parse(bc::showToJson(s, bc::SecretMode::Plain).dump()));
+  CHECK(back.cameras[0].name == "Sân khấu trái – Cam 2 📷");
+  CHECK(bc::toUtf8(bc::toWide(back.cameras[0].name)) == back.cameras[0].name);
+  CHECK(bc::utf8Length("Sân khấu") == 8);
+}
+```
+(Add `#include "core/utf8.h"` and `#include <nlohmann/json.hpp>` at the top of `show_test.cpp` if not already there.)
+
+Append to `tests/gpu_test.cpp`:
+```cpp
+TEST_CASE("Converter: fit scales to the target size and letterboxes another aspect") {
+  Gpu g;
+  std::vector<uint8_t> red(36 * 36 * 4);
+  for (size_t i = 0; i < red.size(); i += 4) {
+    red[i] = 0;
+    red[i + 1] = 0;
+    red[i + 2] = 255;
+    red[i + 3] = 255;
+  }
+  auto sq = g.conv.toLinear(*g.conv.uploadBgra8(red.data(), 36, 36, 36 * 4), bc::PixelLayout::BGRA8, true);
+  auto fitted = g.conv.fit(*sq, 64, 36);
+  CHECK(fitted->width == 64);
+  CHECK(fitted->height == 36);
+  auto img = g.conv.readback(*g.conv.toBgra8(*fitted, 64, 36));
+  auto px = [&](int x, int y) { return &img.bgra[(static_cast<size_t>(y) * 64 + x) * 4]; };
+  CHECK(px(2, 18)[2] < 5);     // left bar: black
+  CHECK(px(61, 18)[2] < 5);    // right bar: black
+  CHECK(px(32, 18)[2] > 250);  // centre: the red picture
+  CHECK(px(32, 18)[3] == 255);
+}
+```
+
+In `tests/engine_test.cpp`:
+- Add to the anonymous namespace:
+```cpp
+// Small show format so the tests stay cheap; the engine fits every frame to it.
+bc::Show testShow() {
+  bc::Show s;
+  s.settings.width = 64;
+  s.settings.height = 36;
+  return s;
+}
+```
+- Replace every `bc::Show show;` in this file with `bc::Show show = testShow();` (the `bc::Show{}` used to clear the cameras stays as it is).
+- Replace the test `"Engine: a resolution change mid-stream follows the new size"` with:
+```cpp
+TEST_CASE("Engine: an input changing size mid-stream still leaves at the show size, without a gap") {
+  Rig r;
+  bc::Show show = testShow();
+  show.cameras.push_back(cam("a", {out("o1")}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(300ms);
+  r.factory.input("a")->width = 32;
+  r.factory.input("a")->height = 18;
+  std::this_thread::sleep_for(500ms);
+  auto seen = r.factory.output("o1")->seen();
+  CHECK(seen.front().width == 64);
+  CHECK(seen.back().width == 64);
+  CHECK(maxGap(seen) < 50ms);
+}
+```
+- Append:
+```cpp
+TEST_CASE("Engine: an output can send a smaller size, and a half-rate output gets every second tick with all the audio") {
+  Rig r;
+  bc::Show show = testShow();
+  auto small = out("small");
+  small.width = 32;
+  small.height = 18;
+  auto half = out("half");
+  half.halfRate = true;
+  show.cameras.push_back(cam("a", {out("full"), small, half}));
+  r.engine.apply(show);
+  r.engine.start();
+  auto t0 = Clock::now();
+  std::this_thread::sleep_for(1600ms);
+  CHECK(r.factory.output("full")->seen().back().width == 64);
+  CHECK(r.factory.output("small")->seen().back().width == 32);
+  auto halfSeen = r.factory.output("half")->seen();
+  const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
+  CHECK(n >= 27);
+  CHECK(n <= 31);
+  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 800 * 2);
+}
+
+TEST_CASE("Engine: input health is published") {
+  Rig r;
+  bc::Show show = testShow();
+  show.settings.holdMs = 3000;
+  show.cameras.push_back(cam("a", {out("o1")}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(1200ms);
+  auto health = [&] { return r.state.snapshot()["cameras"]["a"]["input"]["health"].get<std::string>(); };
+  CHECK(health() == "receiving");
+  r.factory.input("a")->paused = true;
+  std::this_thread::sleep_for(1200ms);
+  CHECK(health() == "down");
+  r.factory.input("a")->paused = false;
+  std::this_thread::sleep_for(1200ms);
+  CHECK(health() == "degraded");  // the pause was a stutter less than 10 s ago
+  CHECK(r.state.snapshot()["engine"]["resolution"] == "64x36");
+}
+```
+
+Append to `tests/command_router_test.cpp`:
+```cpp
+TEST_CASE("CommandRouter: show resolution and output format are validated") {
+  FakeFx fx;
+  bc::CommandRouter r(bc::Show{}, fx);
+  REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
+  CHECK(r.show().settings.width == 1280);
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["error"]["code"] == "invalid");
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  auto ok = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 960}, {"height", 540}, {"halfRate", true}}}}}}}});
+  REQUIRE(ok["ok"] == true);
+  auto& o = r.show().cameras[0].outputs[0];
+  CHECK(o.width == 960);
+  CHECK(o.halfRate);
+  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["error"]["code"] == "invalid");
+  REQUIRE(call(r, {{"cmd", "updateOutput"}, {"args", {{"cameraId", cam}, {"id", ok["result"]["id"]}, {"format", {{"width", 0}, {"height", 0}, {"halfRate", false}}}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].outputs[0].width == 0);
+}
+
+TEST_CASE("CommandRouter: names are counted in characters, not bytes") {
+  FakeFx fx;
+  bc::CommandRouter r(bc::Show{}, fx);
+  std::string eighty;
+  for (int i = 0; i < 80; ++i) eighty += "ấ";  // 3 bytes each
+  CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty}, {"input", kSrt}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "addCamera"}, {"args", {{"name", eighty + "a"}, {"input", kSrt}}}})["error"]["code"] == "invalid");
+  CHECK(r.show().cameras[0].name == eighty);
+}
+```
+(If the existing router tests build the router differently, build it the same way here.)
+
+Add `tests/input_health_test.cpp` to `bc_tests`.
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "*Show*,*fit*,*Engine*,*CommandRouter*,*inputHealth*"`
+Expected: build FAILS — `core/input_health.h` not found, `ShowSettings::width` and `Converter::fit` unknown.
+
+- [ ] **Step 3: Model and helpers**
+
+`src/core/input_health.h`:
+```cpp
+#pragma once
+#include <string_view>
+
+#include "core/frame_sync.h"
+#include "core/signal_state.h"
+
+namespace bc {
+// What the operator sees on the input chip (spec §6.1).
+inline std::string_view inputHealth(SignalState input, FeedPhase phase, bool stutteredInLast10s) {
+  if (phase == FeedPhase::Holding || phase == FeedPhase::Slate) return "down";
+  if (phase == FeedPhase::NoSignal) return "offline";
+  if (input != SignalState::Live || stutteredInLast10s) return "degraded";
+  return "receiving";
+}
+}  // namespace bc
+```
+
+`src/core/utf8.h` — add:
+```cpp
+// Number of code points in valid UTF-8 (continuation bytes are 10xxxxxx).
+inline size_t utf8Length(std::string_view s) {
+  size_t n = 0;
+  for (unsigned char c : s) n += (c & 0xC0) != 0x80;
+  return n;
+}
+```
+
+`src/core/show.h` — in `OutputConfig`, after `params`:
+```cpp
+  int width = 0;           // 0 x 0 = same as the show (spec §4.3)
+  int height = 0;
+  bool halfRate = false;   // every second tick
+```
+In `ShowSettings`, after `rate`:
+```cpp
+  int width = 1920;   // show format (spec §1.3): 1280x720 or 1920x1080
+  int height = 1080;
+```
+And declare:
+```cpp
+std::optional<std::pair<int, int>> parseShowResolution(std::string_view s);  // "1280x720" | "1920x1080"
+std::string resolutionStr(int w, int h);
+bool isOutputSize(int w, int h);  // 0x0, 1280x720 or 960x540
+```
+(`#include <optional>` and `<utility>`.)
+
+`src/core/show.cpp`:
+```cpp
+std::optional<std::pair<int, int>> parseShowResolution(std::string_view s) {
+  if (s == "1280x720") return std::pair{1280, 720};
+  if (s == "1920x1080") return std::pair{1920, 1080};
+  return std::nullopt;
+}
+
+std::string resolutionStr(int w, int h) { return std::to_string(w) + "x" + std::to_string(h); }
+
+bool isOutputSize(int w, int h) {
+  return (w == 0 && h == 0) || (w == 1280 && h == 720) || (w == 960 && h == 540);
+}
+```
+`outputToJson` adds `{"format", {{"width", o.width}, {"height", o.height}, {"halfRate", o.halfRate}}}`. `outputFromJson` reads it:
+```cpp
+  auto f = j.value("format", json::object());
+  if (!f.is_object()) throw ShowError("output format must be an object");
+  o.width = f.value("width", 0);
+  o.height = f.value("height", 0);
+  o.halfRate = f.value("halfRate", false);
+  if (!isOutputSize(o.width, o.height)) throw ShowError("output size must be same as show, 1280x720 or 960x540");
+```
+`showToJson` adds `{"resolution", resolutionStr(s.settings.width, s.settings.height)}` to `settings`. `showFromJson`:
+```cpp
+  auto res = parseShowResolution(settings.value("resolution", std::string("1920x1080")));
+  if (!res) throw ShowError("settings.resolution must be 1280x720 or 1920x1080");
+  s.settings.width = res->first;
+  s.settings.height = res->second;
+```
+The schema version stays 1: the new keys are optional with defaults, so older files load unchanged.
+
+- [ ] **Step 4: `Converter::fit`**
+
+`src/gpu/shaders/fit_linear.hlsl`:
+```hlsl
+Texture2D<float4> gSrc : register(t0);
+RWTexture2D<float4> gOut : register(u0);
+SamplerState gLinear : register(s0);
+cbuffer Params : register(b0) {
+  float4 gRow0;
+  float4 gRow1;
+  float4 gRow2;
+  uint2 gOutSize;
+  uint2 gSrcSize;
+};
+
+// Fits the source inside the output keeping its aspect (spec §3.2); bars are black.
+[numthreads(8, 8, 1)]
+void main(uint3 id : SV_DispatchThreadID) {
+  if (id.x >= gOutSize.x || id.y >= gOutSize.y) return;
+  float s = min(float(gOutSize.x) / gSrcSize.x, float(gOutSize.y) / gSrcSize.y);
+  float2 size = float2(gSrcSize) * s;
+  float2 p = float2(id.xy) + 0.5 - (float2(gOutSize) - size) * 0.5;
+  if (p.x < 0 || p.y < 0 || p.x >= size.x || p.y >= size.y) {
+    gOut[id.xy] = float4(0, 0, 0, 1);
+    return;
+  }
+  gOut[id.xy] = gSrc.SampleLevel(gLinear, p / size, 0);
+}
+```
+ponytail: plain bilinear, like `linear_to_bgra8`; add a box pre-filter if 1080p → 540p outputs shimmer.
+
+`CMakeLists.txt`: `bc_shader(fit_linear cs_5_0)` after the other three.
+
+`src/gpu/converter.h`: declare `TextureRef fit(const GpuTexture& linear, uint32_t w, uint32_t h);` and add `fitCs_` to the `ComPtr<ID3D11ComputeShader>` members. `src/gpu/converter.cpp`: `#include "fit_linear.h"`, create `fitCs_` from `g_fit_linear` next to the other three, and:
+```cpp
+TextureRef Converter::fit(const GpuTexture& linear, uint32_t w, uint32_t h) {
+  auto out = pool_.acquire(w, h, kLinearFormat, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+  Params p{};
+  p.outW = w;
+  p.outH = h;
+  p.srcW = linear.width;
+  p.srcH = linear.height;
+  ID3D11ShaderResourceView* srvs[] = {linear.srv.Get()};
+  dispatch(fitCs_.Get(), srvs, 1, out->uav.Get(), p);
+  return out;
+}
+```
+
+- [ ] **Step 5: Camera — fit to the show, per-output format, health**
+
+`src/engine/camera.h`:
+- `#include "core/input_health.h"`.
+- Public: `void setFormat(uint32_t w, uint32_t h) { width_ = w; height_ = h; lastConverted_.reset(); }` — called from the tick thread's lock (Engine holds `mutex_`), so no extra locking.
+- `OutputSlot` gains `std::vector<float> carryAudio;` (half-rate audio from the odd tick).
+- Private members: `uint32_t width_ = 1920, height_ = 1080;`, `std::atomic<SignalState> inputState_{SignalState::Connecting};`, `std::optional<std::chrono::steady_clock::time_point> lastFresh_;`, `std::chrono::steady_clock::time_point lastStutter_{};` (guarded by `statsMutex_`).
+
+`src/engine/camera.cpp`:
+- `onState`: add `inputState_ = s;` as the first line. `startInput`: add `inputState_ = SignalState::Connecting;` as the first line.
+- In `tick`, replace the conversion line `lastConverted_ = conv_.toLinear(*f.tex, f.layout, f.fullRange);` with:
+```cpp
+      auto lin = conv_.toLinear(*f.tex, f.layout, f.fullRange);
+      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : conv_.fit(*lin, width_, height_);
+```
+- Replace everything in `tick` from `bool anyCpu = false;` up to and including the `for (auto& s : outputs_) { if (s.out) s.out->submit(out); }` loop with:
+```cpp
+  // One frame (and one readback) per distinct output size this tick (spec §4.3).
+  struct Variant {
+    TextureRef tex;
+    std::shared_ptr<const CpuImage> cpu;
+  };
+  std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
+  auto variant = [&](const OutputConfig& c, bool needsCpu) -> Variant& {
+    const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
+    const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
+    auto& v = variants[{w, h}];
+    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : conv_.fit(*frame, w, h);
+    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(conv_.readback(*conv_.toBgra8(*v.tex, w, h)));
+    return v;
+  };
+  for (auto& s : outputs_) {
+    if (!s.out) continue;
+    if (!s.cfg.halfRate) {
+      auto& v = variant(s.cfg, s.out->needsCpu());
+      s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, false});
+      continue;
+    }
+    // Half rate: even ticks only, carrying the odd tick's audio so nothing is lost.
+    if (index % 2 == 1) {
+      s.carryAudio = *audio;
+      continue;
+    }
+    auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
+    s.carryAudio.clear();
+    both->insert(both->end(), audio->begin(), audio->end());
+    auto& v = variant(s.cfg, s.out->needsCpu());
+    const Rate half{sched.rate().num, sched.rate().den * 2};
+    s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, false});
+  }
+```
+ponytail: after a tick overrun the index can skip an even tick; the half-rate output then waits one more tick. Fine at the measured overrun rate; revisit if the soak shows half-rate stutter.
+- In the stats block at the end of `tick`, after `++freshThisSecond_;` add the stutter check (it uses the arrival of the fresh frame):
+```cpp
+    if (lastFresh_ && *arrival - *lastFresh_ > std::chrono::milliseconds(100)) lastStutter_ = Clock::now();
+    lastFresh_ = *arrival;
+```
+- In `publishStatus`, read `const bool stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);` inside the `statsMutex_` block, and after `state_.set(path("/phase"), ...)` add:
+```cpp
+  state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
+```
+
+- [ ] **Step 6: Engine — show size, slate at the show size**
+
+`src/engine/engine.cpp`:
+- `loadSlate()`: the default becomes `slate_ = conv_.solid(settings_.width, settings_.height, {0.05f, 0.05f, 0.06f, 1.0f});` and a loaded image becomes `slate_ = conv_.fit(*conv_.toLinear(*up, PixelLayout::BGRA8, true), settings_.width, settings_.height);`.
+- `apply()`: next to `slateChanged`, add `const bool sizeChanged = !settingsApplied_ || show.settings.width != settings_.width || show.settings.height != settings_.height;`; after `settings_ = show.settings;` call `if (slateChanged || sizeChanged) loadSlate();` (replacing `if (slateChanged) loadSlate();`), set `state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));`, and `for (auto& c : cameras_) c->setFormat(settings_.width, settings_.height);` when `sizeChanged`. A camera created in `apply()` gets `cam->setFormat(settings_.width, settings_.height);` before `cam->start();`.
+- The constructor also sets `/engine/resolution`.
+
+- [ ] **Step 7: Router — resolution, output format, names in characters**
+
+`src/engine/command_router.cpp`:
+- `#include "core/utf8.h"`. In `name()`: `if (n.empty() || utf8Length(n) > 80) throw CmdError("invalid", "name must be 1 to 80 characters");`.
+- Add to the anonymous namespace:
+```cpp
+void formatFrom(const json& f, OutputConfig& o) {
+  if (!f.is_object()) throw CmdError("bad-request", "format must be an object");
+  o.width = f.value("width", 0);
+  o.height = f.value("height", 0);
+  o.halfRate = f.value("halfRate", false);
+  if (!isOutputSize(o.width, o.height)) throw CmdError("invalid", "output size must be same as show, 1280x720 or 960x540");
+}
+```
+- `addOutput`: after `out.params = ...` add `if (o.contains("format")) formatFrom(o["format"], out);`. `updateOutput`: add `if (args.contains("format")) formatFrom(args["format"], *it);`.
+- `setSettings`: add
+```cpp
+    if (args.contains("resolution")) {
+      auto res = parseShowResolution(str(args, "resolution"));
+      if (!res) throw CmdError("invalid", "resolution must be 1280x720 or 1920x1080");
+      next.settings.width = res->first;
+      next.settings.height = res->second;
+    }
+```
+- Protocol table: `setSettings` args become `{rate?, resolution?, holdMs?, slatePath?}`; `addOutput.output` and `updateOutput` take `format?: {width, height, halfRate}`.
+
+- [ ] **Step 8: Run the tests**
+
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "*Show*,*fit*,*Engine*,*CommandRouter*,*inputHealth*"` — Expected: all pass. Then the whole C++ suite once, and the engine and gpu cases once more with `BC_FORCE_WARP=1` (ledger the result; never loosen a bound).
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src tests CMakeLists.txt
+git commit -m "feat(engine): show resolution, per-output size and half rate, input health, Unicode name limits"
+```
+
 ### Task 12: Shell — supervisor, process launcher, WebView2 window and tray
 
 **Files:**
@@ -7184,8 +7651,9 @@ Shell behaviour (spec §2):
 - The supervisor restarts the engine when it exits or misses heartbeats for 3 s (8 s grace after each launch); at most 5 quick restarts per 60 s, then one every 10 s.
 - Heartbeat = `{"id":"hb","cmd":"ping"}` every second over the control WebSocket; a successful reply counts.
 - The UI loads from `<exe dir>\ui\` through the virtual host `https://app.breadcamera/index.html#port=<p>&token=<t>`.
-- Closing the window hides it (outputs keep running). Tray menu: "Mở BreadCamera" (show) and "Thoát…" (show the window and post `{"type":"confirmQuit"}` to the page). When the page posts the string `{"type":"quitConfirmed"}`, the shell stops supervising, sends `shutdown`, waits up to 3 s, kills the engine if needed, removes the tray icon and exits.
-- Missing WebView2 runtime: a message box in Vietnamese; the engine keeps running.
+- Closing the window hides it (outputs keep running). Tray menu: "Open BreadCamera" (show) and "Quit…" (show the window and post `{"type":"confirmQuit"}` to the page). When the page posts the string `{"type":"quitConfirmed"}`, the shell stops supervising, sends `shutdown`, waits up to 3 s, kills the engine if needed, removes the tray icon and exits.
+- Missing WebView2 runtime: an English message box; the engine keeps running. All shell text is English (spec §6.4).
+- **Custom title bar (spec §6.4).** The window has no system caption but keeps its side and bottom resize borders, Snap and the dark frame: `WM_NCCALCSIZE` (wParam TRUE) lets `DefWindowProc` compute the borders and then restores the top edge; `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE, TRUE)`. The page draws the title bar; `ICoreWebView2Settings9::put_IsNonClientRegionSupportEnabled(TRUE)` lets its CSS `app-region: drag` move the window. The page posts the strings `{"type":"window","action":"minimize"|"maximize"|"close"}` (maximize toggles; close hides to the tray like `WM_CLOSE`); the shell posts `{"type":"windowState","maximized":true|false}` on every `WM_SIZE`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7306,7 +7774,7 @@ target_include_directories(bc_shell PUBLIC src)
 target_link_libraries(bc_shell PUBLIC bc_core)
 
 add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
-target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32)
+target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
 ```
 Link `bc_shell` into `bc_tests`.
 
@@ -7551,6 +8019,7 @@ Expected: 6 cases pass.
 #include <wrl.h>
 
 #include <WebView2.h>
+#include <dwmapi.h>
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <wil/com.h>
@@ -7618,8 +8087,8 @@ void quitAll() {
 
 void showTrayMenu() {
   HMENU menu = CreatePopupMenu();
-  AppendMenuW(menu, MF_STRING, ID_OPEN, L"Mở BreadCamera");
-  AppendMenuW(menu, MF_STRING, ID_QUIT, L"Thoát…");
+  AppendMenuW(menu, MF_STRING, ID_OPEN, L"Open BreadCamera");
+  AppendMenuW(menu, MF_STRING, ID_QUIT, L"Quit…");
   POINT pt;
   GetCursorPos(&pt);
   SetForegroundWindow(g.hwnd);
@@ -7629,11 +8098,26 @@ void showTrayMenu() {
 
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+    case WM_NCCALCSIZE:
+      if (wp == TRUE) {
+        // No system caption: the page draws the title bar (spec §6.4). Keep the side and
+        // bottom resize borders; when maximised, keep the top inside the screen.
+        auto* p = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+        const LONG top = p->rgrc[0].top;
+        const LRESULT res = DefWindowProcW(hwnd, msg, wp, lp);
+        p->rgrc[0].top = top + (IsZoomed(hwnd) ? GetSystemMetrics(SM_CYFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER) : 0);
+        return res;
+      }
+      break;
     case WM_SIZE:
       if (g.controller) {
         RECT rc;
         GetClientRect(hwnd, &rc);
         g.controller->put_Bounds(rc);
+      }
+      if (g.webview) {
+        g.webview->PostWebMessageAsJson(IsZoomed(hwnd) ? L"{\"type\":\"windowState\",\"maximized\":true}"
+                                                       : L"{\"type\":\"windowState\",\"maximized\":false}");
       }
       return 0;
     case WM_CLOSE:
@@ -7663,8 +8147,8 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 void runtimeMissing() {
   MessageBoxW(g.hwnd,
-              L"Thiếu Microsoft Edge WebView2 Runtime nên không mở được giao diện. "
-              L"Engine vẫn đang chạy và các đầu ra không bị ảnh hưởng.",
+              L"The Microsoft Edge WebView2 Runtime is missing, so the window cannot open. "
+              L"The engine is still running and every output is unaffected.",
               L"BreadCamera", MB_ICONWARNING);
 }
 
@@ -7690,6 +8174,11 @@ void startWebView() {
                               }
                               g.controller = c;
                               g.controller->get_CoreWebView2(&g.webview);
+                              wil::com_ptr<ICoreWebView2Settings> settings;
+                              g.webview->get_Settings(&settings);
+                              if (auto s9 = settings.try_query<ICoreWebView2Settings9>()) {
+                                s9->put_IsNonClientRegionSupportEnabled(TRUE);  // CSS app-region: drag
+                              }
                               RECT rc;
                               GetClientRect(g.hwnd, &rc);
                               g.controller->put_Bounds(rc);
@@ -7702,9 +8191,16 @@ void startWebView() {
                                   Callback<ICoreWebView2WebMessageReceivedEventHandler>(
                                       [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
                                         wil::unique_cotaskmem_string msg;
-                                        if (SUCCEEDED(args->TryGetWebMessageAsString(&msg)) &&
-                                            std::wstring(msg.get()).find(L"quitConfirmed") != std::wstring::npos) {
+                                        if (FAILED(args->TryGetWebMessageAsString(&msg))) return S_OK;
+                                        const std::wstring text(msg.get());
+                                        if (text.find(L"quitConfirmed") != std::wstring::npos) {
                                           PostMessageW(g.hwnd, WM_QUIT_CONFIRMED, 0, 0);
+                                        } else if (text.find(L"\"window\"") != std::wstring::npos) {
+                                          if (text.find(L"minimize") != std::wstring::npos) ShowWindow(g.hwnd, SW_MINIMIZE);
+                                          else if (text.find(L"maximize") != std::wstring::npos)
+                                            ShowWindow(g.hwnd, IsZoomed(g.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+                                          else if (text.find(L"close") != std::wstring::npos)
+                                            PostMessageW(g.hwnd, WM_CLOSE, 0, 0);
                                         }
                                         return S_OK;
                                       })
@@ -7783,8 +8279,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
   wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
   wc.lpszClassName = kClass;
   RegisterClassExW(&wc);
-  g.hwnd = CreateWindowExW(0, kClass, L"BreadCamera", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1400, 900,
+  g.hwnd = CreateWindowExW(0, kClass, L"BreadCamera", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1600, 940,
                            nullptr, nullptr, inst, nullptr);
+  const BOOL dark = TRUE;
+  DwmSetWindowAttribute(g.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+  SetWindowPos(g.hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);  // apply WM_NCCALCSIZE
   ShowWindow(g.hwnd, show);
 
   g.tray.cbSize = sizeof(g.tray);
@@ -7844,23 +8343,29 @@ git add src/shell tests CMakeLists.txt
 git commit -m "feat(shell): WebView2 shell with tray, engine adoption and restart supervisor"
 ```
 
-### Task 13: UI — engine client, live state, multiview with previews, add camera/output, quit confirm
+### Task 13: UI — native window shell: title bar, toolbar, Multiview, Inspector, status bar
+
+Rewritten 2026-10-08 after the UI mockup review. The reference is `docs/design/mockups/index.html` (approved) and `docs/design/multiview.md`; spec §6.4 is binding. English only. Effects, calibration and Settings arrive in M2, M3 and M5; this task builds the window they plug into.
 
 **Files:**
-- Create: `ui/package.json`, `ui/.npmrc`, `ui/tsconfig.json`, `ui/vite.config.ts`, `ui/index.html`, `ui/src/main.tsx`, `ui/src/App.tsx`, `ui/src/i18n.ts`
+- Create: `ui/package.json`, `ui/.npmrc`, `ui/tsconfig.json`, `ui/vite.config.ts`, `ui/index.html`, `ui/src/main.tsx`, `ui/src/app.css`, `ui/src/App.tsx`, `ui/src/bridge.ts`
 - Create: `ui/src/api/protocol.ts`, `ui/src/api/patch.ts`, `ui/src/api/client.ts`, `ui/src/api/useEngine.ts`, `ui/src/preview/h264.ts`, `ui/src/preview/PreviewCanvas.tsx`
-- Create: `ui/src/components/SignalChip.tsx`, `ui/src/components/ErrorBlock.tsx`, `ui/src/screens/Multiview.tsx`, `ui/src/screens/AddCameraDialog.tsx`, `ui/src/screens/AddOutputDialog.tsx`, `ui/src/screens/QuitDialog.tsx`
+- Create: `ui/src/state/marks.ts`, `ui/src/state/labels.ts`
+- Create: `ui/src/components/Icon.tsx`, `ui/src/components/ErrorBlock.tsx`, `ui/src/components/Modal.tsx`, `ui/src/components/Menu.tsx`, `ui/src/components/Prop.tsx`
+- Create: `ui/src/shell/TitleBar.tsx`, `ui/src/shell/Toolbar.tsx`, `ui/src/shell/StatusBar.tsx`
+- Create: `ui/src/multiview/Strip.tsx`, `ui/src/multiview/Multiview.tsx`, `ui/src/inspector/Inspector.tsx`
+- Create: `ui/src/dialogs/AddCameraDialog.tsx`, `ui/src/dialogs/AddOutputDialog.tsx`, `ui/src/dialogs/ConfirmDialog.tsx`, `ui/src/dialogs/QuitDialog.tsx`
 - Create: `cmake/CopyUi.cmake`
 - Modify: `CMakeLists.txt` (copy `ui/dist` next to `BreadCamera.exe`)
-- Test: `ui/src/test/setup.ts`, `ui/src/api/patch.test.ts`, `ui/src/api/protocol.test.ts`, `ui/src/preview/h264.test.ts`, `ui/src/api/client.test.ts`, `ui/src/screens/Multiview.test.tsx`, `ui/src/test/fakeWs.ts`
+- Test: `ui/src/test/setup.ts`, `ui/src/test/fakeWs.ts`, `ui/src/api/patch.test.ts`, `ui/src/api/protocol.test.ts`, `ui/src/preview/h264.test.ts`, `ui/src/api/client.test.ts`, `ui/src/state/marks.test.ts`, `ui/src/Workspace.test.tsx`
 
 **Interfaces:**
-- Consumes: the wire protocol of Task 11 (responses, `snapshot`/`patch`/`show`/`stats` messages, commands) and Task 10's binary preview message; state paths of Tasks 4/9 (`/engine/warnings/<source>`, `/cameras/<id>/...`); shell messages of Task 12 (`{"type":"confirmQuit"}` in, the **string** `'{"type":"quitConfirmed"}'` out).
-- Produces: `applyPatch(state, ops)`, `parsePreviewMessage(buf)`, `codecFromSps(annexB)`, `class EngineClient` (`connect()`, `close()`, `request(cmd, args)`, `subscribe(fn)`, `getSnapshot()`, `onPreview(cameraId, fn)`, `setPreviewSubscription(ids, size)`), `useEngine(client)`. Later milestones add screens to this app.
+- Consumes: the wire protocol of Tasks 11 and 11A (responses, `snapshot`/`patch`/`show`/`stats`, commands incl. `format` and `resolution`); Task 10's binary preview message; state paths of Tasks 4, 9 and 11A (`/engine/gpu|rate|resolution|overruns|warnings/*`, `/cameras/<id>/name|phase|tickError|input/state|input/error|input/health|outputs/<oid>/kind|state|error`); shell messages of Task 12 (`{"type":"confirmQuit"}` and `{"type":"windowState","maximized":bool}` in; the strings `{"type":"quitConfirmed"}` and `{"type":"window","action":...}` out).
+- Produces (later milestones extend these): `applyPatch`, `parsePreviewMessage`, `codecFromSps`, `class EngineClient`, `useEngine(client)`; `Workspace({client})` (the whole window below the engine connection); `Strip`, `Inspector({client, cameraId, onRemoved})` with a `children` slot between Input and Outputs where M2 puts Effects; `Modal`, `ConfirmDialog`, `Menu`, `Prop`, `Icon`, `ErrorBlock`; `inputCode(kind)`, `outputCode(kind)`, `outputName(kind)`, `rateLabel(rate)`; `nextMarks`, `holdLeft`, `clock`.
 
-Commands (all from bash in `ui/`): `PATH="/c/Program Files/nodejs:$PATH" NODE_AUTH_TOKEN="$(gh auth token)" npm install` once (creates `package-lock.json`, commit it), then `PATH="/c/Program Files/nodejs:$PATH" npm test` and `npm run build`.
+Commands (bash, in `ui/`): `PATH="/c/Program Files/nodejs:$PATH" NODE_AUTH_TOKEN="$(gh auth token)" npm install` once (commit `package-lock.json`), then `PATH="/c/Program Files/nodejs:$PATH" npm test` and `npm run build`.
 
-UI rules (spec §6.4, Global Constraints): Vietnamese strings from `i18n.ts`; signal labels exactly Sẵn sàng / Đang kết nối / Đang phát / Tắt; errors and warnings are `ErrorBlock`s that stay until the condition clears (no toasts); one primary action per screen, top right ("Thêm camera"); dialog buttons secondary left, primary right; the quit dialog's primary button says "Dừng tất cả đầu ra".
+UI rules (spec §6.4): native pro-tool look — Segoe UI Variable 12 px, JetBrains Mono for numbers, 26 px controls, label-left property rows, the `--bm-*` tokens from `@bmsolutionsvn/design/bm.css`. English only; names as given (Unicode). Output signal states are Ready/Connecting/Live/Offline pills; input health is the filled chip (green receiving, yellow degraded, red down, grey offline). Errors are persistent blocks (`role="alert"`), never toasts. Every destructive action goes through `ConfirmDialog` whose button names the action; buttons: secondary left, primary right. Nothing on a Multiview tile changes an output; a click selects. No MUI: plain React and CSS.
 
 - [ ] **Step 1: Create the package**
 
@@ -7878,9 +8383,6 @@ UI rules (spec §6.4, Global Constraints): Vietnamese strings from `i18n.ts`; si
   },
   "dependencies": {
     "@bmsolutionsvn/design": "^1.2.0",
-    "@emotion/react": "^11.13.3",
-    "@emotion/styled": "^11.13.0",
-    "@mui/material": "^6.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -7936,10 +8438,11 @@ export default defineConfig({
 });
 ```
 
+
 `ui/index.html`:
 ```html
 <!doctype html>
-<html lang="vi">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8119,56 +8622,142 @@ test('binary preview messages reach the camera listener', () => {
 });
 ```
 
-`ui/src/screens/Multiview.test.tsx`:
+
+`ui/src/state/marks.test.ts`:
+```ts
+import { clock, holdLeft, nextMarks } from './marks';
+
+test('holding starts a countdown that clears when the picture returns', () => {
+  let m = nextMarks(undefined, { name: 'A', phase: 'holding' }, 1000);
+  expect(holdLeft(m, 5000, 1000)).toBe('00:05');
+  expect(holdLeft(m, 5000, 2600)).toBe('00:04');
+  m = nextMarks(m, { name: 'A', phase: 'live', input: { state: 'live', error: null, health: 'receiving' } }, 3000);
+  expect(holdLeft(m, 5000, 3000)).toBeNull();
+});
+
+test('a fault that recovers on its own leaves a mark with the time', () => {
+  let m = nextMarks(undefined, { name: 'A', phase: 'live', outputs: { o: { kind: 'ndi', state: 'offline', error: { code: 'x', message: 'y' } } } }, 10);
+  expect(m.recoveredAt).toBeUndefined();
+  m = nextMarks(m, { name: 'A', phase: 'live', outputs: { o: { kind: 'ndi', state: 'live', error: null } } }, 20);
+  expect(m.recoveredAt).toBe(20);
+  expect(clock(new Date(2026, 9, 8, 20, 14).getTime())).toBe('20:14');
+});
+```
+
+`ui/src/Workspace.test.tsx`:
 ```tsx
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 
-import { EngineClient } from '../api/client';
-import { FakeWs } from '../test/fakeWs';
-import { Multiview } from './Multiview';
+import { EngineClient } from './api/client';
+import { Workspace } from './App';
+import { FakeWs } from './test/fakeWs';
 
-function clientWith(state: unknown, show: unknown) {
+const show = {
+  schemaVersion: 1,
+  settings: { rate: '60000/1001', resolution: '1920x1080', holdMs: 5000, slatePath: '' },
+  cameras: [
+    {
+      id: 'a',
+      name: 'Sân khấu trái',
+      input: { kind: 'srt', params: { mode: 'caller', url: 'srt://1.2.3.4:9000', latencyMs: 120 } },
+      outputs: [
+        { id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: { name: 'BreadCamera - Sân khấu trái' }, format: { width: 0, height: 0, halfRate: false } },
+        { id: 'o2', kind: 'fullscreen', keyed: false, enabled: true, params: { monitor: 1 }, format: { width: 0, height: 0, halfRate: false } },
+      ],
+    },
+    { id: 'b', name: 'Khách mời', input: { kind: 'srt', params: { mode: 'listener', port: 9001 } }, outputs: [] },
+  ],
+};
+const state = {
+  engine: { gpu: 'NVIDIA GeForce RTX 4070', rate: '60000/1001', resolution: '1920x1080', overruns: 0 },
+  cameras: {
+    a: {
+      name: 'Sân khấu trái',
+      phase: 'live',
+      input: { state: 'live', error: null, health: 'receiving' },
+      outputs: {
+        o1: { kind: 'ndi', state: 'live', error: null },
+        o2: { kind: 'fullscreen', state: 'offline', error: { code: 'output-failed', message: 'monitor 2 is not connected' } },
+      },
+    },
+    b: { name: 'Khách mời', phase: 'slate', input: { state: 'offline', error: { code: 'input-failed', message: 'cannot open srt://:9001' }, health: 'down' } },
+  },
+};
+
+function client(s: unknown = state, sh: unknown = show) {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
   FakeWs.last.open();
-  FakeWs.last.receive({ type: 'snapshot', state, show });
+  FakeWs.last.receive({ type: 'snapshot', state: s, show: sh });
   return c;
 }
 
-const show = {
-  schemaVersion: 1,
-  settings: { rate: '60/1', holdMs: 5000, slatePath: '' },
-  cameras: [
-    { id: 'a', name: 'Sân khấu', input: { kind: 'srt', params: {} }, outputs: [{ id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: {} }] },
-    { id: 'b', name: 'Khách mời', input: { kind: 'srt', params: {} }, outputs: [] },
-  ],
-};
-
-test('shows glossary signal labels, phases and persistent errors', () => {
-  const c = clientWith(
-    {
-      cameras: {
-        a: { name: 'Sân khấu', phase: 'live', input: { state: 'live', error: null }, outputs: { o1: { kind: 'ndi', state: 'live', error: null } } },
-        b: { name: 'Khách mời', phase: 'slate', input: { state: 'offline', error: { code: 'input-failed', message: 'cannot open srt://1.2.3.4:9000' } } },
-      },
-    },
-    show,
-  );
-  render(<Multiview client={c} />);
-  expect(screen.getAllByText('Đang phát').length).toBeGreaterThanOrEqual(2);
-  expect(screen.getByText('Tắt')).toBeInTheDocument();
-  expect(screen.getByText('Màn chờ')).toBeInTheDocument();
-  expect(screen.getByRole('alert')).toHaveTextContent('cannot open srt://1.2.3.4:9000');
-  expect(screen.getByRole('button', { name: 'Thêm camera' })).toBeInTheDocument();
+test('strips show input health, names and every output state', () => {
+  render(<Workspace client={client()} />);
+  expect(screen.getByTitle('SRT input: receiving')).toHaveTextContent('SRT');
+  expect(screen.getByTitle('NDI output: Live')).toHaveTextContent('NDI');
+  expect(screen.getByTitle('Fullscreen: failed, monitor 2 is not connected')).toBeInTheDocument();
+  expect(screen.getByTitle('SRT input: down, showing the slate')).toHaveTextContent('SLATE');
+  expect(screen.getAllByText('Khách mời').length).toBeGreaterThan(0);
 });
 
-test('an empty show explains what to do', () => {
-  const c = clientWith({}, { ...show, cameras: [] });
-  render(<Multiview client={c} />);
-  expect(screen.getByText(/Chưa có camera nào/)).toBeInTheDocument();
+test('the first camera is selected; arrow keys and clicks move the Inspector', () => {
+  render(<Workspace client={client()} />);
+  const insp = screen.getByRole('complementary', { name: 'Inspector' });
+  expect(within(insp).getByText('Sân khấu trái')).toBeInTheDocument();
+  expect(within(insp).getByRole('alert')).toHaveTextContent('monitor 2 is not connected');
+  fireEvent.keyDown(screen.getByRole('listbox', { name: 'Multiview' }), { key: 'ArrowRight' });
+  expect(within(insp).getByText('Khách mời')).toBeInTheDocument();
+  expect(within(insp).getByRole('alert')).toHaveTextContent('cannot open srt://:9001');
+  fireEvent.click(screen.getByRole('option', { name: /CAM 1/ }));
+  expect(within(insp).getByText('Sân khấu trái')).toBeInTheDocument();
+});
+
+test('an empty show points to Add camera', () => {
+  render(<Workspace client={client({}, { ...show, cameras: [] })} />);
+  expect(screen.getByText('No cameras yet')).toBeInTheDocument();
+});
+
+test('Add output sends the chosen size and half rate', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(within(screen.getByRole('complementary', { name: 'Inspector' })).getByRole('button', { name: 'Add output' }));
+  const dlg = screen.getByRole('dialog', { name: 'Add output to CAM 1' });
+  fireEvent.change(within(dlg).getByLabelText('Resolution'), { target: { value: '1280x720' } });
+  fireEvent.change(within(dlg).getByLabelText('Frame rate'), { target: { value: 'half' } });
+  fireEvent.click(within(dlg).getByRole('button', { name: 'Add output' }));
+  const req = FakeWs.last.lastRequest();
+  expect(req.cmd).toBe('addOutput');
+  expect((req.args.output as { format: unknown }).format).toEqual({ width: 1280, height: 720, halfRate: true });
+});
+
+test('Stop all outputs asks first, with a verb button', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Stop all outputs…' }));
+  const dlg = screen.getByRole('dialog', { name: 'Stop all outputs?' });
+  fireEvent.click(within(dlg).getByRole('button', { name: 'Stop all outputs' }));
+  expect(FakeWs.last.lastRequest().cmd).toBe('stopAllOutputs');
+});
+
+test('window buttons post to the shell', () => {
+  const postMessage = vi.fn();
+  (window as unknown as { chrome: unknown }).chrome = { webview: { postMessage, addEventListener() {}, removeEventListener() {} } };
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Minimise' }));
+  expect(postMessage).toHaveBeenCalledWith('{"type":"window","action":"minimize"}');
+  delete (window as unknown as { chrome?: unknown }).chrome;
+});
+
+test('losing the engine shows the restart block and every pill goes Offline', () => {
+  const c = client();
+  render(<Workspace client={c} />);
+  FakeWs.last.close();
+  expect(screen.getByRole('status', { name: 'Engine restarting' })).toBeInTheDocument();
+  expect(screen.getByTitle('NDI output: Offline')).toBeInTheDocument();
+  c.close();
 });
 ```
+
 `ui/src/test/setup.ts`:
 ```ts
 import '@testing-library/jest-dom/vitest';
@@ -8176,12 +8765,13 @@ import '@testing-library/jest-dom/vitest';
 
 Run: `PATH="/c/Program Files/nodejs:$PATH" npm test` — Expected: FAIL, modules not found.
 
-- [ ] **Step 3: Implement protocol, patch, h264 and the client**
+- [ ] **Step 3: Engine protocol, patch, H.264 and the client**
 
 `ui/src/api/protocol.ts`:
 ```ts
 export type SignalState = 'ready' | 'connecting' | 'live' | 'offline';
 export type Phase = 'nosignal' | 'live' | 'holding' | 'slate';
+export type InputHealth = 'receiving' | 'degraded' | 'down' | 'offline';
 export interface ErrorInfo {
   code: string;
   message: string;
@@ -8194,7 +8784,7 @@ export interface OutputState {
 export interface CameraState {
   name: string;
   phase?: Phase;
-  input?: { state: SignalState; error: ErrorInfo | null };
+  input?: { state: SignalState; error: ErrorInfo | null; health?: InputHealth };
   outputs?: Record<string, OutputState>;
   tickError?: string;
 }
@@ -8202,11 +8792,17 @@ export interface StateTree {
   engine?: {
     gpu?: string;
     rate?: string;
+    resolution?: string;
     overruns?: number;
     previewEncoder?: string;
     warnings?: Record<string, string>;
   };
   cameras?: Record<string, CameraState>;
+}
+export interface OutputFormat {
+  width: number;
+  height: number;
+  halfRate: boolean;
 }
 export interface OutputConfig {
   id: string;
@@ -8214,6 +8810,7 @@ export interface OutputConfig {
   keyed: boolean;
   enabled: boolean;
   params: Record<string, unknown>;
+  format?: OutputFormat;
 }
 export interface CameraConfig {
   id: string;
@@ -8223,7 +8820,7 @@ export interface CameraConfig {
 }
 export interface ShowJson {
   schemaVersion?: number;
-  settings?: { rate: string; holdMs: number; slatePath: string };
+  settings?: { rate: string; resolution?: string; holdMs: number; slatePath: string };
   cameras: CameraConfig[];
 }
 export interface PatchOp {
@@ -8464,143 +9061,267 @@ export function useEngine(client: EngineClient): EngineSnapshot {
 }
 ```
 
-- [ ] **Step 4: Implement i18n and components**
 
-`ui/src/i18n.ts`:
+- [ ] **Step 4: Labels, marks and the shell bridge**
+
+`ui/src/state/labels.ts`:
 ```ts
-const vi = {
-  'signal.ready': 'Sẵn sàng',
-  'signal.connecting': 'Đang kết nối',
-  'signal.live': 'Đang phát',
-  'signal.offline': 'Tắt',
-  'phase.nosignal': 'Chưa có tín hiệu',
-  'phase.holding': 'Đang giữ khung cuối',
-  'phase.slate': 'Màn chờ',
-  'phase.live': '',
-  'action.addCamera': 'Thêm camera',
-  'action.addOutput': 'Thêm đầu ra',
-  'action.cancel': 'Huỷ',
-  'action.stopAll': 'Dừng tất cả đầu ra',
-  'quit.title': 'Thoát BreadCamera?',
-  'quit.body': 'Mọi đầu ra (NDI, toàn màn hình) sẽ dừng ngay. Camera trên sóng sẽ mất hình.',
-  'engine.disconnected': 'Mất kết nối với engine. Đang thử kết nối lại…',
-  'engine.noParams': 'Thiếu thông tin kết nối engine. Hãy mở BreadCamera từ biểu tượng ứng dụng.',
-  'engine.warning': 'Cảnh báo',
-  'multiview.empty': 'Chưa có camera nào. Bấm “Thêm camera” để bắt đầu.',
-  'camera.outputs': 'Đầu ra',
-  'camera.noOutputs': 'Chưa có đầu ra',
-  'field.name': 'Tên',
-  'field.mode': 'Chế độ',
-  'mode.caller': 'Caller — BreadCamera gọi đến',
-  'mode.listener': 'Listener — chờ nguồn gọi đến',
-  'field.url': 'URL SRT (dán từ BreadCall)',
-  'field.host': 'Địa chỉ',
-  'field.port': 'Cổng',
-  'field.latency': 'Độ trễ SRT (ms)',
-  'field.passphrase': 'Mật khẩu SRT',
-  'field.streamId': 'Stream ID',
-  'field.kind': 'Loại đầu ra',
-  'field.ndiName': 'Tên nguồn NDI',
-  'field.monitor': 'Màn hình',
-  'output.ndi': 'NDI',
-  'output.fullscreen': 'Toàn màn hình',
-  'error.name': 'Tên dài 1 đến 80 ký tự',
-  'error.port': 'Cổng là số từ 1 đến 65535',
-  'error.passphrase': 'Mật khẩu để trống hoặc dài 10 đến 79 ký tự',
-  'error.host': 'Cần địa chỉ hoặc URL khi ở chế độ Caller',
-} as const;
-
-export type Key = keyof typeof vi;
-
-const en: Record<Key, string> = {
-  'signal.ready': 'Ready',
-  'signal.connecting': 'Connecting',
-  'signal.live': 'Live',
-  'signal.offline': 'Offline',
-  'phase.nosignal': 'No signal yet',
-  'phase.holding': 'Holding last frame',
-  'phase.slate': 'Slate',
-  'phase.live': '',
-  'action.addCamera': 'Add camera',
-  'action.addOutput': 'Add output',
-  'action.cancel': 'Cancel',
-  'action.stopAll': 'Stop all outputs',
-  'quit.title': 'Quit BreadCamera?',
-  'quit.body': 'Every output (NDI, fullscreen) stops now. Cameras on air will lose picture.',
-  'engine.disconnected': 'Lost connection to the engine. Reconnecting…',
-  'engine.noParams': 'Engine connection details are missing. Open BreadCamera from its app icon.',
-  'engine.warning': 'Warning',
-  'multiview.empty': 'No cameras yet. Click “Add camera” to start.',
-  'camera.outputs': 'Outputs',
-  'camera.noOutputs': 'No outputs yet',
-  'field.name': 'Name',
-  'field.mode': 'Mode',
-  'mode.caller': 'Caller — BreadCamera dials out',
-  'mode.listener': 'Listener — waits for the source',
-  'field.url': 'SRT URL (paste from BreadCall)',
-  'field.host': 'Host',
-  'field.port': 'Port',
-  'field.latency': 'SRT latency (ms)',
-  'field.passphrase': 'SRT passphrase',
-  'field.streamId': 'Stream ID',
-  'field.kind': 'Output type',
-  'field.ndiName': 'NDI source name',
-  'field.monitor': 'Monitor',
-  'output.ndi': 'NDI',
-  'output.fullscreen': 'Fullscreen',
-  'error.name': 'Name must be 1 to 80 characters',
-  'error.port': 'Port is a number from 1 to 65535',
-  'error.passphrase': 'Passphrase is empty or 10 to 79 characters',
-  'error.host': 'Caller mode needs a host or a URL',
+// Short codes on the strip; full names in tooltips (docs/design/multiview.md).
+const IN: Record<string, [string, string]> = {
+  srt: ['SRT', 'SRT input'],
+  ndi: ['NDI', 'NDI input'],
+  decklink: ['SDI', 'DeckLink input'],
+  aja: ['AJA', 'AJA input'],
+  uvc: ['USB', 'USB or built-in camera'],
 };
+const OUT: Record<string, [string, string]> = {
+  ndi: ['NDI', 'NDI output'],
+  fullscreen: ['FS', 'Fullscreen'],
+  srt: ['SRT', 'SRT output'],
+  omt: ['OMT', 'OMT output'],
+  vcam: ['VCAM', 'Virtual camera'],
+  decklink: ['SDI', 'SDI output'],
+  aja: ['SDI', 'AJA SDI output'],
+};
+export const inputCode = (k: string) => IN[k]?.[0] ?? k.toUpperCase();
+export const inputName = (k: string) => IN[k]?.[1] ?? `${k} input`;
+export const outputCode = (k: string) => OUT[k]?.[0] ?? k.toUpperCase();
+export const outputName = (k: string) => OUT[k]?.[1] ?? `${k} output`;
 
-// Vietnamese first (spec §6.4); English is selected by ?lang=en until M5 adds a setting.
-const lang = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lang') === 'en' ? 'en' : 'vi';
+const RATES: Record<string, string> = { '50/1': '50', '60000/1001': '59.94', '60/1': '60' };
+export const rateLabel = (r: string | undefined) => (r ? RATES[r] ?? r : '—');
+export const sizeLabel = (r: string | undefined) => (r ? r.replace('x', '×') : '—');
+export const signalLabel = { ready: 'Ready', connecting: 'Connecting', live: 'Live', offline: 'Offline' } as const;
+```
 
-export function t(key: Key): string {
-  return (lang === 'en' ? en : vi)[key];
+`ui/src/state/marks.ts`:
+```ts
+import type { CameraState } from '../api/protocol';
+
+// Per camera: when holding started (the strip's countdown) and when the last fault
+// recovered on its own (the strip's mark), worked out from successive states.
+export interface Marks {
+  holdingSince?: number;
+  recoveredAt?: number;
+  faulted: boolean;
+}
+
+export function nextMarks(prev: Marks | undefined, cam: CameraState | undefined, now: number): Marks {
+  const m: Marks = { ...(prev ?? { faulted: false }) };
+  if (cam?.phase === 'holding') m.holdingSince ??= now;
+  else m.holdingSince = undefined;
+  const faulty =
+    cam?.phase === 'holding' ||
+    cam?.phase === 'slate' ||
+    cam?.input?.health === 'degraded' ||
+    Object.values(cam?.outputs ?? {}).some((o) => !!o.error);
+  if (faulty) m.faulted = true;
+  else if (m.faulted) {
+    m.faulted = false;
+    m.recoveredAt = now;
+  }
+  return m;
+}
+
+const two = (n: number) => String(n).padStart(2, '0');
+
+export function holdLeft(m: Marks | undefined, holdMs: number, now: number): string | null {
+  if (m?.holdingSince === undefined) return null;
+  const s = Math.max(0, Math.ceil((holdMs - (now - m.holdingSince)) / 1000));
+  return `${two(Math.floor(s / 60))}:${two(s % 60)}`;
+}
+
+export function clock(t: number): string {
+  const d = new Date(t);
+  return `${two(d.getHours())}:${two(d.getMinutes())}`;
 }
 ```
 
-`ui/src/components/SignalChip.tsx`:
+`ui/src/bridge.ts`:
+```ts
+interface WebViewBridge {
+  postMessage(m: unknown): void;
+  addEventListener(type: 'message', fn: (e: { data: unknown }) => void): void;
+  removeEventListener(type: 'message', fn: (e: { data: unknown }) => void): void;
+}
+const bridge = (): WebViewBridge | undefined => (window as unknown as { chrome?: { webview?: WebViewBridge } }).chrome?.webview;
+
+// The page sends strings (the shell reads them with TryGetWebMessageAsString).
+export function postToShell(msg: Record<string, unknown>) {
+  bridge()?.postMessage(JSON.stringify(msg));
+}
+
+// The shell sends JSON (PostWebMessageAsJson), so e.data is already an object.
+export function onShellMessage(fn: (m: { type?: string; [k: string]: unknown }) => void): () => void {
+  const b = bridge();
+  if (!b) return () => {};
+  const h = (e: { data: unknown }) => fn((e.data ?? {}) as { type?: string });
+  b.addEventListener('message', h);
+  return () => b.removeEventListener('message', h);
+}
+```
+
+- [ ] **Step 5: Components**
+
+`ui/src/components/Icon.tsx`:
 ```tsx
-import { Chip } from '@mui/material';
+const PATHS = {
+  matte: '<path d="M8 8.2a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8Z"/><path d="M3.5 13.5c.6-2.3 2.3-3.6 4.5-3.6s3.9 1.3 4.5 3.6"/><path d="M1.5 4V2.5a1 1 0 0 1 1-1H4M12 1.5h1.5a1 1 0 0 1 1 1V4M14.5 12v1.5a1 1 0 0 1-1 1H12M4 14.5H2.5a1 1 0 0 1-1-1V12"/>',
+  bg: '<rect x="1.5" y="3" width="13" height="10" rx="1.5"/><circle cx="5.5" cy="6.5" r="1.2"/><path d="m14.5 10.5-3.5-3.5-6 6"/>',
+  color: '<circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v13"/><path d="M8 4.5h4.6M8 8h6.5M8 11.5h4.6"/>',
+  arrow: '<path d="M2.5 8h11M9.5 4l4 4-4 4"/>',
+  seen: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.8h2.8"/><path d="M8 5v3.2l2 1.3"/>',
+  chart: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M5.8 3v10M10.2 3v10M1.5 8h13"/>',
+  settings: '<path d="M2 4.5h7M12 4.5h2M2 11.5h2M7 11.5h7"/><circle cx="10.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
+  chev: '<path d="m6 4 4 4-4 4"/>',
+  warn: '<path d="M8 2 1.5 13.5h13L8 2Z"/><path d="M8 6.5v3M8 11.6v.1"/>',
+  err: '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.6M8 10.9v.1"/>',
+  retry: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v2.8h-2.8"/>',
+  check: '<path d="m3.5 8.5 3 3 6-7"/>',
+  cam: '<rect x="1.5" y="4" width="9.5" height="8" rx="1.5"/><path d="m11 7 3.5-2v6L11 9"/>',
+  power: '<path d="M8 1.5v6"/><path d="M4.4 4a5.5 5.5 0 1 0 7.2 0"/>',
+  trash: '<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/>',
+  min: '<path d="M3 8h10"/>',
+  max: '<rect x="3.5" y="3.5" width="9" height="9"/>',
+  restore: '<rect x="3.5" y="5.5" width="7" height="7"/><path d="M5.5 5.5v-2h7v7h-2"/>',
+  close: '<path d="m3.5 3.5 9 9M12.5 3.5l-9 9"/>',
+} as const;
+export type IconName = keyof typeof PATHS;
 
-import type { SignalState } from '../api/protocol';
-import { t } from '../i18n';
-
-const color = { ready: 'default', connecting: 'warning', live: 'error', offline: 'default' } as const;
-
-// UX-contract signal states. Live is the on-air red.
-export function SignalChip({ state }: { state: SignalState | undefined }) {
-  const s = state ?? 'ready';
-  return <Chip size="small" label={t(`signal.${s}`)} color={color[s]} variant={s === 'offline' ? 'outlined' : 'filled'} />;
+// One stroke weight for every icon (craft floor: no glyphs standing in for icons).
+export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+  return <svg className="i" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true" dangerouslySetInnerHTML={{ __html: PATHS[name] }} />;
 }
 ```
 
 `ui/src/components/ErrorBlock.tsx`:
 ```tsx
-import { Box, Typography } from '@mui/material';
+import { Icon } from './Icon';
 
 // Persistent block at the top of the affected panel; never a toast (spec §6.1).
-export function ErrorBlock({ title, message, severity = 'error' }: { title?: string; message: string; severity?: 'error' | 'warning' }) {
+export function ErrorBlock({ title, message, severity = 'danger', label }: { title?: string; message: string; severity?: 'danger' | 'warning' | 'info'; label?: string }) {
   return (
-    <Box
-      role={severity === 'error' ? 'alert' : 'status'}
-      sx={{ borderLeft: 4, borderColor: `${severity}.main`, bgcolor: 'background.paper', px: 1.5, py: 1, my: 1 }}
-    >
-      {title && (
-        <Typography variant="body2" fontWeight={600}>
-          {title}
-        </Typography>
-      )}
-      <Typography variant="body2">{message}</Typography>
-    </Box>
+    <div className={`block ${severity}`} role={severity === 'danger' ? 'alert' : 'status'} aria-label={label}>
+      <Icon name={severity === 'danger' ? 'err' : severity === 'warning' ? 'warn' : 'chart'} size={14} />
+      <div>
+        {title && <b>{title} </b>}
+        <span className="d">{message}</span>
+      </div>
+    </div>
   );
 }
 ```
 
-- [ ] **Step 5: Implement the preview canvas**
+`ui/src/components/Modal.tsx`:
+```tsx
+import { useEffect, type ReactNode } from 'react';
+
+import { Icon } from './Icon';
+
+// Native-style dialog: title bar with close, body, footer band. Escape closes.
+export function Modal({ title, onClose, footer, children, wide }: { title: string; onClose: () => void; footer: ReactNode; children: ReactNode; wide?: boolean }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="scrim">
+      <div className={`dlg${wide ? ' wide' : ''}`} role="dialog" aria-modal="true" aria-label={title}>
+        <div className="dlg-h">
+          {title}
+          <button className="x" aria-label="Close" onClick={onClose}>
+            <Icon name="close" size={12} />
+          </button>
+        </div>
+        <div className="dlg-b">{children}</div>
+        <div className="dlg-f">{footer}</div>
+      </div>
+    </div>
+  );
+}
+```
+
+`ui/src/components/Prop.tsx`:
+```tsx
+import { useId, type ReactNode } from 'react';
+
+// Label-left property row (spec §6.4). The render prop receives the id to label the control.
+export function Prop({ label, children, hint }: { label: string; children: (id: string) => ReactNode; hint?: string }) {
+  const id = useId();
+  return (
+    <div className="prop">
+      <label htmlFor={id}>{label}</label>
+      <div className="prop-c">
+        {children(id)}
+        {hint && <span className="hint">{hint}</span>}
+      </div>
+    </div>
+  );
+}
+```
+
+`ui/src/components/Menu.tsx`:
+```tsx
+import { useEffect, useRef, useState } from 'react';
+
+export interface MenuItem {
+  label: string;
+  shortcut?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+// A title-bar menu: click opens, click outside or Escape closes.
+export function Menu({ label, items }: { label: string; items: (MenuItem | 'sep')[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', close);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', close);
+    };
+  }, [open]);
+  return (
+    <div className="menu-root" ref={ref}>
+      <button className={`menu-btn${open ? ' open' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {label}
+      </button>
+      {open && (
+        <div className="menu" role="menu" aria-label={label}>
+          {items.map((it, i) =>
+            it === 'sep' ? (
+              <hr key={i} />
+            ) : (
+              <button
+                key={it.label}
+                role="menuitem"
+                className={`it${it.danger ? ' danger' : ''}`}
+                disabled={it.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  it.onSelect();
+                }}
+              >
+                <span>{it.label}</span>
+                <span className="k">{it.shortcut}</span>
+              </button>
+            ),
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+```
 
 `ui/src/preview/PreviewCanvas.tsx`:
 ```tsx
@@ -8647,113 +9368,624 @@ export function PreviewCanvas({ client, cameraId, size = 'small' }: { client: En
       if (decoder.state !== 'closed') decoder.close();
     };
   }, [client, cameraId, size]);
-  return <canvas ref={canvas} style={{ width: '100%', aspectRatio: '16 / 9', background: '#111', display: 'block' }} />;
+  return <canvas ref={canvas} aria-hidden="true" />;
 }
 ```
 
-- [ ] **Step 6: Implement the screens**
 
-`ui/src/screens/Multiview.tsx`:
+- [ ] **Step 6: Window shell — title bar, toolbar, status bar**
+
+`ui/src/shell/TitleBar.tsx`:
 ```tsx
-import { Box, Button, Card, CardContent, Stack, Typography } from '@mui/material';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import type { EngineClient } from '../api/client';
-import { useEngine } from '../api/useEngine';
-import { ErrorBlock } from '../components/ErrorBlock';
-import { SignalChip } from '../components/SignalChip';
-import { t } from '../i18n';
-import { PreviewCanvas } from '../preview/PreviewCanvas';
-import { AddCameraDialog } from './AddCameraDialog';
-import { AddOutputDialog } from './AddOutputDialog';
+import { onShellMessage, postToShell } from '../bridge';
+import { Icon } from '../components/Icon';
+import { Menu, type MenuItem } from '../components/Menu';
 
-export function Multiview({ client }: { client: EngineClient }) {
-  const { state, show } = useEngine(client);
-  const [adding, setAdding] = useState(false);
-  const [outputFor, setOutputFor] = useState<{ id: string; name: string } | null>(null);
-  const cameras = show?.cameras ?? [];
-  const ids = useMemo(() => cameras.map((c) => c.id), [cameras]);
-  useEffect(() => client.setPreviewSubscription(ids, 'small'), [client, ids]);
-  const warnings = Object.values(state.engine?.warnings ?? {}).filter((w) => w);
+export interface TitleMenus {
+  file: (MenuItem | 'sep')[];
+  camera: (MenuItem | 'sep')[];
+  view: (MenuItem | 'sep')[];
+  help: (MenuItem | 'sep')[];
+}
 
+// Custom title bar (spec §6.4): the shell removed the system caption; CSS app-region drags.
+export function TitleBar({ menus }: { menus: TitleMenus }) {
+  const [maximized, setMaximized] = useState(false);
+  useEffect(() => onShellMessage((m) => m.type === 'windowState' && setMaximized(!!m.maximized)), []);
+  const win = (action: string) => postToShell({ type: 'window', action });
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
-        <Typography variant="h4">Multiview</Typography>
-        <Button variant="contained" onClick={() => setAdding(true)}>
-          {t('action.addCamera')}
-        </Button>
-      </Stack>
-      {warnings.map((w) => (
-        <ErrorBlock key={w} severity="warning" title={t('engine.warning')} message={w} />
-      ))}
-      {cameras.length === 0 && <Typography color="text.secondary">{t('multiview.empty')}</Typography>}
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
-        {cameras.map((cam) => {
-          const cs = state.cameras?.[cam.id];
-          const phase = cs?.phase ?? 'nosignal';
-          return (
-            <Card key={cam.id} variant="outlined">
-              <PreviewCanvas client={client} cameraId={cam.id} />
-              <CardContent>
-                <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography variant="h6" sx={{ flex: 1 }}>
-                    {cam.name}
-                  </Typography>
-                  <SignalChip state={cs?.input?.state} />
-                </Stack>
-                {phase !== 'live' && (
-                  <Typography variant="body2" color="warning.main">
-                    {t(`phase.${phase}`)}
-                  </Typography>
-                )}
-                {cs?.input?.error && <ErrorBlock message={cs.input.error.message} />}
-                {cs?.tickError && <ErrorBlock message={cs.tickError} />}
-                <Typography variant="body2" sx={{ mt: 1 }} color="text.secondary">
-                  {t('camera.outputs')}
-                </Typography>
-                {cam.outputs.length === 0 && <Typography variant="body2">{t('camera.noOutputs')}</Typography>}
-                {cam.outputs.map((o) => {
-                  const os = cs?.outputs?.[o.id];
-                  return (
-                    <Box key={o.id}>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="body2" sx={{ flex: 1 }}>
-                          {o.kind === 'ndi' ? t('output.ndi') : o.kind === 'fullscreen' ? t('output.fullscreen') : o.kind}
-                        </Typography>
-                        <SignalChip state={os?.state} />
-                      </Stack>
-                      {os?.error && <ErrorBlock message={os.error.message} />}
-                    </Box>
-                  );
-                })}
-                <Button size="small" sx={{ mt: 1 }} onClick={() => setOutputFor({ id: cam.id, name: cam.name })}>
-                  {t('action.addOutput')}
-                </Button>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </Box>
-      <AddCameraDialog client={client} open={adding} onClose={() => setAdding(false)} />
-      {outputFor && <AddOutputDialog client={client} camera={outputFor} onClose={() => setOutputFor(null)} />}
-    </Box>
+    <header className="titlebar">
+      <span className="app-ic">
+        <Icon name="cam" />
+      </span>
+      <nav className="menus" aria-label="Menu bar">
+        <Menu label="File" items={menus.file} />
+        <Menu label="Camera" items={menus.camera} />
+        <Menu label="View" items={menus.view} />
+        <Menu label="Help" items={menus.help} />
+      </nav>
+      <div className="wintitle">BreadCamera</div>
+      <div className="caption">
+        <button aria-label="Minimise" onClick={() => win('minimize')}>
+          <Icon name="min" size={12} />
+        </button>
+        <button aria-label={maximized ? 'Restore' : 'Maximise'} onClick={() => win('maximize')}>
+          <Icon name={maximized ? 'restore' : 'max'} size={12} />
+        </button>
+        <button className="close" aria-label="Close to tray (outputs keep running)" onClick={() => win('close')}>
+          <Icon name="close" size={12} />
+        </button>
+      </div>
+    </header>
+  );
+}
+```
+(M5 adds the Show menu with Settings…; M2 adds Add effect… to the Camera menu.)
+
+`ui/src/shell/Toolbar.tsx`:
+```tsx
+import type { ReactNode } from 'react';
+
+import { Icon } from '../components/Icon';
+
+// Add camera is the only "add" here: outputs and effects belong to a camera (spec §6.4).
+export function Toolbar({ onAddCamera, onStopAll, extra }: { onAddCamera: () => void; onStopAll: () => void; extra?: ReactNode }) {
+  return (
+    <div className="toolbar" role="toolbar" aria-label="Toolbar">
+      <button className="tb accent" title="Add camera (Ctrl+Shift+N)" onClick={onAddCamera}>
+        <Icon name="plus" />
+        Add camera
+      </button>
+      <span className="tspace" />
+      {extra}
+      <span className="tsep" />
+      <button className="tb danger" onClick={onStopAll}>
+        <Icon name="power" />
+        Stop all outputs…
+      </button>
+    </div>
   );
 }
 ```
 
-Note the Multiview test expects exactly one `role="alert"` (camera b's input error); warnings use `role="status"`.
-
-`ui/src/screens/AddCameraDialog.tsx`:
+`ui/src/shell/StatusBar.tsx`:
 ```tsx
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField } from '@mui/material';
+import type { EngineSnapshot } from '../api/client';
+import { Icon } from '../components/Icon';
+import { rateLabel, sizeLabel } from '../state/labels';
+
+export function StatusBar({ snap }: { snap: EngineSnapshot }) {
+  const e = snap.state.engine ?? {};
+  const open = snap.status === 'open';
+  const outs = Object.values(snap.state.cameras ?? {}).flatMap((c) => Object.values(c.outputs ?? {}));
+  const live = open ? outs.filter((o) => o.state === 'live').length : 0;
+  const failing = open ? outs.filter((o) => o.error).length : 0;
+  return (
+    <footer className="status" aria-label="Status bar">
+      <span>
+        <i className={`dot${open ? '' : ' warn'}`} />
+        {open ? 'Engine running' : <span className="w">Engine restarting…</span>}
+      </span>
+      <span>
+        <b>{rateLabel(e.rate)}</b> fps · <b>{sizeLabel(e.resolution)}</b>
+      </span>
+      <span>GPU {e.gpu ?? '—'}</span>
+      <span className={e.overruns ? 'w' : ''}>
+        {e.overruns ? (
+          <>
+            <Icon name="warn" size={12} />
+            {e.overruns} tick overruns
+          </>
+        ) : (
+          'Ticks on time'
+        )}
+      </span>
+      <span className="r">
+        Outputs <b>{live} live</b>
+        {failing > 0 && <span className="e"> · {failing} retrying</span>}
+      </span>
+    </footer>
+  );
+}
+```
+
+- [ ] **Step 7: Multiview and the strip**
+
+`ui/src/multiview/Strip.tsx`:
+```tsx
+import type { CameraConfig, CameraState } from '../api/protocol';
+import { Icon } from '../components/Icon';
+import { inputCode, inputName, outputCode, outputName, signalLabel } from '../state/labels';
+import { clock, holdLeft, type Marks } from '../state/marks';
+
+// The one-row state strip (docs/design/multiview.md): input chip · CAM n · name · → · outputs · mark.
+export function Strip({ n, cfg, cam, marks, holdMs, now, dense, offline }: {
+  n: number;
+  cfg: CameraConfig;
+  cam: CameraState | undefined;
+  marks: Marks | undefined;
+  holdMs: number;
+  now: number;
+  dense: boolean;
+  offline: boolean;
+}) {
+  const health = offline ? 'offline' : cam?.input?.health ?? 'offline';
+  const left = holdLeft(marks, holdMs, now);
+  const slate = !offline && cam?.phase === 'slate';
+  const holding = !offline && left !== null;
+  const chipCls = slate || holding || health === 'down' ? 'err' : health === 'receiving' ? 'ready' : health === 'degraded' ? 'conn' : 'off';
+  const name = inputName(cfg.input.kind);
+  const chipTitle = slate
+    ? `${name}: down, showing the slate`
+    : holding
+      ? `${name}: down, holding the last frame (${left} left)`
+      : `${name}: ${health}`;
+  const max = dense ? 2 : 4;
+  const shown = cfg.outputs.slice(0, max);
+  const stripCls = slate || holding ? ' err' : '';
+  return (
+    <div className={`strip${stripCls}`}>
+      <span className={`in-chip ${chipCls}`} title={chipTitle}>
+        {slate ? 'SLATE' : holding ? left : inputCode(cfg.input.kind)}
+      </span>
+      {!dense && <span className="cam-no">CAM {n}</span>}
+      <span className="cam-name" title={cfg.name}>
+        {cfg.name}
+      </span>
+      <span className="flow">
+        <Icon name="arrow" size={12} />
+      </span>
+      <span className="outs">
+        {shown.map((o) => {
+          const os = cam?.outputs?.[o.id];
+          const st = offline ? 'offline' : os?.state ?? 'ready';
+          if (!offline && os?.error) {
+            return (
+              <span key={o.id} className="err-chip" title={`${outputName(o.kind)}: failed, ${os.error.message}`}>
+                <Icon name="retry" size={11} />
+                {outputCode(o.kind)}
+              </span>
+            );
+          }
+          return (
+            <span key={o.id} className={`pill ${st}`} title={`${outputName(o.kind)}: ${signalLabel[st]}`}>
+              <i />
+              {outputCode(o.kind)}
+            </span>
+          );
+        })}
+        {cfg.outputs.length > max && (
+          <span className="more" title={cfg.outputs.slice(max).map((o) => outputName(o.kind)).join(', ')}>
+            +{cfg.outputs.length - max}
+          </span>
+        )}
+      </span>
+      {!offline && marks?.recoveredAt !== undefined && (
+        <span className="seen" title="A fault recovered on its own. Select the camera to clear this mark.">
+          <Icon name="seen" size={11} />
+          {clock(marks.recoveredAt)}
+        </span>
+      )}
+    </div>
+  );
+}
+```
+M2 adds the effect icons between the name and the arrow.
+
+`ui/src/multiview/Multiview.tsx`:
+```tsx
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+
+import type { EngineClient } from '../api/client';
+import type { CameraConfig, StateTree } from '../api/protocol';
+import { ErrorBlock } from '../components/ErrorBlock';
+import { Icon } from '../components/Icon';
+import { PreviewCanvas } from '../preview/PreviewCanvas';
+import type { Marks } from '../state/marks';
+import { Strip } from './Strip';
+
+export type Layout = 'auto' | '2x2' | '3x2' | '4x2';
+const AUTO: Record<number, [number, number]> = { 1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [3, 2], 6: [3, 2], 7: [4, 2], 8: [4, 2] };
+export function gridOf(layout: Layout, n: number): [number, number] {
+  if (layout === 'auto') return AUTO[Math.min(Math.max(n, 1), 8)];
+  const [c, r] = layout.split('x').map(Number);
+  return [c, r];
+}
+
+const STRIP = 29;
+const GAP = 3;
+
+// Tiles keep 16:9 and the whole wall fits the area (docs/design/multiview.md §6).
+export function Multiview({ client, cameras, state, marks, holdMs, now, selected, onSelect, layout, onLayout, offline }: {
+  client: EngineClient;
+  cameras: CameraConfig[];
+  state: StateTree;
+  marks: Record<string, Marks>;
+  holdMs: number;
+  now: number;
+  selected: string | null;
+  onSelect: (id: string) => void;
+  layout: Layout;
+  onLayout: (l: Layout) => void;
+  offline: boolean;
+}) {
+  const area = useRef<HTMLDivElement>(null);
+  const [tileW, setTileW] = useState(320);
+  const [cols, rows] = gridOf(layout, cameras.length);
+  const ids = useMemo(() => cameras.map((c) => c.id), [cameras]);
+
+  useEffect(() => {
+    // Only stream previews while the window is visible (spec §6.3).
+    const sync = () => client.setPreviewSubscription(document.visibilityState === 'hidden' ? [] : ids, 'small');
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, [client, ids]);
+
+  useLayoutEffect(() => {
+    const el = area.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const fit = () => {
+      const W = el.clientWidth - 8;
+      const H = el.clientHeight - 8;
+      setTileW(Math.max(160, Math.floor(Math.min((W - GAP * (cols - 1)) / cols, ((H - GAP * (rows - 1)) / rows - STRIP) * (16 / 9)))));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [cols, rows]);
+
+  function onKey(e: KeyboardEvent) {
+    const i = Math.max(0, ids.indexOf(selected ?? ''));
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols }[e.key];
+    if (step === undefined || ids.length === 0) return;
+    e.preventDefault();
+    onSelect(ids[Math.min(ids.length - 1, Math.max(0, i + step))]);
+  }
+
+  const warnings = Object.values(state.engine?.warnings ?? {}).filter((w) => w);
+  return (
+    <section className="center" aria-label="Multiview area">
+      <div className="subbar">
+        <b>Multiview</b>
+        <span>{cameras.length} cameras</span>
+        <span className="right">
+          Layout
+          <span className="seg" role="radiogroup" aria-label="Layout">
+            {(['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => (
+              <button key={l} role="radio" aria-checked={layout === l} className={layout === l ? 'on' : ''} onClick={() => onLayout(l)}>
+                {l === 'auto' ? 'Auto' : l.replace('x', '×')}
+              </button>
+            ))}
+          </span>
+        </span>
+      </div>
+      <div className="wall-wrap">
+        {offline && (
+          <ErrorBlock
+            severity="warning"
+            label="Engine restarting"
+            title="Engine restarting."
+            message="The connection to the engine dropped; the shell restarts it with this show. Outputs come back in about 3 seconds. The pictures are the last frames received."
+          />
+        )}
+        {warnings.map((w) => (
+          <ErrorBlock key={w} severity="warning" title="Warning." message={w} />
+        ))}
+        {cameras.length === 0 ? (
+          <div className="empty">
+            <div>
+              <div className="frame">
+                <Icon name="cam" />
+              </div>
+              <span className="h">No cameras yet</span>
+              <span>Use Add camera in the toolbar (Ctrl+Shift+N). Each camera can send to several outputs.</span>
+            </div>
+          </div>
+        ) : (
+          <div className="wall-area" ref={area}>
+            <div className="wall" role="listbox" aria-label="Multiview" tabIndex={0} onKeyDown={onKey} style={{ gridTemplateColumns: `repeat(${cols}, ${tileW}px)` }}>
+              {cameras.map((cfg, i) => (
+                <div
+                  key={cfg.id}
+                  role="option"
+                  aria-selected={selected === cfg.id}
+                  aria-label={`CAM ${i + 1} ${cfg.name}`}
+                  className={`tile${selected === cfg.id ? ' sel' : ''}`}
+                  onClick={() => onSelect(cfg.id)}
+                >
+                  <div className="pic">
+                    <PreviewCanvas client={client} cameraId={cfg.id} />
+                  </div>
+                  <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+```
+
+- [ ] **Step 8: Inspector and dialogs**
+
+`ui/src/inspector/Inspector.tsx`:
+```tsx
+import { useEffect, useState, type ReactNode } from 'react';
+
+import type { EngineClient, EngineSnapshot } from '../api/client';
+import type { CameraConfig } from '../api/protocol';
+import { ErrorBlock } from '../components/ErrorBlock';
+import { Icon } from '../components/Icon';
+import { Prop } from '../components/Prop';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { inputCode, outputCode, outputName, signalLabel } from '../state/labels';
+
+function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+  return (
+    <details className="sec" open>
+      <summary>
+        <span className="chev">
+          <Icon name="chev" size={12} />
+        </span>
+        {title}
+        <span className="right" onClick={(e) => e.preventDefault()}>
+          {right}
+        </span>
+      </summary>
+      <div className="sec-b">{children}</div>
+    </details>
+  );
+}
+
+function formatLabel(o: CameraConfig['outputs'][number]) {
+  const f = o.format;
+  const size = f && f.width ? `${f.width}×${f.height}` : 'same as show';
+  return `${o.keyed ? 'Keyed' : 'Composited'} · ${size}${f?.halfRate ? ' · half rate' : ''}`;
+}
+
+// The selected camera: Input, (M2: Effects via children), Outputs (spec §6.4).
+export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, children }: {
+  client: EngineClient;
+  snap: EngineSnapshot;
+  cam: CameraConfig | undefined;
+  n: number;
+  onAddOutput: () => void;
+  onRemoved: () => void;
+  children?: ReactNode;
+}) {
+  const [confirm, setConfirm] = useState<null | { kind: 'camera' } | { kind: 'output'; id: string }>(null);
+  const p = cam?.input.params ?? {};
+  const [draft, setDraft] = useState({ mode: '', url: '', host: '', port: '', latency: '', passphrase: '' });
+  const [error, setError] = useState('');
+  useEffect(() => {
+    setDraft({
+      mode: String(p.mode ?? 'caller'),
+      url: String(p.url ?? ''),
+      host: String(p.host ?? ''),
+      port: p.port === undefined ? '' : String(p.port),
+      latency: String(p.latencyMs ?? 120),
+      passphrase: '',
+    });
+    setError('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cam?.id, JSON.stringify(p)]);
+
+  if (!cam) {
+    return (
+      <aside className="insp" aria-label="Inspector">
+        <div className="insp-h">
+          <span className="k">INSPECTOR</span>
+          <div className="t dim">No camera selected</div>
+        </div>
+        <p className="note pad">Select a camera in Multiview to edit its input and outputs.</p>
+      </aside>
+    );
+  }
+  const cs = snap.state.cameras?.[cam.id];
+  const stats = snap.stats?.cameras?.[cam.id];
+  const health = cs?.input?.health ?? 'offline';
+  const dirty =
+    draft.mode !== String(p.mode ?? 'caller') ||
+    draft.url !== String(p.url ?? '') ||
+    draft.host !== String(p.host ?? '') ||
+    draft.port !== (p.port === undefined ? '' : String(p.port)) ||
+    draft.latency !== String(p.latencyMs ?? 120) ||
+    draft.passphrase !== '';
+
+  async function apply() {
+    const params: Record<string, unknown> = { mode: draft.mode, latencyMs: Number(draft.latency) || 120 };
+    if (draft.url) params.url = draft.url;
+    else {
+      params.port = Number(draft.port);
+      if (draft.host) params.host = draft.host;
+    }
+    params.passphrase = draft.passphrase ? draft.passphrase : { set: (p.passphrase as { set?: boolean })?.set ?? false };
+    if (p.streamId) params.streamId = p.streamId;
+    try {
+      await client.request('updateCamera', { id: cam!.id, input: { kind: cam!.input.kind, params } });
+      setError('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <aside className="insp" aria-label="Inspector">
+      <div className="insp-h">
+        <span className="k">INSPECTOR · CAM {n}</span>
+        <div className="t">
+          <span className={`in-chip ${health === 'receiving' ? 'ready' : health === 'degraded' ? 'conn' : health === 'down' ? 'err' : 'off'}`}>{inputCode(cam.input.kind)}</span>
+          <span className="n">{cam.name}</span>
+        </div>
+      </div>
+      <div className="insp-b">
+        <Section title="Input" right={<span className="ro">{health}</span>}>
+          {cs?.input?.error && <ErrorBlock title="Input failed." message={cs.input.error.message} />}
+          {cs?.tickError && <ErrorBlock title="Processing failed." message={cs.tickError} />}
+          {error && <ErrorBlock message={error} />}
+          <Prop label="Mode">
+            {(id) => (
+              <select id={id} className="ctl" value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
+                <option value="caller">Caller (BreadCamera dials out)</option>
+                <option value="listener">Listener (waits for the source)</option>
+              </select>
+            )}
+          </Prop>
+          {draft.mode === 'caller' && (
+            <Prop label="URL">{(id) => <input id={id} className="ctl mono" value={draft.url} placeholder="srt://host:port" onChange={(e) => setDraft({ ...draft, url: e.target.value })} />}</Prop>
+          )}
+          {!draft.url && (
+            <>
+              {draft.mode === 'caller' && <Prop label="Host">{(id) => <input id={id} className="ctl mono" value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />}</Prop>}
+              <Prop label="Port">{(id) => <input id={id} className="ctl mono" inputMode="numeric" value={draft.port} onChange={(e) => setDraft({ ...draft, port: e.target.value })} />}</Prop>
+            </>
+          )}
+          <Prop label="Latency (ms)">{(id) => <input id={id} className="ctl mono" type="number" min={20} max={8000} value={draft.latency} onChange={(e) => setDraft({ ...draft, latency: e.target.value })} />}</Prop>
+          <Prop label="Passphrase" hint={(p.passphrase as { set?: boolean })?.set ? 'Set. Type a new one to replace it.' : 'Optional, stored encrypted.'}>
+            {(id) => <input id={id} className="ctl" type="password" value={draft.passphrase} onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} />}
+          </Prop>
+          {stats && (
+            <Prop label="Receiving">
+              {() => (
+                <span className="ro">
+                  {stats.fps.toFixed(0)} fps · {stats.drops} dropped · {stats.latencyMs.toFixed(0)} ms
+                </span>
+              )}
+            </Prop>
+          )}
+          <div className="row-end">
+            <button className="btn" disabled={!dirty} onClick={apply}>
+              Apply input changes
+            </button>
+          </div>
+        </Section>
+        {children}
+        <Section
+          title="Outputs"
+          right={
+            <button className="tb sm" onClick={onAddOutput}>
+              <Icon name="plus" size={12} />
+              Add output
+            </button>
+          }
+        >
+          {cam.outputs.map((o) => cs?.outputs?.[o.id]?.error && <ErrorBlock key={`e-${o.id}`} title={`${outputName(o.kind)} failed.`} message={cs!.outputs![o.id].error!.message} />)}
+          {cam.outputs.length === 0 && <p className="note">No outputs yet. Add one to send this camera on.</p>}
+          {cam.outputs.map((o) => {
+            const os = cs?.outputs?.[o.id];
+            const st = os?.state ?? 'ready';
+            const dest = o.kind === 'ndi' ? String(o.params.name ?? `BreadCamera - ${cam.name}`) : o.kind === 'fullscreen' ? `Monitor ${Number(o.params.monitor ?? 0) + 1}` : outputName(o.kind);
+            return (
+              <div className="orow" key={o.id}>
+                {os?.error ? (
+                  <span className="err-chip">
+                    <Icon name="retry" size={11} />
+                    {outputCode(o.kind)}
+                  </span>
+                ) : (
+                  <span className={`pill ${st}`} aria-label={`${outputName(o.kind)}: ${signalLabel[st]}`}>
+                    <i />
+                    {outputCode(o.kind)}
+                  </span>
+                )}
+                <div className="o-main">
+                  <div className="n">{dest}</div>
+                  <div className="m">{formatLabel(o)}</div>
+                </div>
+                <label className="sw-wrap" title={o.enabled ? 'Sending. Switch off to stop this output.' : 'Stopped. Switch on to send.'}>
+                  <input type="checkbox" role="switch" aria-label={`${outputName(o.kind)} on`} checked={o.enabled} onChange={(e) => client.request('updateOutput', { cameraId: cam.id, id: o.id, enabled: e.target.checked }).catch(() => {})} />
+                  <span className="sw" />
+                </label>
+                <button className="ibtn" aria-label={`Remove ${outputName(o.kind)}`} onClick={() => setConfirm({ kind: 'output', id: o.id })}>
+                  <Icon name="trash" size={14} />
+                </button>
+              </div>
+            );
+          })}
+        </Section>
+        <div className="pad">
+          <button className="btn ghost-danger" onClick={() => setConfirm({ kind: 'camera' })}>
+            <Icon name="trash" size={14} />
+            Remove camera…
+          </button>
+        </div>
+      </div>
+      {confirm?.kind === 'camera' && (
+        <ConfirmDialog
+          title="Remove camera?"
+          body={`CAM ${n} "${cam.name}" and all its outputs stop now. Their receivers lose picture.`}
+          confirm="Remove camera"
+          onCancel={() => setConfirm(null)}
+          onConfirm={async () => {
+            await client.request('removeCamera', { id: cam.id }).catch(() => {});
+            setConfirm(null);
+            onRemoved();
+          }}
+        />
+      )}
+      {confirm?.kind === 'output' && (
+        <ConfirmDialog
+          title="Remove output?"
+          body="Its receiver loses picture now."
+          confirm="Remove output"
+          onCancel={() => setConfirm(null)}
+          onConfirm={async () => {
+            await client.request('removeOutput', { cameraId: cam.id, id: confirm.id }).catch(() => {});
+            setConfirm(null);
+          }}
+        />
+      )}
+    </aside>
+  );
+}
+```
+
+`ui/src/dialogs/ConfirmDialog.tsx`:
+```tsx
+import { Modal } from '../components/Modal';
+
+// Destructive actions never run at once: title states the consequence, the button names the verb (UX contract §8.4).
+export function ConfirmDialog({ title, body, confirm, onConfirm, onCancel, danger = true }: { title: string; body: string; confirm: string; onConfirm: () => void; onCancel: () => void; danger?: boolean }) {
+  return (
+    <Modal
+      title={title}
+      onClose={onCancel}
+      footer={
+        <>
+          <button className="btn" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className={`btn ${danger ? 'danger' : 'primary'}`} onClick={onConfirm}>
+            {confirm}
+          </button>
+        </>
+      }
+    >
+      <p>{body}</p>
+    </Modal>
+  );
+}
+```
+
+`ui/src/dialogs/AddCameraDialog.tsx`:
+```tsx
 import { useState } from 'react';
 
-import { EngineError, type EngineClient } from '../api/client';
+import type { EngineClient } from '../api/client';
 import { ErrorBlock } from '../components/ErrorBlock';
-import { t } from '../i18n';
+import { Icon } from '../components/Icon';
+import { Modal } from '../components/Modal';
+import { Prop } from '../components/Prop';
 
-export function AddCameraDialog({ client, open, onClose }: { client: EngineClient; open: boolean; onClose: () => void }) {
+const chars = (s: string) => [...s].length;
+
+export function AddCameraDialog({ client, onClose }: { client: EngineClient; onClose: () => void }) {
   const [name, setName] = useState('');
   const [mode, setMode] = useState<'caller' | 'listener'>('caller');
   const [url, setUrl] = useState('');
@@ -8766,10 +9998,10 @@ export function AddCameraDialog({ client, open, onClose }: { client: EngineClien
 
   const portNum = Number(port);
   const errors = {
-    name: name.trim().length < 1 || name.length > 80 ? t('error.name') : '',
-    port: !url && (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) ? t('error.port') : '',
-    passphrase: passphrase && (passphrase.length < 10 || passphrase.length > 79) ? t('error.passphrase') : '',
-    host: mode === 'caller' && !url && !host ? t('error.host') : '',
+    name: chars(name.trim()) < 1 || chars(name) > 80 ? 'Name must be 1 to 80 characters' : '',
+    port: !url && (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) ? 'Port is a number from 1 to 65535' : '',
+    passphrase: passphrase && (passphrase.length < 10 || passphrase.length > 79) ? 'Passphrase is empty or 10 to 79 characters' : '',
+    host: mode === 'caller' && !url && !host ? 'Caller mode needs a host or a URL' : '',
   };
   const valid = Object.values(errors).every((e) => !e);
 
@@ -8784,55 +10016,71 @@ export function AddCameraDialog({ client, open, onClose }: { client: EngineClien
     if (streamId) params.streamId = streamId;
     try {
       await client.request('addCamera', { name: name.trim(), input: { kind: 'srt', params } });
-      setServerError('');
       onClose();
     } catch (e) {
-      setServerError(e instanceof EngineError || e instanceof Error ? e.message : String(e));
+      setServerError(e instanceof Error ? e.message : String(e));
     }
   }
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>{t('action.addCamera')}</DialogTitle>
-      <DialogContent>
-        {serverError && <ErrorBlock message={serverError} />}
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField label={t('field.name')} value={name} onChange={(e) => setName(e.target.value)} error={!!name && !!errors.name} helperText={name ? errors.name : ''} />
-          <TextField select label={t('field.mode')} value={mode} onChange={(e) => setMode(e.target.value as 'caller' | 'listener')}>
-            <MenuItem value="caller">{t('mode.caller')}</MenuItem>
-            <MenuItem value="listener">{t('mode.listener')}</MenuItem>
-          </TextField>
-          {mode === 'caller' && <TextField label={t('field.url')} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="srt://…" />}
-          {!url && (
-            <Stack direction="row" spacing={2}>
-              <TextField label={t('field.host')} value={host} onChange={(e) => setHost(e.target.value)} error={!!errors.host} helperText={errors.host} sx={{ flex: 2 }} />
-              <TextField label={t('field.port')} value={port} onChange={(e) => setPort(e.target.value)} error={!!errors.port} helperText={errors.port} sx={{ flex: 1 }} />
-            </Stack>
-          )}
-          <TextField label={t('field.latency')} value={latency} onChange={(e) => setLatency(e.target.value)} />
-          <TextField label={t('field.passphrase')} type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} error={!!errors.passphrase} helperText={errors.passphrase} />
-          <TextField label={t('field.streamId')} value={streamId} onChange={(e) => setStreamId(e.target.value)} />
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{t('action.cancel')}</Button>
-        <Button variant="contained" disabled={!valid} onClick={submit}>
-          {t('action.addCamera')}
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <Modal
+      title="Add camera"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!valid} onClick={submit}>
+            <Icon name="plus" size={14} />
+            Add camera
+          </button>
+        </>
+      }
+    >
+      {serverError && <ErrorBlock message={serverError} />}
+      <Prop label="Name" hint={name && errors.name ? errors.name : 'Any language works.'}>
+        {(id) => <input id={id} className="ctl" autoFocus value={name} onChange={(e) => setName(e.target.value)} aria-invalid={!!name && !!errors.name} />}
+      </Prop>
+      <Prop label="Input type">
+        {(id) => (
+          <select id={id} className="ctl" value="srt" disabled>
+            <option value="srt">SRT (BreadCall feeds, encoders)</option>
+          </select>
+        )}
+      </Prop>
+      <Prop label="Mode">
+        {(id) => (
+          <select id={id} className="ctl" value={mode} onChange={(e) => setMode(e.target.value as 'caller' | 'listener')}>
+            <option value="caller">Caller (BreadCamera dials out)</option>
+            <option value="listener">Listener (waits for the source)</option>
+          </select>
+        )}
+      </Prop>
+      {mode === 'caller' && <Prop label="URL" hint="Paste the feed URL from BreadCall.">{(id) => <input id={id} className="ctl mono" value={url} placeholder="srt://host:port" onChange={(e) => setUrl(e.target.value)} />}</Prop>}
+      {!url && (
+        <>
+          {mode === 'caller' && <Prop label="Host" hint={errors.host}>{(id) => <input id={id} className="ctl mono" value={host} onChange={(e) => setHost(e.target.value)} />}</Prop>}
+          <Prop label="Port" hint={errors.port}>{(id) => <input id={id} className="ctl mono" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />}</Prop>
+        </>
+      )}
+      <Prop label="Latency (ms)">{(id) => <input id={id} className="ctl mono" type="number" value={latency} onChange={(e) => setLatency(e.target.value)} />}</Prop>
+      <Prop label="Passphrase" hint={errors.passphrase || 'Optional, stored encrypted.'}>{(id) => <input id={id} className="ctl" type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />}</Prop>
+      <Prop label="Stream ID">{(id) => <input id={id} className="ctl mono" value={streamId} onChange={(e) => setStreamId(e.target.value)} />}</Prop>
+    </Modal>
   );
 }
 ```
 
-`ui/src/screens/AddOutputDialog.tsx`:
+`ui/src/dialogs/AddOutputDialog.tsx`:
 ```tsx
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Stack, TextField } from '@mui/material';
 import { useEffect, useState } from 'react';
 
 import type { EngineClient } from '../api/client';
 import { ErrorBlock } from '../components/ErrorBlock';
-import { t } from '../i18n';
+import { Icon } from '../components/Icon';
+import { Modal } from '../components/Modal';
+import { Prop } from '../components/Prop';
 
 interface Monitor {
   index: number;
@@ -8842,11 +10090,16 @@ interface Monitor {
   primary: boolean;
 }
 
-export function AddOutputDialog({ client, camera, onClose }: { client: EngineClient; camera: { id: string; name: string }; onClose: () => void }) {
+const SIZES: Record<string, [number, number]> = { same: [0, 0], '1280x720': [1280, 720], '960x540': [960, 540] };
+
+// Output format per spec §4.3: same as show or smaller; same rate or half. M4 adds kinds.
+export function AddOutputDialog({ client, camera, n, onClose }: { client: EngineClient; camera: { id: string; name: string }; n: number; onClose: () => void }) {
   const [kind, setKind] = useState<'ndi' | 'fullscreen'>('ndi');
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [monitor, setMonitor] = useState(0);
+  const [size, setSize] = useState('same');
+  const [rate, setRate] = useState<'same' | 'half'>('same');
   const [serverError, setServerError] = useState('');
 
   useEffect(() => {
@@ -8855,8 +10108,9 @@ export function AddOutputDialog({ client, camera, onClose }: { client: EngineCli
 
   async function submit() {
     const params = kind === 'ndi' ? { name: ndiName } : { monitor };
+    const [width, height] = kind === 'fullscreen' ? [0, 0] : SIZES[size];
     try {
-      await client.request('addOutput', { cameraId: camera.id, output: { kind, params } });
+      await client.request('addOutput', { cameraId: camera.id, output: { kind, params, format: { width, height, halfRate: rate === 'half' } } });
       onClose();
     } catch (e) {
       setServerError(e instanceof Error ? e.message : String(e));
@@ -8864,92 +10118,112 @@ export function AddOutputDialog({ client, camera, onClose }: { client: EngineCli
   }
 
   return (
-    <Dialog open onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{t('action.addOutput')}</DialogTitle>
-      <DialogContent>
-        {serverError && <ErrorBlock message={serverError} />}
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          <TextField select label={t('field.kind')} value={kind} onChange={(e) => setKind(e.target.value as 'ndi' | 'fullscreen')}>
-            <MenuItem value="ndi">{t('output.ndi')}</MenuItem>
-            <MenuItem value="fullscreen">{t('output.fullscreen')}</MenuItem>
-          </TextField>
-          {kind === 'ndi' && <TextField label={t('field.ndiName')} value={ndiName} onChange={(e) => setNdiName(e.target.value)} />}
-          {kind === 'fullscreen' && (
-            <TextField select label={t('field.monitor')} value={monitor} onChange={(e) => setMonitor(Number(e.target.value))}>
+    <Modal
+      title={`Add output to CAM ${n}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={kind === 'ndi' && !ndiName.trim()} onClick={submit}>
+            <Icon name="plus" size={14} />
+            Add output
+          </button>
+        </>
+      }
+    >
+      {serverError && <ErrorBlock message={serverError} />}
+      <Prop label="Output type">
+        {(id) => (
+          <select id={id} className="ctl" value={kind} onChange={(e) => setKind(e.target.value as 'ndi' | 'fullscreen')}>
+            <option value="ndi">NDI</option>
+            <option value="fullscreen">Fullscreen on a monitor</option>
+          </select>
+        )}
+      </Prop>
+      {kind === 'ndi' && <Prop label="NDI source name">{(id) => <input id={id} className="ctl" value={ndiName} onChange={(e) => setNdiName(e.target.value)} />}</Prop>}
+      {kind === 'fullscreen' && (
+        <Prop label="Monitor">
+          {(id) => (
+            <select id={id} className="ctl" value={monitor} onChange={(e) => setMonitor(Number(e.target.value))}>
               {monitors.map((m) => (
-                <MenuItem key={m.index} value={m.index}>
+                <option key={m.index} value={m.index}>
                   {m.index + 1}. {m.name} ({m.width}×{m.height})
-                </MenuItem>
+                </option>
               ))}
-            </TextField>
+            </select>
           )}
-        </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>{t('action.cancel')}</Button>
-        <Button variant="contained" disabled={kind === 'ndi' && !ndiName.trim()} onClick={submit}>
-          {t('action.addOutput')}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        </Prop>
+      )}
+      {kind !== 'fullscreen' && (
+        <Prop label="Resolution">
+          {(id) => (
+            <select id={id} className="ctl" value={size} onChange={(e) => setSize(e.target.value)}>
+              <option value="same">Same as show</option>
+              <option value="1280x720">1280×720</option>
+              <option value="960x540">960×540</option>
+            </select>
+          )}
+        </Prop>
+      )}
+      <Prop label="Frame rate" hint="Half sends every second frame. Other rates are not offered because converting them judders.">
+        {(id) => (
+          <select id={id} className="ctl" value={rate} onChange={(e) => setRate(e.target.value as 'same' | 'half')}>
+            <option value="same">Same as show</option>
+            <option value="half">Half rate</option>
+          </select>
+        )}
+      </Prop>
+    </Modal>
   );
 }
 ```
 
-`ui/src/screens/QuitDialog.tsx`:
+`ui/src/dialogs/QuitDialog.tsx`:
 ```tsx
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material';
 import { useEffect, useState } from 'react';
 
-import { t } from '../i18n';
+import { onShellMessage, postToShell } from '../bridge';
+import { ConfirmDialog } from './ConfirmDialog';
 
-interface WebViewBridge {
-  postMessage(m: unknown): void;
-  addEventListener(type: 'message', fn: (e: { data: unknown }) => void): void;
-  removeEventListener(type: 'message', fn: (e: { data: unknown }) => void): void;
-}
-const bridge = (): WebViewBridge | undefined => (window as unknown as { chrome?: { webview?: WebViewBridge } }).chrome?.webview;
-
-// The shell asks; the operator confirms with a verb button (spec §2, UX contract).
+// The tray's Quit… asks the page; the operator confirms with a verb (spec §2).
 export function QuitDialog() {
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const b = bridge();
-    if (!b) return;
-    const fn = (e: { data: unknown }) => {
-      if ((e.data as { type?: string })?.type === 'confirmQuit') setOpen(true);
-    };
-    b.addEventListener('message', fn);
-    return () => b.removeEventListener('message', fn);
-  }, []);
+  useEffect(() => onShellMessage((m) => m.type === 'confirmQuit' && setOpen(true)), []);
+  if (!open) return null;
   return (
-    <Dialog open={open} onClose={() => setOpen(false)}>
-      <DialogTitle>{t('quit.title')}</DialogTitle>
-      <DialogContent>
-        <Typography>{t('quit.body')}</Typography>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={() => setOpen(false)}>{t('action.cancel')}</Button>
-        <Button color="error" variant="contained" onClick={() => bridge()?.postMessage(JSON.stringify({ type: 'quitConfirmed' }))}>
-          {t('action.stopAll')}
-        </Button>
-      </DialogActions>
-    </Dialog>
+    <ConfirmDialog
+      title="Quit BreadCamera?"
+      body="Every output stops now and cameras on air lose picture. The engine shuts down."
+      confirm="Quit and stop all outputs"
+      onCancel={() => setOpen(false)}
+      onConfirm={() => postToShell({ type: 'quitConfirmed' })}
+    />
   );
 }
 ```
+
+- [ ] **Step 9: The workspace, the app and the styles**
 
 `ui/src/App.tsx`:
 ```tsx
-import { Box, Stack, Typography } from '@mui/material';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { EngineClient } from './api/client';
 import { useEngine } from './api/useEngine';
 import { ErrorBlock } from './components/ErrorBlock';
-import { t } from './i18n';
-import { Multiview } from './screens/Multiview';
-import { QuitDialog } from './screens/QuitDialog';
+import { AddCameraDialog } from './dialogs/AddCameraDialog';
+import { AddOutputDialog } from './dialogs/AddOutputDialog';
+import { ConfirmDialog } from './dialogs/ConfirmDialog';
+import { QuitDialog } from './dialogs/QuitDialog';
+import { Inspector } from './inspector/Inspector';
+import { Multiview, type Layout } from './multiview/Multiview';
+import { StatusBar } from './shell/StatusBar';
+import { TitleBar } from './shell/TitleBar';
+import { Toolbar } from './shell/Toolbar';
+import { postToShell } from './bridge';
+import { nextMarks, type Marks } from './state/marks';
 
 function engineUrl(): string | null {
   const p = new URLSearchParams(location.hash.slice(1));
@@ -8958,45 +10232,125 @@ function engineUrl(): string | null {
   return port && token ? `ws://127.0.0.1:${port}/?token=${encodeURIComponent(token)}` : null;
 }
 
+// Everything below the engine connection; tests render this with a fake client.
+export function Workspace({ client }: { client: EngineClient }) {
+  const snap = useEngine(client);
+  const cameras = snap.show?.cameras ?? [];
+  const offline = snap.status !== 'open';
+  const [selected, setSelected] = useState<string | null>(null);
+  const [layout, setLayout] = useState<Layout>('auto');
+  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'stopAll'>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const marks = useRef<Record<string, Marks>>({});
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (selected && cameras.some((c) => c.id === selected)) return;
+    setSelected(cameras[0]?.id ?? null);
+  }, [cameras, selected]);
+  useEffect(() => {
+    const t = Date.now();
+    for (const c of cameras) marks.current[c.id] = nextMarks(marks.current[c.id], snap.state.cameras?.[c.id], t);
+  }, [snap.state, cameras]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setDialog('addCamera');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  function select(id: string) {
+    setSelected(id);
+    if (marks.current[id]) marks.current[id] = { ...marks.current[id], recoveredAt: undefined };
+  }
+
+  const index = cameras.findIndex((c) => c.id === selected);
+  const cam = index >= 0 ? cameras[index] : undefined;
+  const holdMs = snap.show?.settings?.holdMs ?? 5000;
+  const menus = useMemo(
+    () => ({
+      file: [{ label: 'Quit…', onSelect: () => postToShell({ type: 'window', action: 'close' }) }],
+      camera: [
+        { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
+        { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
+      ],
+      view: (['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => ({ label: `Layout ${l === 'auto' ? 'Auto' : l.replace('x', '×')}`, onSelect: () => setLayout(l) })),
+      help: [{ label: 'BreadCamera 0.1', disabled: true, onSelect: () => {} }],
+    }),
+    [cam],
+  );
+
+  return (
+    <div className="win">
+      <TitleBar menus={menus} />
+      <Toolbar onAddCamera={() => setDialog('addCamera')} onStopAll={() => setDialog('stopAll')} />
+      <div className="body">
+        <Multiview
+          client={client}
+          cameras={cameras}
+          state={snap.state}
+          marks={marks.current}
+          holdMs={holdMs}
+          now={now}
+          selected={selected}
+          onSelect={select}
+          layout={layout}
+          onLayout={setLayout}
+          offline={offline}
+        />
+        <div className="splitter" />
+        <Inspector client={client} snap={snap} cam={cam} n={index + 1} onAddOutput={() => setDialog('addOutput')} onRemoved={() => setSelected(null)} />
+      </div>
+      <StatusBar snap={snap} />
+      {dialog === 'addCamera' && <AddCameraDialog client={client} onClose={() => setDialog(null)} />}
+      {dialog === 'addOutput' && cam && <AddOutputDialog client={client} camera={cam} n={index + 1} onClose={() => setDialog(null)} />}
+      {dialog === 'stopAll' && (
+        <ConfirmDialog
+          title="Stop all outputs?"
+          body="Every receiver loses picture now. The engine and the show stay open; switch outputs back on in each camera's Inspector."
+          confirm="Stop all outputs"
+          onCancel={() => setDialog(null)}
+          onConfirm={() => {
+            client.request('stopAllOutputs').catch(() => {});
+            setDialog(null);
+          }}
+        />
+      )}
+      <QuitDialog />
+    </div>
+  );
+}
+
 function Connected({ url }: { url: string }) {
   const client = useMemo(() => new EngineClient(url), [url]);
   useEffect(() => {
     client.connect();
     return () => client.close();
   }, [client]);
-  const { status, state } = useEngine(client);
-  return (
-    <>
-      <Stack direction="row" spacing={2} sx={{ px: 2, py: 1, borderBottom: 1, borderColor: 'divider' }} alignItems="center">
-        <Typography variant="h6" sx={{ flex: 1 }}>
-          BreadCamera
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {state.engine?.gpu} · {state.engine?.rate}
-        </Typography>
-      </Stack>
-      {status === 'closed' && (
-        <Box sx={{ px: 2 }}>
-          <ErrorBlock message={t('engine.disconnected')} />
-        </Box>
-      )}
-      <Multiview client={client} />
-      <QuitDialog />
-    </>
-  );
+  return <Workspace client={client} />;
 }
 
 export function App() {
   const url = engineUrl();
-  if (!url) return <ErrorBlock message={t('engine.noParams')} />;
+  if (!url) return <ErrorBlock message="Engine connection details are missing. Open BreadCamera from its app icon." />;
   return <Connected url={url} />;
 }
 ```
+Note `Workspace` stores marks in a ref and re-renders every second through `now`, so the countdown and marks stay current without extra state.
 
 `ui/src/main.tsx`:
 ```tsx
-import { createBmTheme } from '@bmsolutionsvn/design';
-import { CssBaseline, ThemeProvider } from '@mui/material';
+import '@bmsolutionsvn/design/bm.css';
+import '@bmsolutionsvn/design/fonts';
+import './app.css';
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -9004,19 +10358,208 @@ import { App } from './App';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider theme={createBmTheme()}>
-      <CssBaseline />
-      <App />
-    </ThemeProvider>
+    <App />
   </StrictMode>,
 );
 ```
 
-- [ ] **Step 7: Run the UI tests and build**
+`ui/src/app.css` — the window styles, ported from the approved mockup (`docs/design/mockups/index.html`) onto the `--bm-*` tokens:
+```css
+:root {
+  --ui: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --mono: var(--bm-font-mono);
+  --well: #050607;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+}
+* { box-sizing: border-box; margin: 0; }
+html, body, #root { height: 100%; }
+body { background: var(--bm-bg); color: var(--bm-text); font: 400 12px/1.4 var(--ui); caret-color: var(--bm-brand); overflow: hidden; user-select: none; }
+input, select, textarea { user-select: text; }
+::selection { background: var(--bm-brand-wash); color: var(--bm-text); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--bm-border-strong); border-radius: 999px; border: 3px solid var(--bm-surface); }
+::-webkit-scrollbar-track { background: transparent; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: default; }
+:focus-visible { outline: 1px solid var(--bm-brand); outline-offset: -1px; }
+svg.i { flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.mono, .ro { font-family: var(--mono); font-feature-settings: 'tnum' 1, 'lnum' 1; }
 
-Run in `ui/`: `PATH="/c/Program Files/nodejs:$PATH" npm test` — Expected: 5 files, 12 tests pass. Then `PATH="/c/Program Files/nodejs:$PATH" npm run build` — Expected: `ui/dist/index.html` and assets, no type errors.
+/* window */
+.win { height: 100%; display: grid; grid-template-rows: 32px 38px minmax(0, 1fr) 24px; background: var(--bm-bg); position: relative; }
+.titlebar { display: flex; align-items: stretch; background: var(--bm-rail); app-region: drag; }
+.titlebar .menus, .titlebar .caption, .titlebar .app-ic { app-region: no-drag; }
+.app-ic { width: 40px; display: grid; place-items: center; color: var(--bm-brand); }
+.menus { display: flex; align-items: stretch; }
+.menu-root { position: relative; display: flex; }
+.menu-btn { padding: 0 9px; color: var(--bm-text-muted); }
+.menu-btn:hover, .menu-btn.open { background: var(--bm-surface-hover); color: var(--bm-text); }
+.wintitle { flex: 1; display: grid; place-items: center; color: var(--bm-text-dim); }
+.caption { display: flex; }
+.caption button { width: 46px; display: grid; place-items: center; color: var(--bm-text-muted); }
+.caption button:hover { background: var(--bm-surface-hover); color: var(--bm-text); }
+.caption button.close:hover { background: #C42B1C; color: #fff; }
+.menu { position: absolute; top: 100%; left: 0; z-index: 20; min-width: 240px; background: var(--bm-surface-raised); border: 1px solid var(--bm-border-strong); border-radius: 6px; padding: 4px; box-shadow: var(--bm-shadow-overlay); display: grid; }
+.menu .it { height: 28px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 16px; padding: 0 10px; border-radius: 4px; text-align: left; }
+.menu .it:hover:not(:disabled) { background: var(--bm-surface-hover); }
+.menu .it:disabled { color: var(--bm-text-disabled); }
+.menu .it .k { font: 400 11px var(--mono); color: var(--bm-text-dim); }
+.menu .it.danger { color: var(--bm-danger); }
+.menu hr { border: none; border-top: 1px solid var(--bm-border); margin: 4px 2px; }
 
-- [ ] **Step 8: Ship `ui/dist` next to the shell**
+.toolbar { display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--bm-border); }
+.tb { height: 28px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid transparent; white-space: nowrap; }
+.tb:hover { background: var(--bm-surface-hover); border-color: var(--bm-border); }
+.tb svg.i { color: var(--bm-text-muted); }
+.tb.accent svg.i { color: var(--bm-brand); }
+.tb.danger, .tb.danger svg.i { color: var(--bm-danger); }
+.tb.sm { height: 22px; padding: 0 6px; color: var(--bm-text-muted); }
+.tb.sm svg.i { color: var(--bm-brand); }
+.tsep { width: 1px; height: 20px; background: var(--bm-border); margin: 0 4px; }
+.tspace { flex: 1; }
+
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 1px 360px; min-height: 0; }
+.splitter { background: var(--bm-border); }
+.center { display: grid; grid-template-rows: 30px minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--well); }
+.subbar { display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--bm-border-subtle); background: var(--bm-bg); color: var(--bm-text-dim); }
+.subbar b { color: var(--bm-text); font-weight: 600; }
+.subbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--bm-border); border-radius: 4px; overflow: hidden; }
+.seg button { height: 22px; padding: 0 8px; color: var(--bm-text-muted); border-left: 1px solid var(--bm-border); }
+.seg button:first-child { border-left: none; }
+.seg button.on { background: var(--bm-surface-raised); color: var(--bm-text); }
+
+/* multiview */
+.wall-wrap { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.wall-area { flex: 1; min-height: 0; display: grid; place-items: center; padding: 4px; }
+.wall { display: grid; gap: 3px; outline: none; }
+.tile { display: flex; flex-direction: column; background: var(--bm-surface); min-width: 0; overflow: hidden; }
+.tile.sel { outline: 1px solid var(--bm-brand); outline-offset: 1px; }
+.pic { aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
+.pic canvas { display: block; width: 100%; height: 100%; }
+.strip { height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 7px; border-top: 1px solid var(--bm-border); min-width: 0; }
+.tile:hover .strip { background: var(--bm-surface-hover); }
+.strip.err { box-shadow: inset 2px 0 0 var(--bm-danger); background: var(--bm-danger-wash); }
+.in-chip { height: 18px; min-width: 36px; padding: 0 5px; border-radius: 3px; display: inline-grid; place-items: center; font: 600 10.5px var(--mono); letter-spacing: .05em; color: var(--bm-text-on-brand); flex: none; }
+.in-chip.ready { background: var(--bm-signal-ready); }
+.in-chip.conn { background: var(--bm-signal-connecting); }
+.in-chip.err { background: var(--bm-danger); color: #2A0A10; }
+.in-chip.off { background: var(--bm-signal-offline); color: var(--bm-text); }
+.cam-no { font: 500 11px var(--mono); color: var(--bm-text-dim); flex: none; }
+.cam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 12.5px; }
+.fx { display: flex; gap: 3px; color: var(--bm-text-muted); flex: none; }
+.fx .bad { color: var(--bm-danger); }
+.flow { color: var(--bm-text-disabled); flex: none; display: grid; }
+.outs { display: flex; gap: 3px; flex: none; }
+.pill { height: 18px; padding: 0 6px 0 5px; border-radius: 999px; border: 1px solid; display: inline-flex; align-items: center; gap: 4px; font: 500 10.5px var(--mono); letter-spacing: .05em; white-space: nowrap; }
+.pill i { width: 6px; height: 6px; border-radius: 50%; }
+.pill.live { color: var(--bm-signal-live-text); border-color: rgba(239, 68, 68, .55); }
+.pill.live i { background: var(--bm-signal-live); animation: bm-live-pulse 2s ease-in-out infinite; }
+.pill.connecting { color: var(--bm-signal-connecting-text); border-color: rgba(245, 158, 11, .55); }
+.pill.connecting i { background: var(--bm-signal-connecting); }
+.pill.ready { color: var(--bm-signal-ready-text); border-color: rgba(34, 197, 94, .55); }
+.pill.ready i { background: var(--bm-signal-ready); }
+.pill.offline { color: var(--bm-signal-offline-text); border-color: var(--bm-border-strong); }
+.pill.offline i { background: var(--bm-signal-offline); }
+.err-chip { height: 18px; padding: 0 5px; border-radius: 3px; border: 1px solid rgba(251, 113, 133, .6); background: var(--bm-danger-wash); color: var(--bm-danger); display: inline-flex; align-items: center; gap: 3px; font: 500 10.5px var(--mono); letter-spacing: .05em; }
+.more { font: 500 10.5px var(--mono); color: var(--bm-text-muted); }
+.seen { display: inline-flex; align-items: center; gap: 3px; color: var(--bm-info); font: 500 10.5px var(--mono); flex: none; }
+
+.block { display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-left: 2px solid; }
+.block b { font-weight: 600; }
+.block .d { color: var(--bm-text-muted); }
+.block.danger { border-color: var(--bm-danger); background: var(--bm-danger-wash); }
+.block.danger svg { color: var(--bm-danger); }
+.block.warning { border-color: var(--bm-warning); background: var(--bm-warning-wash); }
+.block.warning svg { color: var(--bm-warning); }
+.block.info { border-color: var(--bm-info); background: var(--bm-info-wash); }
+.block.info svg { color: var(--bm-info); }
+
+.empty { flex: 1; display: grid; place-items: center; text-align: center; color: var(--bm-text-muted); }
+.empty > div { display: grid; gap: 6px; justify-items: center; max-width: 360px; }
+.empty .frame { width: 140px; aspect-ratio: 16 / 9; border: 1px dashed var(--bm-border-strong); border-radius: 4px; display: grid; place-items: center; color: var(--bm-text-dim); margin-bottom: 6px; }
+.empty .h { color: var(--bm-text); font-size: 14px; font-weight: 600; }
+
+/* inspector */
+.insp { background: var(--bm-surface); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.insp-h { padding: 8px 12px; border-bottom: 1px solid var(--bm-border); display: grid; gap: 3px; }
+.insp-h .k { font: 500 10px var(--mono); letter-spacing: .1em; color: var(--bm-text-dim); }
+.insp-h .t { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; min-width: 0; }
+.insp-h .t.dim { color: var(--bm-text-dim); }
+.insp-h .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insp-b { overflow: auto; }
+details.sec { border-bottom: 1px solid var(--bm-border); }
+details.sec > summary { list-style: none; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 6px; font-weight: 600; background: var(--bm-bg); }
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary .chev { color: var(--bm-text-dim); display: grid; transition: transform 120ms var(--ease); }
+details.sec[open] > summary .chev { transform: rotate(90deg); }
+details.sec > summary .right { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--bm-text-dim); font-weight: 400; }
+.sec-b { padding: 8px 12px 10px; display: grid; gap: 6px; }
+.prop { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 26px; }
+.prop > label { color: var(--bm-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prop-c { display: grid; gap: 3px; min-width: 0; }
+.hint { font-size: 11.5px; color: var(--bm-text-dim); }
+.ctl { height: 26px; width: 100%; border-radius: 4px; background: var(--bm-bg); border: 1px solid var(--bm-border); color: var(--bm-text); padding: 0 8px; font: 400 12px var(--ui); min-width: 0; }
+.ctl.mono { font: 400 11.5px var(--mono); }
+.ctl:hover { border-color: var(--bm-border-strong); }
+.ctl:focus { border-color: var(--bm-brand); outline: none; }
+.ctl[aria-invalid='true'] { border-color: var(--bm-danger); }
+select.ctl { appearance: auto; }
+.note { color: var(--bm-text-dim); font-size: 11.5px; }
+.pad { padding: 10px 12px; }
+.row-end { display: flex; justify-content: flex-end; }
+.ibtn { width: 24px; height: 24px; border-radius: 4px; display: grid; place-items: center; color: var(--bm-text-muted); border: 1px solid transparent; }
+.ibtn:hover { background: var(--bm-surface-hover); border-color: var(--bm-border); color: var(--bm-text); }
+.orow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto 24px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--bm-border-subtle); }
+.orow:last-child { border-bottom: none; }
+.o-main { min-width: 0; }
+.orow .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orow .m { font: 400 11px var(--mono); color: var(--bm-text-dim); }
+.sw-wrap { position: relative; display: inline-flex; }
+.sw-wrap input { position: absolute; inset: 0; opacity: 0; margin: 0; }
+.sw { width: 28px; height: 16px; border-radius: 999px; background: var(--bm-border-strong); position: relative; }
+.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--bm-text); transition: left 120ms var(--ease); }
+.sw-wrap input:checked + .sw { background: var(--bm-brand); }
+.sw-wrap input:checked + .sw::after { left: 14px; background: var(--bm-text-on-brand); }
+.sw-wrap input:focus-visible + .sw { outline: 1px solid var(--bm-brand); outline-offset: 2px; }
+.btn { height: 26px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--bm-border-strong); background: var(--bm-surface-raised); color: var(--bm-text); display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; }
+.btn:hover:not(:disabled) { background: var(--bm-surface-hover); }
+.btn:disabled { color: var(--bm-text-disabled); }
+.btn.primary { background: var(--bm-brand); border-color: var(--bm-brand); color: var(--bm-text-on-brand); font-weight: 600; }
+.btn.primary:hover:not(:disabled) { background: var(--bm-brand-hover); }
+.btn.primary:disabled { opacity: .5; }
+.btn.danger { background: var(--bm-danger); border-color: var(--bm-danger); color: #2A0A10; font-weight: 600; }
+.btn.ghost-danger { background: none; border-color: transparent; color: var(--bm-danger); padding: 0 4px; }
+
+/* status bar */
+.status { display: flex; align-items: center; background: var(--bm-rail); border-top: 1px solid var(--bm-border); font: 400 11px var(--mono); color: var(--bm-text-dim); min-width: 0; overflow: hidden; }
+.status > span { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 100%; border-right: 1px solid var(--bm-border-subtle); white-space: nowrap; }
+.status > span.r { margin-left: auto; border-left: 1px solid var(--bm-border-subtle); }
+.status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--bm-signal-ready); }
+.status .dot.warn { background: var(--bm-warning); }
+.status .w { color: var(--bm-warning); }
+.status .e { color: var(--bm-danger); }
+.status b { color: var(--bm-text-muted); font-weight: 500; }
+
+/* dialogs */
+.scrim { position: fixed; inset: 0; background: rgba(0, 0, 0, .5); display: grid; place-items: center; z-index: 30; }
+.dlg { width: 480px; max-width: calc(100% - 32px); background: var(--bm-surface-raised); border: 1px solid var(--bm-border-strong); border-radius: 6px; box-shadow: var(--bm-shadow-overlay); overflow: hidden; }
+.dlg.wide { width: 680px; }
+.dlg-h { height: 36px; display: flex; align-items: center; padding: 0 4px 0 14px; font-weight: 600; font-size: 13px; }
+.dlg-h .x { margin-left: auto; width: 32px; height: 28px; display: grid; place-items: center; color: var(--bm-text-muted); border-radius: 4px; }
+.dlg-h .x:hover { background: #C42B1C; color: #fff; }
+.dlg-b { padding: 6px 14px 14px; display: grid; gap: 8px; color: var(--bm-text-muted); }
+.dlg-b .prop { grid-template-columns: 120px minmax(0, 1fr); }
+.dlg-f { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 14px; background: var(--bm-surface); border-top: 1px solid var(--bm-border); }
+.dlg-f .btn { min-width: 84px; }
+
+@media (prefers-reduced-motion: reduce) { .pill.live i { animation: none; } }
+```
+
+- [ ] **Step 10: Run the UI tests and build**
+
+Run in `ui/`: `PATH="/c/Program Files/nodejs:$PATH" npm test` — Expected: 7 files, all tests pass. Then `PATH="/c/Program Files/nodejs:$PATH" npm run build` — Expected: `ui/dist/index.html` and assets, no type errors.
+
+- [ ] **Step 11: Ship `ui/dist` next to the shell**
 
 `cmake/CopyUi.cmake`:
 ```cmake
@@ -9033,15 +10576,16 @@ add_custom_command(TARGET BreadCamera POST_BUILD
 ```
 Run `scripts/build.ps1`; expected `build/release/ui/index.html` exists.
 
-- [ ] **Step 9: Manual-path evidence (automated stand-in)**
 
-Start `build\release\BreadCamera.exe`, wait 5 s, then take a screenshot of the window to `%TEMP%\bcam-m1-ui.png` (PowerShell: `Add-Type -AssemblyName System.Windows.Forms,System.Drawing`, capture `[System.Windows.Forms.Screen]::PrimaryScreen.Bounds`) and attach its path in the report. Expected: the BreadCamera header with the GPU name, the empty-show message "Chưa có camera nào…", and the "Thêm camera" button. Then stop both processes (`Get-Process BreadCamera, breadcamera-engine | Stop-Process -Force`).
+- [ ] **Step 12: Manual-path evidence (automated stand-in)**
 
-- [ ] **Step 10: Commit**
+Start `build\release\BreadCamera.exe`, wait 5 s, then take a screenshot of the window to `%TEMP%\bcam-m1-ui.png` (PowerShell: `Add-Type -AssemblyName System.Windows.Forms,System.Drawing`, capture `[System.Windows.Forms.Screen]::PrimaryScreen.Bounds`) and attach its path in the report. Expected, compared with the "Empty" tab of `docs/design/mockups/index.html`: the dark custom title bar with the menus and the minimise/maximise/close buttons (no system caption), the toolbar with Add camera and Stop all outputs…, the empty Multiview, the Inspector saying "No camera selected", and the status bar with the GPU name. Drag the window by the title bar and resize it from the right edge once; note both in the report. Then stop both processes (`Get-Process BreadCamera, breadcamera-engine | Stop-Process -Force`).
+
+- [ ] **Step 13: Commit**
 
 ```bash
 git add ui/package.json ui/package-lock.json ui/.npmrc ui/tsconfig.json ui/vite.config.ts ui/index.html ui/src cmake/CopyUi.cmake CMakeLists.txt
-git commit -m "feat(ui): engine client, live multiview with H.264 previews, add camera/output, quit confirm"
+git commit -m "feat(ui): native window shell with Multiview, Inspector, status bar and dialogs"
 ```
 
 ### Task 14: M1 acceptance — 4× 1080p60 passthrough, hold/slate under load, crash restart, follow-ups
@@ -9304,6 +10848,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - No audio clock-drift resampling; overflow trims (`src/core/audio_delay.h`).
 - The audio resampler is built from the first frame only (`src/io/ffmpeg_input.cpp`, `emitAudio`).
 - Fullscreen output stretches, no letterbox (`src/io/fullscreen_output.h`).
+- `Converter::fit` is plain bilinear; add a box pre-filter if 1080p → 540p outputs shimmer (`src/gpu/shaders/fit_linear.hlsl`).
+- After a tick overrun a half-rate output can wait one extra tick (`src/engine/camera.cpp`).
 - Preview encoding runs on the tick thread (`src/engine/preview_service.h`).
 - WebSocket sends happen under the client-map lock (`src/engine/control_server.cpp`).
 
@@ -9313,8 +10859,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The UI ships beside the shell exe (`ui/` folder) instead of embedded in it (`CMakeLists.txt`, `cmake/CopyUi.cmake`).
 
 ## Elsewhere
-- `@bmsolutionsvn/design`'s `BmProductId` has no `breadcamera`, and `BmAppShell` requires an account; the UI uses the theme without the shared shell until bm-design adds both (`ui/src/App.tsx`).
-- English UI is only reachable with `?lang=en` until the settings screen exists (`ui/src/i18n.ts`).
+- The UI uses `@bmsolutionsvn/design`'s tokens (`bm.css`) but not its MUI theme or `BmAppShell`: the native pro-tool window is BreadCamera's own (spec §6.4, `ui/src/app.css`).
+- The title bar loses the top-edge resize handle (the side and bottom edges and Snap still resize) (`src/shell/shell_main.cpp`, `WM_NCCALCSIZE`).
 ```
 Add any ledger `ponytail:` or deferred minor from this run to the list.
 
