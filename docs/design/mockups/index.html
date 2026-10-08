@@ -6,297 +6,279 @@
 <title>BreadCamera Mockups</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 :root {
   --cyan: #22D3EE; --cyan-hover: #67E8F9; --cyan-wash: rgba(34,211,238,0.13); --ink: #04191D;
   --plate: #08090B; --rail: #060709; --surface: #0E1013; --surface-hover: #13161B; --surface-raised: #16191F;
+  --well: #050607;
   --hair: rgba(255,255,255,0.10); --hair-subtle: rgba(255,255,255,0.06); --hair-strong: rgba(255,255,255,0.18);
-  --tick: rgba(255,255,255,0.28);
-  --text: #F5F7FA; --muted: rgba(245,247,250,0.62); --dim: rgba(245,247,250,0.50); --disabled: rgba(245,247,250,0.34);
+  --text: #F5F7FA; --muted: rgba(245,247,250,0.66); --dim: rgba(245,247,250,0.50); --disabled: rgba(245,247,250,0.34);
   --live: #EF4444; --live-t: #FF6B6B; --conn: #F59E0B; --conn-t: #FBBF24; --ready: #22C55E; --ready-t: #4ADE80;
   --off: rgba(245,247,250,0.30); --off-t: rgba(245,247,250,0.50);
   --danger: #FB7185; --warning: #FBBF24; --success: #4ADE80; --info: #38BDF8;
-  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', monospace;
+  --ui: 'Segoe UI Variable Text', 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
   --ease: cubic-bezier(.2,0,0,1);
   color-scheme: dark;
 }
 * { box-sizing: border-box; margin: 0; }
 html, body { height: 100%; }
-body { background: var(--plate); color: var(--text); font: 400 14px/1.5 var(--sans); caret-color: var(--cyan); overflow: hidden; }
+body { background: #000; color: var(--text); font: 400 12px/1.4 var(--ui); caret-color: var(--cyan); overflow: hidden; user-select: none; }
 ::selection { background: var(--cyan-wash); color: var(--text); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: var(--hair-strong); border-radius: 999px; border: 3px solid var(--plate); }
+::-webkit-scrollbar-thumb { background: var(--hair-strong); border-radius: 999px; border: 3px solid var(--surface); }
 ::-webkit-scrollbar-track { background: transparent; }
-.num, .mono { font-family: var(--mono); font-feature-settings: 'tnum' 1, 'lnum' 1; }
-svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.mono, .num { font-family: var(--mono); font-feature-settings: 'tnum' 1, 'lnum' 1; }
+svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
 
-/* mockup chrome (not part of the app) */
-.mockbar { height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: #000; border-bottom: 1px solid var(--hair); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+/* mockup chrome, not part of the app */
+.mockbar { height: 30px; display: flex; align-items: center; gap: 2px; padding: 0 10px; background: #000; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 .mockbar::-webkit-scrollbar { display: none; }
-.mockbar .tag { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-right: 8px; }
-.mockbar button { font: 500 12px var(--sans); color: var(--muted); background: none; border: 1px solid transparent; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
-.mockbar button:hover { color: var(--text); background: var(--surface-hover); }
+.mockbar .tag { font: 500 10px var(--mono); letter-spacing: .1em; color: var(--dim); margin-right: 8px; }
+.mockbar button { font: 400 12px var(--ui); color: var(--dim); background: none; border: 1px solid transparent; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
+.mockbar button:hover { color: var(--text); }
 .mockbar button[aria-selected="true"] { color: var(--text); border-color: var(--hair-strong); }
-.mockbar .note { margin-left: auto; font-size: 12px; color: var(--dim); padding-left: 16px; }
+.mockbar .note { margin-left: auto; font-size: 11px; color: var(--disabled); padding-left: 16px; }
 
-/* app shell */
-.app { display: grid; grid-template-columns: 208px 1fr; height: calc(100vh - 40px); }
-.rail { background: var(--rail); border-right: 1px solid var(--hair); display: flex; flex-direction: column; padding: 12px 8px; gap: 2px; }
-.brand { display: flex; align-items: center; gap: 8px; padding: 4px 8px 14px; font-weight: 700; letter-spacing: -0.02em; }
-.brand-mark { width: 20px; height: 20px; border: 1px solid var(--cyan); border-radius: 4px; display: grid; place-items: center; color: var(--cyan); }
-.show-pick { margin: 0 0 12px; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 6px; background: var(--surface); cursor: pointer; }
-.show-pick small { display: block; font-size: 12px; color: var(--dim); }
-.show-pick span { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 13px; }
-.nav { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 6px; color: var(--muted); font-weight: 600; font-size: 13px; cursor: pointer; transition: background .12s var(--ease), color .12s var(--ease); }
-.nav:hover { background: var(--surface-hover); color: var(--text); }
-.nav.on { background: var(--cyan-wash); color: var(--cyan); font-weight: 700; }
-.rail .spacer { flex: 1; }
-.engine-line { padding: 10px 10px 4px; border-top: 1px solid var(--hair-subtle); margin-top: 6px; font-size: 12px; color: var(--dim); display: grid; gap: 2px; }
-.engine-line b { font-weight: 500; color: var(--muted); }
-.stop-all { margin: 6px 2px 0; height: 32px; border-radius: 6px; border: 1px solid var(--hair); background: none; color: var(--danger); font: 600 13px var(--sans); cursor: pointer; }
-.stop-all:hover { border-color: var(--danger); }
+/* window */
+.win { height: calc(100vh - 30px); display: grid; grid-template-rows: 32px 38px minmax(0, 1fr) 24px; background: var(--plate); border-top: 1px solid var(--hair); position: relative; }
+.titlebar { display: flex; align-items: stretch; background: var(--rail); }
+.app-ic { width: 40px; display: grid; place-items: center; color: var(--cyan); }
+.menus { display: flex; align-items: stretch; }
+.menus span { display: grid; place-items: center; padding: 0 9px; color: var(--muted); cursor: default; }
+.menus span:hover, .menus span.open { background: var(--surface-hover); color: var(--text); }
+.wintitle { flex: 1; display: grid; place-items: center; color: var(--dim); }
+.caption { display: flex; }
+.caption span { width: 46px; display: grid; place-items: center; color: var(--muted); }
+.caption span:hover { background: var(--surface-hover); color: var(--text); }
+.caption span.close:hover { background: #C42B1C; color: #fff; }
+.caption svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 1; fill: none; }
 
-.main { display: grid; grid-template-rows: 56px 1fr; min-width: 0; min-height: 0; }
-.top { display: flex; align-items: center; gap: 16px; padding: 0 16px 0 20px; border-bottom: 1px solid var(--hair); background: var(--plate); }
-.top h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; display: flex; align-items: center; gap: 10px; white-space: nowrap; }
-.top h1 .cam-id { font: 500 13px var(--mono); color: var(--dim); letter-spacing: 0; }
-.meta { display: flex; gap: 14px; color: var(--muted); font: 400 13px var(--mono); white-space: nowrap; }
-.meta .sep { color: var(--disabled); }
-.top .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.btn { height: 36px; padding: 0 16px; border-radius: 6px; font: 600 14px var(--sans); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; border: 1px solid transparent; transition: background .12s var(--ease), border-color .12s var(--ease); white-space: nowrap; }
-.btn-primary { background: var(--cyan); color: var(--ink); }
-.btn-primary:hover { background: var(--cyan-hover); }
-.btn-outline { background: none; color: var(--text); border-color: var(--hair-strong); }
-.btn-outline:hover { background: var(--surface-hover); }
-.btn-danger { background: var(--danger); color: #2A0A10; }
-.btn-ghost-danger { background: none; color: var(--danger); border-color: var(--hair); }
-.btn-ghost-danger:hover { border-color: var(--danger); }
-.btn:focus-visible, .nav:focus-visible, .tile:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
-.icon-btn { width: 36px; height: 36px; border-radius: 6px; border: 1px solid var(--hair); background: none; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
-.icon-btn:hover { color: var(--text); background: var(--surface-hover); }
+.toolbar { display: flex; align-items: center; gap: 4px; padding: 0 8px; border-bottom: 1px solid var(--hair); background: var(--plate); }
+.ws { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--hair); border-radius: 6px; margin-right: 6px; }
+.ws span { height: 26px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; color: var(--muted); font-weight: 600; cursor: default; }
+.ws span:hover { color: var(--text); }
+.ws span.on { background: var(--cyan-wash); color: var(--cyan); }
+.tb { height: 28px; padding: 0 9px; display: inline-flex; align-items: center; gap: 6px; border-radius: 4px; border: 1px solid transparent; background: none; color: var(--text); cursor: default; white-space: nowrap; }
+.tb:hover { background: var(--surface-hover); border-color: var(--hair); }
+.tb svg.i { color: var(--muted); }
+.tb.accent svg.i { color: var(--cyan); }
+.tb.danger { color: var(--danger); } .tb.danger svg.i { color: var(--danger); }
+.tsep { width: 1px; height: 20px; background: var(--hair); margin: 0 4px; }
+.tspace { flex: 1; }
 
-.work { position: relative; min-height: 0; overflow: auto; }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 1px 360px; min-height: 0; }
+.splitter { background: var(--hair); position: relative; cursor: col-resize; }
+.splitter::after { content: ''; position: absolute; inset: 0 -3px; }
+.center { display: grid; grid-template-rows: 30px minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--well); }
+.subbar { display: flex; align-items: center; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--hair-subtle); background: var(--plate); color: var(--dim); }
+.subbar b { color: var(--text); font-weight: 600; }
+.subbar .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: 4px; overflow: hidden; }
+.seg span { height: 22px; padding: 0 8px; display: grid; place-items: center; color: var(--muted); border-left: 1px solid var(--hair); cursor: default; white-space: nowrap; }
+.seg span:first-child { border-left: none; }
+.seg span.on { background: var(--surface-raised); color: var(--text); }
 
 /* multiview wall */
-.wall-wrap { height: 100%; display: flex; flex-direction: column; }
-.wall-area { flex: 1; min-height: 0; display: grid; place-items: center; padding: 2px; }
-.wall { display: grid; gap: 2px; }
-.tile { display: flex; flex-direction: column; background: var(--surface); cursor: pointer; min-width: 0; position: relative; overflow: hidden; }
+.wall-wrap { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.wall-area { flex: 1; min-height: 0; display: grid; place-items: center; padding: 4px; }
+.wall { display: grid; gap: 3px; }
+.tile { display: flex; flex-direction: column; background: var(--surface); min-width: 0; overflow: hidden; position: relative; cursor: default; }
+.tile.sel { outline: 1px solid var(--cyan); outline-offset: 1px; }
 .pic { aspect-ratio: 16 / 9; background: #000; overflow: hidden; position: relative; }
 .pic svg { display: block; width: 100%; height: 100%; }
-.strip { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-top: 1px solid var(--hair); font-size: 13px; transition: background .12s var(--ease); min-width: 0; }
+.strip { height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 7px; border-top: 1px solid var(--hair); min-width: 0; }
 .tile:hover .strip { background: var(--surface-hover); }
 .strip.warn { box-shadow: inset 2px 0 0 var(--warning); background: rgba(251,191,36,0.08); }
 .strip.err { box-shadow: inset 2px 0 0 var(--danger); background: rgba(251,113,133,0.08); }
-.tile:hover .strip.warn { background: rgba(251,191,36,0.12); }
-.tile:hover .strip.err { background: rgba(251,113,133,0.12); }
-.in-chip { height: 20px; min-width: 38px; padding: 0 6px; border-radius: 4px; display: inline-grid; place-items: center; font: 600 11px var(--mono); letter-spacing: .06em; color: var(--ink); flex: none; }
-.in-chip.live { background: var(--live); } .in-chip.conn { background: var(--conn); } .in-chip.ready { background: var(--ready); }
-.in-chip.off { background: var(--off); color: var(--text); }
-.in-chip.err { background: var(--danger); color: #2A0A10; }
-.cam-no { font: 500 12px var(--mono); color: var(--dim); flex: none; }
-.cam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.fx { display: flex; gap: 4px; color: var(--muted); flex: none; }
-.fx svg.i { width: 14px; height: 14px; }
-.fx .bad { color: var(--danger); }
-.fx .unused { color: var(--disabled); }
-.flow { color: var(--disabled); flex: none; } .flow svg.i { width: 14px; height: 14px; }
-.outs { display: flex; gap: 4px; flex: none; }
-.pill { height: 20px; padding: 0 7px 0 6px; border-radius: 999px; border: 1px solid; display: inline-flex; align-items: center; gap: 5px; font: 500 11px var(--mono); letter-spacing: .06em; }
+.in-chip { height: 18px; min-width: 36px; padding: 0 5px; border-radius: 3px; display: inline-grid; place-items: center; font: 600 10.5px var(--mono); letter-spacing: .05em; color: var(--ink); flex: none; }
+.in-chip.ready { background: var(--ready); } .in-chip.conn { background: var(--conn); }
+.in-chip.err { background: var(--danger); color: #2A0A10; } .in-chip.off { background: var(--off); color: var(--text); }
+.cam-no { font: 500 11px var(--mono); color: var(--dim); flex: none; }
+.cam-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 12.5px; }
+.fx { display: flex; gap: 3px; color: var(--muted); flex: none; } .fx svg.i { width: 13px; height: 13px; } .fx .bad { color: var(--danger); }
+.flow { color: var(--disabled); flex: none; } .flow svg.i { width: 12px; height: 12px; }
+.outs { display: flex; gap: 3px; flex: none; }
+.pill { height: 18px; padding: 0 6px 0 5px; border-radius: 999px; border: 1px solid; display: inline-flex; align-items: center; gap: 4px; font: 500 10.5px var(--mono); letter-spacing: .05em; white-space: nowrap; }
 .pill i { width: 6px; height: 6px; border-radius: 50%; }
 .pill.live { color: var(--live-t); border-color: rgba(239,68,68,.55); } .pill.live i { background: var(--live); animation: pulse 2s ease-in-out infinite alternate; }
 .pill.conn { color: var(--conn-t); border-color: rgba(245,158,11,.55); } .pill.conn i { background: var(--conn); }
 .pill.ready { color: var(--ready-t); border-color: rgba(34,197,94,.55); } .pill.ready i { background: var(--ready); }
 .pill.off { color: var(--off-t); border-color: var(--hair-strong); } .pill.off i { background: var(--off); }
-.err-chip { height: 20px; padding: 0 6px; border-radius: 4px; border: 1px solid rgba(251,113,133,.6); background: rgba(251,113,133,.08); color: var(--danger); display: inline-flex; align-items: center; gap: 4px; font: 500 11px var(--mono); letter-spacing: .06em; }
-.err-chip svg.i { width: 12px; height: 12px; }
-.more { font: 500 11px var(--mono); color: var(--muted); padding: 0 2px; }
-.seen { display: inline-flex; align-items: center; gap: 3px; color: var(--info); font: 500 11px var(--mono); flex: none; }
-.seen svg.i { width: 12px; height: 12px; }
+.err-chip { height: 18px; padding: 0 5px; border-radius: 3px; border: 1px solid rgba(251,113,133,.6); background: rgba(251,113,133,.08); color: var(--danger); display: inline-flex; align-items: center; gap: 3px; font: 500 10.5px var(--mono); letter-spacing: .05em; }
+.err-chip svg.i { width: 11px; height: 11px; }
+.more { font: 500 10.5px var(--mono); color: var(--muted); }
+.seen { display: inline-flex; align-items: center; gap: 3px; color: var(--info); font: 500 10.5px var(--mono); flex: none; } .seen svg.i { width: 11px; height: 11px; }
 @keyframes pulse { from { opacity: 1; } to { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .pill.live i { animation: none; } }
+.syn { position: absolute; right: 5px; top: 4px; font: 500 8.5px var(--mono); letter-spacing: .1em; color: rgba(255,255,255,.4); pointer-events: none; }
 
 /* blocks */
-.block { display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; font-size: 13px; border-left: 2px solid; }
-.block svg.i { margin-top: 2px; }
-.block b { font-weight: 600; }
-.block .detail { color: var(--muted); }
-.block.warning { border-color: var(--warning); background: rgba(251,191,36,0.08); color: var(--text); } .block.warning svg { color: var(--warning); }
+.block { display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; border-left: 2px solid; font-size: 12px; }
+.block b { font-weight: 600; } .block .d { color: var(--muted); }
+.block svg.i { width: 14px; height: 14px; margin-top: 1px; }
+.block.warning { border-color: var(--warning); background: rgba(251,191,36,0.08); } .block.warning svg { color: var(--warning); }
 .block.danger { border-color: var(--danger); background: rgba(251,113,133,0.08); } .block.danger svg { color: var(--danger); }
-.warn-chip { height: 24px; padding: 0 8px; border-radius: 4px; background: rgba(251,191,36,.08); border: 1px solid rgba(251,191,36,.4); color: var(--warning); font: 500 12px var(--mono); display: inline-flex; align-items: center; gap: 6px; }
+
+/* inspector */
+.insp { background: var(--surface); display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.insp-h { padding: 8px 12px; border-bottom: 1px solid var(--hair); display: grid; gap: 3px; }
+.insp-h .k { font: 500 10px var(--mono); letter-spacing: .1em; color: var(--dim); }
+.insp-h .t { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.insp-h .t .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insp-b { overflow: auto; }
+details.sec { border-bottom: 1px solid var(--hair); }
+details.sec > summary { list-style: none; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 6px; font-weight: 600; cursor: default; background: var(--plate); }
+details.sec > summary::-webkit-details-marker { display: none; }
+details.sec > summary .chev { color: var(--dim); display: grid; transition: transform .12s var(--ease); }
+details.sec > summary .chev svg.i { width: 12px; height: 12px; }
+details.sec[open] > summary .chev { transform: rotate(90deg); }
+details.sec > summary .right { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--dim); font-weight: 400; }
+.sec-b { padding: 8px 12px 10px; display: grid; gap: 6px; }
+.ibtn { width: 24px; height: 24px; border-radius: 4px; display: grid; place-items: center; color: var(--muted); border: 1px solid transparent; background: none; cursor: default; }
+.ibtn:hover { background: var(--surface-hover); border-color: var(--hair); color: var(--text); }
+.ibtn svg.i { width: 14px; height: 14px; }
+.prop { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 26px; }
+.prop > label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl { height: 26px; border-radius: 4px; background: var(--plate); border: 1px solid var(--hair); display: flex; align-items: center; gap: 6px; padding: 0 8px; min-width: 0; }
+.ctl:hover { border-color: var(--hair-strong); }
+.ctl.focus { border-color: var(--cyan); }
+.ctl .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctl .v.mono { font-size: 11.5px; }
+.ctl .u { color: var(--dim); font: 400 11px var(--mono); }
+.ctl svg.i { width: 12px; height: 12px; color: var(--dim); }
+.spin { display: grid; margin-right: -4px; }
+.spin svg.i { width: 10px; height: 8px; }
+.ro { font: 400 11.5px var(--mono); color: var(--muted); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.row2 .prop { grid-template-columns: 44px minmax(0, 1fr); }
+.sw { width: 28px; height: 16px; border-radius: 999px; background: var(--hair-strong); position: relative; flex: none; }
+.sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--text); }
+.sw.on { background: var(--cyan); } .sw.on::after { left: 14px; background: var(--ink); }
+.slider { display: grid; grid-template-columns: 1fr 52px; gap: 8px; align-items: center; }
+.track { height: 3px; border-radius: 2px; background: var(--hair-strong); position: relative; }
+.track .fill { position: absolute; inset: 0 auto 0 0; background: rgba(245,247,250,.6); border-radius: 2px; }
+.track .knob { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--text); transform: translate(-50%, -50%); box-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.sv { height: 22px; border: 1px solid var(--hair); border-radius: 4px; background: var(--plate); display: grid; place-items: center end; padding: 0 6px; font: 400 11px var(--mono); }
+.group { border: 1px solid var(--hair); border-radius: 4px; background: var(--plate); }
+.group-h { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border-bottom: 1px solid var(--hair-subtle); }
+.group-h .gi { color: var(--muted); display: grid; } .group-h .gi svg.i { width: 14px; height: 14px; }
+.group-h b { font-weight: 600; }
+.group-h .right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.group-b { padding: 6px 8px 8px; display: grid; gap: 6px; }
+.group .prop { grid-template-columns: 88px minmax(0, 1fr); }
+.group .ctl { background: var(--surface); }
+.st { font: 500 10px var(--mono); letter-spacing: .08em; padding: 1px 5px; border-radius: 3px; border: 1px solid; white-space: nowrap; }
+.st.run { color: var(--success); border-color: rgba(74,222,128,.35); }
+.chain { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; color: var(--disabled); }
+.chain span { color: var(--muted); padding: 1px 6px; border: 1px solid var(--hair); border-radius: 3px; }
+.chain span.fxn { color: var(--text); border-color: var(--hair-strong); }
+.chain svg.i { width: 10px; height: 10px; }
+.note { color: var(--dim); font-size: 11.5px; }
+.orow { display: grid; grid-template-columns: auto minmax(0, 1fr) 24px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--hair-subtle); }
+.orow:last-child { border-bottom: none; }
+.orow .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orow .m { font: 400 11px var(--mono); color: var(--dim); }
+.btn { height: 26px; padding: 0 12px; border-radius: 4px; border: 1px solid var(--hair-strong); background: var(--surface-raised); color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: default; white-space: nowrap; }
+.btn:hover { background: var(--surface-hover); }
+.btn svg.i { width: 14px; height: 14px; color: var(--muted); }
+.btn.primary { background: var(--cyan); border-color: var(--cyan); color: var(--ink); font-weight: 600; } .btn.primary svg.i { color: var(--ink); }
+.btn.primary:hover { background: var(--cyan-hover); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #2A0A10; font-weight: 600; } .btn.danger svg.i { color: #2A0A10; }
+.btn.ghost-danger { background: none; border-color: transparent; color: var(--danger); padding: 0 4px; } .btn.ghost-danger svg.i { color: var(--danger); }
+.btn.wide { width: 100%; justify-content: center; height: 30px; }
 
 /* empty */
-.empty { height: 100%; display: grid; place-items: center; }
-.empty > div { max-width: 420px; text-align: center; display: grid; justify-items: center; gap: 10px; }
-.empty-frame { width: 168px; aspect-ratio: 16/9; border: 1px dashed var(--hair-strong); border-radius: 6px; display: grid; place-items: center; color: var(--dim); margin-bottom: 8px; position: relative; }
-.empty h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
-.empty p { color: var(--muted); }
+.empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); }
+.empty > div { display: grid; gap: 6px; justify-items: center; max-width: 360px; }
+.empty .frame { width: 140px; aspect-ratio: 16/9; border: 1px dashed var(--hair-strong); border-radius: 4px; display: grid; place-items: center; color: var(--dim); margin-bottom: 6px; }
+.empty .h { color: var(--text); font-size: 14px; font-weight: 600; }
 
-/* detail + panels */
-.detail { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px; align-items: start; }
-.col { display: grid; gap: 16px; min-width: 0; }
-.panel { background: var(--surface); border: 1px solid var(--hair); border-radius: 6px; overflow: hidden; }
-.panel-h { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--hair-subtle); }
-.panel-h h3 { font-size: 14px; font-weight: 600; }
-.panel-h .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
-.panel-b { padding: 14px 16px 16px; display: grid; gap: 14px; }
-.state { height: 22px; padding: 0 8px; border-radius: 4px; font: 500 11px var(--mono); letter-spacing: .06em; text-transform: uppercase; display: inline-flex; align-items: center; border: 1px solid; }
-.state.run { color: var(--success); border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.08); }
-.state.bypass { color: var(--danger); border-color: rgba(251,113,133,.5); background: rgba(251,113,133,.08); }
-.state.unused { color: var(--dim); border-color: var(--hair); }
-.field { display: grid; gap: 6px; }
-.field label, .lbl { font-size: 13px; font-weight: 500; color: var(--muted); }
-.field .hint { font-size: 12px; color: var(--dim); }
-.input { height: 40px; border-radius: 4px; background: var(--surface); border: 1px solid var(--hair); color: var(--text); padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 400 14px var(--sans); min-width: 0; }
-.input:hover { border-color: var(--hair-strong); }
-.input.focus { border-color: var(--cyan); }
-.input .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.input .v.mono { font-size: 13px; }
-.input .unit { color: var(--dim); font: 400 12px var(--mono); }
-.input svg.i { color: var(--dim); }
-.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.seg { display: inline-flex; border: 1px solid var(--hair); border-radius: 6px; padding: 2px; gap: 2px; }
-.seg span { height: 30px; padding: 0 12px; display: grid; place-items: center; border-radius: 4px; font-size: 13px; font-weight: 500; color: var(--muted); }
-.seg span.on { background: var(--surface-raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--hair-strong); }
-.switch { width: 34px; height: 20px; border-radius: 999px; background: var(--hair-strong); position: relative; flex: none; }
-.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--text); }
-.switch.on { background: var(--cyan); } .switch.on::after { left: 17px; background: var(--ink); }
-.slider { display: grid; grid-template-columns: 1fr 84px; gap: 12px; align-items: center; }
-.track { height: 4px; border-radius: 2px; background: var(--hair-strong); position: relative; }
-.track .fill { position: absolute; inset: 0 auto 0 0; background: rgba(245,247,250,.62); border-radius: 2px; }
-.track .knob { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: var(--text); transform: translate(-50%, -50%); box-shadow: 0 1px 3px rgba(0,0,0,.5); }
-.track .zero { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px; background: var(--tick); }
-.sl-v { white-space: nowrap; height: 28px; border: 1px solid var(--hair); border-radius: 4px; display: grid; place-items: center end; padding: 0 8px; font: 400 13px var(--mono); }
-.kv { display: grid; grid-template-columns: 140px 1fr; gap: 6px 12px; font-size: 13px; }
-.kv dt { color: var(--muted); } .kv dd { font-family: var(--mono); font-size: 13px; }
-.preview-big .pic { border-radius: 6px 6px 0 0; }
-.preview-big .strip { border: 1px solid var(--hair); border-top: none; border-radius: 0 0 6px 6px; height: 36px; }
-table.outs-t { width: 100%; border-collapse: collapse; font-size: 13px; }
-.outs-t th { text-align: left; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); padding: 8px 16px; border-bottom: 1px solid var(--hair-subtle); }
-.outs-t td { padding: 10px 16px; border-bottom: 1px solid var(--hair-subtle); vertical-align: middle; }
-.outs-t tr:last-child td { border-bottom: none; }
-.outs-t td.mono { font-size: 12px; color: var(--muted); }
-.outs-t tr.err-row td { padding: 0; }
-.chip { height: 22px; padding: 0 8px; border-radius: 4px; border: 1px solid var(--hair); color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; }
-
-/* effects (add-ins) */
-.fx-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 0; }
-.fx-head h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
-.fx-head .right { margin-left: auto; }
-.chain { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 0 2px; }
-.node { height: 26px; padding: 0 7px; border-radius: 4px; border: 1px solid var(--hair); background: var(--surface); font: 500 12px var(--sans); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.node.fxn { color: var(--text); border-color: var(--hair-strong); }
-.node.fxn svg.i { width: 13px; height: 13px; color: var(--muted); }
-.chain > svg.i { width: 12px; height: 12px; color: var(--disabled); }
-.fx-note { font-size: 12px; color: var(--dim); padding: 0 2px; }
-.panel-h .fx-ic { color: var(--muted); display: grid; }
-.btn-sm { height: 30px; padding: 0 10px; font-size: 13px; }
-.pick { display: grid; gap: 6px; }
-.pick-row { display: grid; grid-template-columns: 20px 28px 1fr auto; gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--hair); border-radius: 6px; background: var(--surface); color: var(--text); }
-.pick-row.sel { border-color: var(--cyan); }
-.pick-row.done { opacity: .55; }
-.pick-row .radio { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--hair-strong); margin-top: 2px; display: grid; place-items: center; }
-.pick-row.sel .radio { border-color: var(--cyan); }
-.pick-row.sel .radio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); }
-.pick-row .ic { width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--hair); display: grid; place-items: center; color: var(--muted); }
-.pick-row b { font-weight: 600; font-size: 14px; display: block; }
-.pick-row p { font-size: 13px; color: var(--muted); margin-top: 2px; }
-.pick-row .req { font: 400 12px var(--mono); color: var(--dim); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
-.pick-row .req svg.i { width: 12px; height: 12px; color: var(--success); }
-
-/* colour match */
-.cm { display: grid; grid-template-columns: 288px minmax(0,1fr); height: 100%; min-height: 0; }
-.cm-list { border-right: 1px solid var(--hair); padding: 12px 8px; overflow: auto; display: grid; align-content: start; gap: 2px; }
-.cm-list h4 { font-size: 12px; font-weight: 500; color: var(--dim); padding: 4px 8px 8px; }
-.cm-cam { display: grid; grid-template-columns: 16px 64px 1fr; gap: 10px; align-items: center; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
-.cm-cam:hover { background: var(--surface-hover); }
-.cm-cam.on { background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--hair-strong); }
-.cm-cam .thumb { aspect-ratio: 16/9; border-radius: 3px; overflow: hidden; background: #000; }
-.cm-cam .thumb svg { display: block; width: 100%; height: 100%; }
-.cm-cam .n { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-cam .s { font: 400 12px var(--mono); color: var(--dim); white-space: nowrap; }
-.cm-cam .s.ok { color: var(--success); }
-.check { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--hair-strong); display: grid; place-items: center; }
-.check.on { background: var(--text); border-color: var(--text); color: var(--plate); }
-.check svg.i { width: 12px; height: 12px; stroke-width: 2.25; }
-.ref-mark { font: 500 10px var(--mono); letter-spacing: .08em; color: var(--cyan); border: 1px solid var(--cyan); border-radius: 4px; padding: 0 4px; height: 16px; display: grid; place-items: center; }
-.cm-main { padding: 16px; overflow: auto; display: grid; gap: 16px; align-content: start; }
-.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.pair figure { display: grid; gap: 8px; }
-.pair figcaption { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.pair figcaption .lbl { color: var(--muted); }
-.pair figcaption b { font-weight: 600; }
-.pair figcaption .right { margin-left: auto; }
-.pair .pic { border-radius: 6px; }
-.region { position: absolute; border: 1px solid rgba(245,247,250,.55); }
-.region::before, .region::after { content: ''; position: absolute; width: 10px; height: 10px; border: 2px solid var(--text); }
-.region::before { left: -2px; top: -2px; border-right: none; border-bottom: none; }
-.region::after { right: -2px; bottom: -2px; border-left: none; border-top: none; }
-.region span { position: absolute; left: 0; top: -22px; font: 500 11px var(--mono); letter-spacing: .06em; color: var(--text); background: rgba(8,9,11,.8); padding: 2px 6px; border-radius: 3px; }
-.link { color: var(--muted); font-size: 13px; background: none; border: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hair-strong); }
-.link:hover { color: var(--text); }
-.hint-line { font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
-.cm-bottom { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 16px; align-items: start; }
-.trims { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
-.de { display: flex; align-items: baseline; gap: 10px; }
-.de .val { font: 500 28px var(--mono); letter-spacing: -0.02em; }
-.de .was { color: var(--dim); font: 400 13px var(--mono); }
+/* status bar */
+.status { display: flex; align-items: center; background: var(--rail); border-top: 1px solid var(--hair); font: 400 11px var(--mono); color: var(--dim); min-width: 0; overflow: hidden; }
+.status > span { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 100%; border-right: 1px solid var(--hair-subtle); white-space: nowrap; }
+.status > span.r { margin-left: auto; border-left: 1px solid var(--hair-subtle); }
+.status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ready); }
+.status .dot.warn { background: var(--warning); }
+.status .w { color: var(--warning); } .status .e { color: var(--danger); }
+.status svg.i { width: 12px; height: 12px; }
+.status b { color: var(--muted); font-weight: 500; }
 
 /* calibration */
-.cal-top { display: flex; gap: 24px; align-items: flex-end; flex-wrap: wrap; }
-.cal-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-.cal-pic { display: grid; gap: 8px; }
-.cal-pic figcaption { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.cal-pic figcaption b { font-weight: 600; }
-.cal-pic figcaption .right { margin-left: auto; }
-.cal-pic .pic { border-radius: 6px; }
-.steps { padding-left: 20px; display: grid; gap: 8px; font-size: 13px; color: var(--muted); }
-.steps li.done { color: var(--dim); }
-.steps li.done::marker { color: var(--success); }
-.steps li.now { color: var(--text); }
-.steps b { font-weight: 600; }
-.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
-.sw { display: grid; grid-template-rows: 1fr 1fr; aspect-ratio: 1; border-radius: 3px; overflow: hidden; border: 1px solid var(--hair); }
-.sw i { display: block; }
+.cal { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; height: 100%; }
+.cal-list { border-right: 1px solid var(--hair); background: var(--surface); overflow: auto; }
+.cal-list .hd { height: 28px; display: flex; align-items: center; padding: 0 10px; color: var(--dim); border-bottom: 1px solid var(--hair-subtle); }
+.cal-cam { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; padding: 6px 10px; align-items: center; border-bottom: 1px solid var(--hair-subtle); cursor: default; }
+.cal-cam:hover { background: var(--surface-hover); }
+.cal-cam.on { background: var(--cyan-wash); box-shadow: inset 2px 0 0 var(--cyan); }
+.cal-cam .th { aspect-ratio: 16/9; border-radius: 2px; overflow: hidden; } .cal-cam .th svg { display: block; width: 100%; height: 100%; }
+.cal-cam .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-cam .s { font: 400 11px var(--mono); color: var(--dim); white-space: nowrap; display: flex; gap: 4px; align-items: center; }
+.cal-cam .s.ok { color: var(--success); } .cal-cam .s svg.i { width: 11px; height: 11px; }
+.cal-view { display: grid; place-items: center; padding: 10px; min-height: 0; min-width: 0; }
+.cal-view .pic { width: 100%; max-height: 100%; border-radius: 2px; }
+.swatches { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; }
+.swatch { display: grid; grid-template-rows: 1fr 1fr; aspect-ratio: 1; border-radius: 2px; overflow: hidden; }
+.swatch i { display: block; }
+.de { display: flex; align-items: baseline; gap: 8px; }
+.de .v { font: 500 22px var(--mono); }
+.steps { padding-left: 18px; display: grid; gap: 5px; color: var(--muted); }
+.steps li.done { color: var(--dim); } .steps li.done::marker { color: var(--success); } .steps li.now { color: var(--text); }
+.link { background: none; border: none; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--hair-strong); cursor: default; padding: 0; }
 
-/* settings */
-.settings { max-width: 760px; padding: 20px; display: grid; gap: 16px; }
-.slate-thumb { width: 160px; aspect-ratio: 16/9; border-radius: 4px; border: 1px solid var(--hair); overflow: hidden; }
-.slate-thumb svg { display: block; width: 100%; height: 100%; }
+/* menu */
+.menu { position: absolute; z-index: 20; min-width: 260px; background: var(--surface-raised); border: 1px solid var(--hair-strong); border-radius: 6px; padding: 4px; box-shadow: 0 12px 32px rgba(0,0,0,.55), 0 2px 6px rgba(0,0,0,.4); }
+.menu .it { height: 28px; display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 8px; padding: 0 10px 0 6px; border-radius: 4px; }
+.menu .it:hover, .menu .it.hl { background: var(--surface-hover); }
+.menu .it svg.i { width: 14px; height: 14px; color: var(--muted); }
+.menu .it .k { font: 400 11px var(--mono); color: var(--dim); }
+.menu .it.danger { color: var(--danger); } .menu .it.danger svg.i { color: var(--danger); }
+.menu hr { border: none; border-top: 1px solid var(--hair); margin: 4px 2px; }
 
-/* dialog */
-.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.62); display: grid; place-items: center; z-index: 10; }
-.dialog { width: 520px; max-width: calc(100% - 32px); background: var(--surface-raised); border: 1px solid var(--hair); border-radius: 6px; box-shadow: 0 24px 64px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4); }
-.dialog h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; padding: 20px 24px 0; }
-.dialog .body { padding: 12px 24px 4px; display: grid; gap: 14px; color: var(--muted); }
-.dialog .body strong { color: var(--text); font-weight: 600; }
-.dialog .body .field label { color: var(--muted); }
-.dialog .actions { display: flex; justify-content: flex-end; gap: 8px; padding: 20px 24px 20px; }
-.dialog .input { background: var(--surface); }
-.list-out { display: grid; gap: 4px; font: 400 12px var(--mono); color: var(--muted); border: 1px solid var(--hair); border-radius: 4px; padding: 10px 12px; background: var(--surface); }
-.list-out div { display: flex; gap: 8px; align-items: center; }
-
-.syn { position: absolute; right: 6px; top: 6px; font: 500 9px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: rgba(255,255,255,.42); pointer-events: none; }
-.screen[hidden] { display: none; }
+/* dialogs */
+.scrim { position: absolute; inset: 0; background: rgba(0,0,0,.5); display: grid; place-items: center; z-index: 30; }
+.dlg { width: 480px; max-width: calc(100% - 32px); background: var(--surface-raised); border: 1px solid var(--hair-strong); border-radius: 6px; box-shadow: 0 24px 64px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.4); overflow: hidden; }
+.dlg-h { height: 36px; display: flex; align-items: center; padding: 0 4px 0 14px; font-weight: 600; font-size: 13px; }
+.dlg-h .x { margin-left: auto; width: 32px; height: 28px; display: grid; place-items: center; color: var(--muted); border-radius: 4px; }
+.dlg-h .x:hover { background: #C42B1C; color: #fff; }
+.dlg-h .x svg { width: 10px; height: 10px; stroke: currentColor; stroke-width: 1; fill: none; }
+.dlg-b { padding: 6px 14px 14px; display: grid; gap: 8px; color: var(--muted); }
+.dlg-b p strong { color: var(--text); font-weight: 600; }
+.dlg-b .prop { grid-template-columns: 120px minmax(0, 1fr); }
+.dlg-f { display: flex; justify-content: flex-end; gap: 6px; padding: 10px 14px; background: var(--surface); border-top: 1px solid var(--hair); }
+.dlg-f .btn { min-width: 84px; justify-content: center; }
+.pick { display: grid; gap: 4px; }
+.pick-row { display: grid; grid-template-columns: 16px 24px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 4px; background: var(--surface); color: var(--text); }
+.pick-row.sel { border-color: var(--cyan); background: var(--cyan-wash); }
+.pick-row.done { opacity: .5; }
+.pick-row .rd { width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--hair-strong); margin-top: 2px; display: grid; place-items: center; }
+.pick-row.sel .rd { border-color: var(--cyan); } .pick-row.sel .rd::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan); }
+.pick-row .ic { color: var(--muted); } .pick-row .ic svg.i { width: 18px; height: 18px; }
+.pick-row b { font-weight: 600; display: block; }
+.pick-row p { color: var(--muted); margin-top: 1px; }
+.pick-row .req { font: 400 11px var(--mono); color: var(--dim); margin-top: 4px; display: flex; gap: 4px; align-items: center; }
+.pick-row .req svg.i { width: 11px; height: 11px; color: var(--success); }
+.tag2 { font: 500 10px var(--mono); letter-spacing: .06em; color: var(--dim); border: 1px solid var(--hair); border-radius: 3px; padding: 1px 5px; }
+.settings-dlg { width: 680px; }
+.settings-dlg .wrap { display: grid; grid-template-columns: 150px 1fr; min-height: 340px; }
+.cats { background: var(--surface); border-right: 1px solid var(--hair); padding: 6px; display: grid; align-content: start; gap: 2px; }
+.cats span { height: 28px; display: flex; align-items: center; padding: 0 8px; border-radius: 4px; color: var(--muted); }
+.cats span.on { background: var(--cyan-wash); color: var(--cyan); font-weight: 600; }
+.settings-dlg .pane { padding: 12px 16px; display: grid; gap: 8px; align-content: start; color: var(--muted); }
+.settings-dlg .pane h3 { font-size: 12px; font-weight: 600; color: var(--text); padding-bottom: 2px; }
+.settings-dlg .pane .prop { grid-template-columns: 170px minmax(0, 1fr); }
+.slate-th { width: 120px; aspect-ratio: 16/9; border: 1px solid var(--hair); border-radius: 3px; overflow: hidden; } .slate-th svg { display: block; width: 100%; height: 100%; }
 </style>
 </head>
 <body>
-<nav class="mockbar" role="tablist" aria-label="Mockup screens">
-  <span class="tag">Mockup</span>
-</nav>
-<div class="app">
-  <aside class="rail" id="rail"></aside>
-  <div class="main" id="main"></div>
-</div>
+<nav class="mockbar" role="tablist" aria-label="Mockup screens"><span class="tag">MOCKUP</span></nav>
+<div class="win" id="win"></div>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <defs>
-    <pattern id="checker" width="16" height="16" patternUnits="userSpaceOnUse">
-      <rect width="16" height="16" fill="#141414"/><rect width="8" height="8" fill="#1F1F1F"/><rect x="8" y="8" width="8" height="8" fill="#1F1F1F"/>
-    </pattern>
-  </defs>
+  <defs><pattern id="checker" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#141414"/><rect width="8" height="8" fill="#1F1F1F"/><rect x="8" y="8" width="8" height="8" fill="#1F1F1F"/></pattern></defs>
 </svg>
 
 <script>
@@ -307,65 +289,42 @@ const I = {
   arrow: '<path d="M2.5 8h11M9.5 4l4 4-4 4"/>',
   seen: '<path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2.5v2.8h2.8"/><path d="M8 5v3.2l2 1.3"/>',
   grid: '<rect x="1.5" y="2.5" width="5.5" height="4.5" rx="1"/><rect x="9" y="2.5" width="5.5" height="4.5" rx="1"/><rect x="1.5" y="9" width="5.5" height="4.5" rx="1"/><rect x="9" y="9" width="5.5" height="4.5" rx="1"/>',
-  match: '<rect x="1.5" y="3.5" width="5.5" height="9" rx="1"/><rect x="9" y="3.5" width="5.5" height="9" rx="1"/><path d="M7 8h2"/>',
+  chart: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M5.8 3v10M10.2 3v10M1.5 8h13"/>',
   settings: '<path d="M2 4.5h7M12 4.5h2M2 11.5h2M7 11.5h7"/><circle cx="10.5" cy="4.5" r="1.5"/><circle cx="5.5" cy="11.5" r="1.5"/>',
   plus: '<path d="M8 3v10M3 8h10"/>',
-  back: '<path d="M13 8H3M7 4 3 8l4 4"/>',
-  chev: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
+  chev: '<path d="m6 4 4 4-4 4"/>',
+  down: '<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>',
+  up: '<path d="m4.5 9.5 3.5-3.5 3.5 3.5"/>',
   warn: '<path d="M8 2 1.5 13.5h13L8 2Z"/><path d="M8 6.5v3M8 11.6v.1"/>',
   err: '<circle cx="8" cy="8" r="6.5"/><path d="M8 4.8v3.6M8 10.9v.1"/>',
   retry: '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v2.8h-2.8"/>',
   check: '<path d="m3.5 8.5 3 3 6-7"/>',
   cam: '<rect x="1.5" y="4" width="9.5" height="8" rx="1.5"/><path d="m11 7 3.5-2v6L11 9"/>',
-  more: '<circle cx="3.5" cy="8" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="12.5" cy="8" r=".6"/>',
-  folder: '<path d="M1.5 4.5a1 1 0 0 1 1-1h3.2l1.5 1.5h6.3a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-8Z"/>',
+  out: '<path d="M9 2.5h4.5V7"/><path d="M13.5 2.5 7.5 8.5"/><path d="M12 9.5v3a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3"/>',
+  fxadd: '<path d="M8 1.5 9.4 5l3.6.4-2.7 2.4.8 3.6L8 9.6l-3.1 1.8.8-3.6L3 5.4 6.6 5 8 1.5Z"/>',
+  more: '<circle cx="3.5" cy="8" r=".7"/><circle cx="8" cy="8" r=".7"/><circle cx="12.5" cy="8" r=".7"/>',
   undo: '<path d="M5 3.5 2 6.5l3 3"/><path d="M2 6.5h7.5a4 4 0 0 1 0 8H7"/>',
-  power: '<path d="M8 1.5v6"/><path d="M4.4 4a5.5 5.5 0 1 0 7.2 0"/>'
+  power: '<path d="M8 1.5v6"/><path d="M4.4 4a5.5 5.5 0 1 0 7.2 0"/>',
+  trash: '<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/>'
 };
-const icon = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 16 16" aria-hidden="true">${I[n]}</svg>`;
+const icon = (n) => `<svg class="i" viewBox="0 0 16 16" aria-hidden="true">${I[n]}</svg>`;
+const CAP = { min: '<svg viewBox="0 0 10 10"><path d="M0 5h10"/></svg>', max: '<svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg>', close: '<svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0 0 10"/></svg>' };
 
-/* Synthetic camera pictures: flat SVG scenes, labelled as synthetic. */
+/* Synthetic camera pictures */
 const SCENES = {
   stageL: { wall: '#1b2440', floor: '#121620', led: '#2d4a8a', skin: '#c99b7e', shirt: '#2a2f3a', x: 64 },
-  mc:     { wall: '#3a2c22', floor: '#1d1712', led: '#7a5636', skin: '#d4a684', shirt: '#6b1f2a', x: 86 },
-  guest:  { wall: '#22322c', floor: '#141b18', led: '#3f6b58', skin: '#b98a6a', shirt: '#d8d4cc', x: 78 },
-  wide:   { wall: '#151a24', floor: '#0e1118', led: '#3b4f7a', skin: '#c49579', shirt: '#1e2a44', x: 40, crowd: true },
+  mc: { wall: '#3a2c22', floor: '#1d1712', led: '#7a5636', skin: '#d4a684', shirt: '#6b1f2a', x: 86 },
+  guest: { wall: '#22322c', floor: '#141b18', led: '#3f6b58', skin: '#b98a6a', shirt: '#d8d4cc', x: 78 },
+  wide: { wall: '#151a24', floor: '#0e1118', led: '#3b4f7a', skin: '#c49579', shirt: '#1e2a44', x: 40, crowd: true },
   podium: { wall: '#2a2a30', floor: '#16161a', led: '#55505e', skin: '#cfa182', shirt: '#24364d', x: 80, podium: true },
-  back:   { wall: '#2b2620', floor: '#18150f', led: '#5d4a2c', skin: '#b78868', shirt: '#3c3c3c', x: 70 },
+  back: { wall: '#2b2620', floor: '#18150f', led: '#5d4a2c', skin: '#b78868', shirt: '#3c3c3c', x: 70 },
   webcam: { wall: '#1e1e22', floor: '#141416', led: '#333338', skin: '#c19272', shirt: '#4a4f57', x: 80, close: true },
-  hanoi:  { wall: '#26302a', floor: '#141a16', led: '#47604f', skin: '#c79a7c', shirt: '#30353f', x: 80 }
+  hanoi: { wall: '#26302a', floor: '#141a16', led: '#47604f', skin: '#c79a7c', shirt: '#30353f', x: 80 }
 };
-function scene(key, opts = {}) {
-  const s = SCENES[key];
-  const bg = opts.keyed
-    ? `<rect width="160" height="90" fill="url(#checker)"/>`
-    : `<rect width="160" height="90" fill="${s.wall}"/>
-       <rect x="14" y="10" width="54" height="30" fill="${s.led}" opacity=".55"/>
-       <rect x="92" y="10" width="54" height="30" fill="${s.led}" opacity=".4"/>
-       <rect y="62" width="160" height="28" fill="${s.floor}"/>
-       ${s.crowd ? Array.from({length: 18}, (_, i) => `<circle cx="${6 + i * 9}" cy="${80 + (i % 2) * 3}" r="4.2" fill="#0a0c10"/>`).join('') : ''}
-       ${s.podium ? `<rect x="62" y="56" width="36" height="34" fill="#1d2633"/>` : ''}`;
-  const sc = s.close ? 1.7 : (s.crowd ? .7 : 1);
-  const cx = s.x, top = s.close ? 26 : (s.crowd ? 44 : 30);
-  const person = `<g transform="translate(${cx} ${top}) scale(${sc})">
-      <path d="M-15 46 C-15 30 -9 25 0 25 C9 25 15 30 15 46 Z" fill="${s.shirt}"/>
-      <rect x="-3" y="18" width="6" height="8" fill="${s.skin}"/>
-      <ellipse cx="0" cy="11" rx="7.2" ry="8.6" fill="${s.skin}"/>
-      <path d="M-7.4 9 C-7 1.5 7 1.5 7.4 9 C5 5.5 -5 5.5 -7.4 9 Z" fill="#1a1410"/>
-    </g>`;
-  const frozen = opts.slate
-    ? `<rect width="160" height="90" fill="#0b0d12"/><rect x="40" y="36" width="80" height="1" fill="#22D3EE" opacity=".7"/>
-       <text x="80" y="31" text-anchor="middle" font-family="Inter" font-weight="600" font-size="8" fill="#F5F7FA">We'll be right back</text>
-       <text x="80" y="48" text-anchor="middle" font-family="JetBrains Mono" font-size="4.5" fill="rgba(245,247,250,.55)">BREADCAMERA · SLATE</text>`
-    : '';
-  return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Synthetic camera picture">${opts.slate ? frozen : bg + (s.podium ? person + `<rect x="62" y="60" width="36" height="30" fill="#1d2633"/>` : person)}${opts.chart ? chartSvg(opts.handles) : ''}</svg>${opts.noTag ? '' : '<span class="syn">synthetic</span>'}`;
-}
-
-/* ColorChecker Classic 24 (sRGB) and a synthetic camera reading of it */
 const CHART = ['#735244','#c29682','#627a9d','#576c43','#8580b1','#67bdaa','#d67e2c','#505ba6','#c15a63','#5e3c6c','#9dbc40','#e0a32e',
   '#383d96','#469449','#af363c','#e7c71f','#bb5695','#0885a1','#f3f3f2','#c8c8c8','#a0a0a0','#7a7a79','#555555','#343434'];
-const shift = (hex, dr, dg, db) => '#' + [1, 3, 5].map((o, i) => Math.max(0, Math.min(255, parseInt(hex.slice(o, o + 2), 16) + [dr, dg, db][i])).toString(16).padStart(2, '0')).join('');
-const SEEN = CHART.map(h => shift(h, 22, 8, -18));
+const shift = (hex, d) => '#' + [1, 3, 5].map((o, i) => Math.max(0, Math.min(255, parseInt(hex.slice(o, o + 2), 16) + d[i])).toString(16).padStart(2, '0')).join('');
+const SEEN = CHART.map(h => shift(h, [22, 8, -18]));
 function chartSvg(handles) {
   const x0 = 52, y0 = 40, w = 56, h = 36, cw = w / 6, ch = h / 4;
   let g = `<rect x="${x0 - 2}" y="${y0 - 2}" width="${w + 4}" height="${h + 4}" rx="1" fill="#141414"/>`;
@@ -374,10 +333,21 @@ function chartSvg(handles) {
     if (handles) g += `<rect x="${cx + cw / 2 - 1.6}" y="${cy + ch / 2 - 1.6}" width="3.2" height="3.2" fill="none" stroke="#F5F7FA" stroke-width=".35"/>`; });
   if (handles) {
     g += `<rect x="${x0 - 2}" y="${y0 - 2}" width="${w + 4}" height="${h + 4}" fill="none" stroke="#22D3EE" stroke-width=".45"/>`;
-    [[x0 - 2, y0 - 2], [x0 + w + 2, y0 - 2], [x0 - 2, y0 + h + 2], [x0 + w + 2, y0 + h + 2]].forEach(([x, y]) =>
-      g += `<circle cx="${x}" cy="${y}" r="1.9" fill="#08090B" stroke="#22D3EE" stroke-width=".6"/>`);
+    [[x0 - 2, y0 - 2], [x0 + w + 2, y0 - 2], [x0 - 2, y0 + h + 2], [x0 + w + 2, y0 + h + 2]].forEach(([x, y]) => g += `<circle cx="${x}" cy="${y}" r="1.9" fill="#08090B" stroke="#22D3EE" stroke-width=".6"/>`);
   }
   return `<g transform="rotate(-3 80 58)">${g}</g>`;
+}
+function scene(key, o = {}) {
+  const s = SCENES[key];
+  const tag = o.noTag ? '' : '<span class="syn">SYNTHETIC</span>';
+  if (o.slate) return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Slate"><rect width="160" height="90" fill="#0b0d12"/><rect x="40" y="36" width="80" height="1" fill="#22D3EE" opacity=".7"/><text x="80" y="31" text-anchor="middle" font-family="Segoe UI" font-weight="600" font-size="8" fill="#F5F7FA">We'll be right back</text><text x="80" y="48" text-anchor="middle" font-family="JetBrains Mono" font-size="4.5" fill="rgba(245,247,250,.55)">BREADCAMERA · SLATE</text></svg>${tag}`;
+  const bg = o.keyed ? `<rect width="160" height="90" fill="url(#checker)"/>` :
+    `<rect width="160" height="90" fill="${s.wall}"/><rect x="14" y="10" width="54" height="30" fill="${s.led}" opacity=".55"/><rect x="92" y="10" width="54" height="30" fill="${s.led}" opacity=".4"/><rect y="62" width="160" height="28" fill="${s.floor}"/>` +
+    (s.crowd ? Array.from({ length: 18 }, (_, i) => `<circle cx="${6 + i * 9}" cy="${80 + (i % 2) * 3}" r="4.2" fill="#0a0c10"/>`).join('') : '');
+  const sc = s.close ? 1.7 : s.crowd ? .7 : 1, top = s.close ? 26 : s.crowd ? 44 : 30;
+  const person = `<g transform="translate(${s.x} ${top}) scale(${sc})"><path d="M-15 46 C-15 30 -9 25 0 25 C9 25 15 30 15 46 Z" fill="${s.shirt}"/><rect x="-3" y="18" width="6" height="8" fill="${s.skin}"/><ellipse cx="0" cy="11" rx="7.2" ry="8.6" fill="${s.skin}"/><path d="M-7.4 9 C-7 1.5 7 1.5 7.4 9 C5 5.5 -5 5.5 -7.4 9 Z" fill="#1a1410"/></g>`;
+  const pod = s.podium ? `<rect x="62" y="60" width="36" height="30" fill="#1d2633"/>` : '';
+  return `<svg viewBox="0 0 160 90" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Synthetic camera picture">${bg}${person}${pod}${o.chart ? chartSvg(o.handles) : ''}</svg>${tag}`;
 }
 
 /* Data */
@@ -395,245 +365,190 @@ const CAMS = [
   { n: 8, name: 'Cầu nối Hà Nội', scene: 'hanoi', in: 'SRT', st: 'conn', slate: true, fx: ['on','on','on'], outs: [['NDI','live']], strip: 'err' }
 ];
 const FX = [['color', 'Colour'], ['matte', 'Background removal'], ['bg', 'Background']];
-const FXSTATE = { on: 'running', off: 'not used', bad: 'bypassed after an error' };
+const FXSTATE = { on: 'running', off: 'not added', bad: 'bypassed after an error' };
 
-function strip(c, maxOuts = 4, frozenAll = false, dense = false) {
-  const st = frozenAll ? 'off' : c.st;
+function strip(c, maxOuts, frozen, dense) {
+  const st = frozen ? 'off' : c.st;
+  const chipCls = frozen ? 'off' : (c.slate || c.hold) ? 'err' : c.deg ? 'conn' : st;
   const chipText = c.slate ? 'SLATE' : (c.hold || c.in);
-  const chipCls = frozenAll ? 'off' : (c.slate || c.hold) ? 'err' : c.deg ? 'conn' : st;
-  const chipTitle = c.slate ? `${IN_NAMES[c.in]} — signal lost, showing the slate` : c.hold ? `${IN_NAMES[c.in]} — signal lost, holding the last frame (${c.hold} left)` : c.deg ? `${IN_NAMES[c.in]} — signal degraded: ${c.deg}` : `${IN_NAMES[c.in]} — ${st === 'ready' ? 'Ready, receiving' : ST[st]}`;
-  const fx = FX.map(([k, label], i) => (c.fx[i] === 'off' || (dense && c.fx[i] === 'on')) ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : c.fx[i] === 'off' ? 'unused' : ''}" title="${label} — ${FXSTATE[c.fx[i]]}" aria-label="${label} — ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
+  const chipTitle = c.slate ? `${IN_NAMES[c.in]}: signal down, showing the slate` : c.hold ? `${IN_NAMES[c.in]}: signal down, holding the last frame (${c.hold} left)` : c.deg ? `${IN_NAMES[c.in]}: degraded, ${c.deg}` : `${IN_NAMES[c.in]}: ${st === 'ready' ? 'receiving' : ST[st]}`;
+  const fx = FX.map(([k, label], i) => (c.fx[i] === 'off' || (dense && c.fx[i] === 'on')) ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : ''}" title="${label}: ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
   const shown = c.outs.slice(0, maxOuts), rest = c.outs.length - shown.length;
   const outs = shown.map(([k, s, note]) => {
-    if (frozenAll) s = 'off';
-    if (s === 'err') return `<span class="err-chip" title="${OUT_NAMES[k]} — failed, ${note}">${icon('retry')}${k}</span>`;
-    return `<span class="pill ${s}" title="${OUT_NAMES[k]} — ${ST[s]}" aria-label="${OUT_NAMES[k]} — ${ST[s]}"><i></i>${k}</span>`;
-  }).join('') + (rest > 0 ? `<span class="more" title="${c.outs.slice(maxOuts).map(o => OUT_NAMES[o[0]]).join(', ')}">+${rest}</span>` : '');
-  return `<div class="strip ${frozenAll ? '' : (c.strip || '')}">
-    <span class="in-chip ${chipCls}" title="${chipTitle}" aria-label="${chipTitle}">${chipText}</span>
+    if (frozen) s = 'off';
+    if (s === 'err') return `<span class="err-chip" title="${OUT_NAMES[k]}: failed, ${note}">${icon('retry')}${k}</span>`;
+    return `<span class="pill ${s}" title="${OUT_NAMES[k]}: ${ST[s]}"><i></i>${k}</span>`;
+  }).join('') + (rest > 0 ? `<span class="more">+${rest}</span>` : '');
+  return `<div class="strip ${frozen ? '' : (c.strip || '')}">
+    <span class="in-chip ${chipCls}" title="${chipTitle}">${chipText}</span>
     ${dense ? '' : `<span class="cam-no">CAM ${c.n}</span>`}
     <span class="cam-name" title="${c.name}">${c.name}</span>
     ${fx ? `<span class="fx">${fx}</span>` : ''}
-    <span class="flow">${icon('arrow')}</span>
-    <span class="outs">${outs}</span>
-    ${c.seen && !frozenAll ? `<span class="seen" title="NDI output dropped for 3 s at 20:14 and recovered. Open the camera to clear this mark.">${icon('seen')}${c.seen}</span>` : ''}
+    <span class="flow">${icon('arrow')}</span><span class="outs">${outs}</span>
+    ${c.seen && !frozen ? `<span class="seen" title="NDI output dropped for 3 s at 20:14 and recovered. Select the camera to clear.">${icon('seen')}${c.seen}</span>` : ''}
   </div>`;
 }
-function tile(c, maxOuts, frozenAll, dense) {
-  return `<div class="tile" tabindex="0" aria-label="CAM ${c.n} ${c.name}, open camera">
-    <div class="pic">${scene(c.scene, { keyed: c.keyed, slate: c.slate })}</div>${strip(c, maxOuts, frozenAll, dense)}</div>`;
+const tile = (c, o) => `<div class="tile ${c.n === 2 ? 'sel' : ''}" tabindex="0" aria-label="CAM ${c.n} ${c.name}"><div class="pic">${scene(c.scene, { keyed: c.keyed, slate: c.slate })}</div>${strip(c, o.dense ? 2 : 4, o.frozen, o.dense)}</div>`;
+
+/* Window parts */
+const MENUS = ['File', 'Show', 'Camera', 'Output', 'View', 'Help'];
+const titlebar = (open) => `<div class="titlebar"><span class="app-ic">${icon('cam')}</span><div class="menus">${MENUS.map(m => `<span class="${m === open ? 'open' : ''}">${m}</span>`).join('')}</div>
+  <div class="wintitle">Hội nghị Khách hàng 2026 — BreadCamera</div><div class="caption"><span title="Minimise">${CAP.min}</span><span title="Maximise">${CAP.max}</span><span class="close" title="Close to tray: outputs keep running">${CAP.close}</span></div></div>`;
+const toolbar = (ws) => `<div class="toolbar">
+  <div class="ws"><span class="${ws === 'mv' ? 'on' : ''}">${icon('grid')}Multiview</span><span class="${ws === 'cal' ? 'on' : ''}">${icon('chart')}Calibration</span></div>
+  <button class="tb accent" title="Add camera (Ctrl+Shift+N)">${icon('plus')}Add camera</button>
+  <button class="tb" title="Add output to the selected camera (Ctrl+Shift+O)">${icon('out')}Add output</button>
+  <button class="tb" title="Add effect to the selected camera">${icon('fxadd')}Add effect</button>
+  <span class="tspace"></span>
+  <button class="tb" title="Settings (Ctrl+,)">${icon('settings')}Settings</button>
+  <span class="tsep"></span>
+  <button class="tb danger" title="Stop every output in this show">${icon('power')}Stop all outputs…</button></div>`;
+const statusbar = (o = {}) => `<div class="status">
+  <span><i class="dot ${o.restart ? 'warn' : ''}"></i>${o.restart ? '<span class="w">Engine restarting…</span>' : 'Engine <b>running 2:14:07</b>'}</span>
+  <span><b>59.94</b> fps · <b>1920×1080</b></span>
+  <span>GPU <b>61%</b> · RTX 4070 · Maxine</span>
+  <span class="${o.overruns ? 'w' : ''}">${o.overruns ? `${icon('warn')}3 tick overruns / min` : 'Ticks on time'}</span>
+  <span class="r">Outputs <b>${o.outs || '8 live'}</b>${o.retry === false ? '' : ' · <span class="e">1 retrying</span>'}</span>
+  <span>Show saved 20:41</span></div>`;
+
+/* Inspector */
+const prop = (label, c) => `<div class="prop"><label>${label}</label>${c}</div>`;
+const ctl = (v, o = {}) => `<div class="ctl ${o.focus ? 'focus' : ''}"><span class="v ${o.mono ? 'mono' : ''}">${v}</span>${o.unit ? `<span class="u">${o.unit}</span>` : ''}${o.select ? icon('down') : ''}${o.spin ? `<span class="spin">${icon('up')}${icon('down')}</span>` : ''}</div>`;
+const slider = (pct, val) => `<div class="slider"><div class="track"><span class="fill" style="width:${pct}%"></span><span class="knob" style="left:${pct}%"></span></div><span class="sv">${val}</span></div>`;
+const seg = (opts, on = 0) => `<div class="seg" style="width:max-content">${opts.map((o, i) => `<span class="${i === on ? 'on' : ''}">${o}</span>`).join('')}</div>`;
+const sec = (title, body, right = '') => `<details class="sec" open><summary><span class="chev">${icon('chev')}</span>${title}<span class="right">${right}</span></summary><div class="sec-b">${body}</div></details>`;
+const group = (ic, name, body) => `<div class="group"><div class="group-h"><span class="gi">${icon(ic)}</span><b>${name}</b><span class="right"><span class="st run">RUNNING</span><span class="sw on" role="switch" aria-checked="true" aria-label="${name} on"></span><button class="ibtn" aria-label="${name} menu">${icon('more')}</button></span></div><div class="group-b">${body}</div></div>`;
+
+function inspector() {
+  return `<aside class="insp"><div class="insp-h"><span class="k">INSPECTOR · CAM 2</span><div class="t"><span class="in-chip ready">SRT</span><span class="n">MC chính – Cam 2</span></div></div>
+  <div class="insp-b">
+  ${sec('Input', `
+    ${prop('Type', ctl('SRT', { select: true }))}
+    ${prop('Mode', seg(['Caller', 'Listener']))}
+    ${prop('URL', ctl('srt://203.0.113.24:9001?streamid=feed-2', { mono: true }))}
+    ${prop('Latency', ctl('120', { mono: true, unit: 'ms', spin: true }))}
+    ${prop('Passphrase', ctl('••••••••••••'))}
+    ${prop('Receiving', '<span class="ro">8.4 Mb/s · H.264 · 1080p59.94</span>')}
+    ${prop('Dropped · RTT', '<span class="ro">0 frames · 34 ms</span>')}`, '<span class="pill ready"><i></i>READY</span>')}
+  ${sec('Effects', `
+    <div class="chain"><span>SRT in</span>${icon('arrow')}<span class="fxn">Colour</span>${icon('arrow')}<span class="fxn">Background removal</span>${icon('arrow')}<span>2 outputs</span></div>
+    ${group('color', 'Colour', `${prop('Calibrated', '<span class="ro">19:40 · printed card</span>')}${prop('Chart ΔE', '<span class="ro">7.4 → 1.1</span>')}<div><button class="btn">${icon('chart')}Recalibrate</button></div>`)}
+    ${group('matte', 'Background removal', `${prop('Quality', ctl('High quality', { select: true }))}<div class="row2">${prop('Choke', ctl('1', { mono: true, unit: 'px', spin: true }))}${prop('Feather', ctl('2', { mono: true, unit: 'px', spin: true }))}</div>${prop('Threshold', slider(42, '0.42'))}`)}
+    <p class="note">Effects run in this fixed order.</p>`, `<button class="ibtn" title="Add effect">${icon('plus')}</button>`)}
+  ${sec('Outputs', `
+    <div class="block danger" role="alert">${icon('err')}<div><b>SRT output failed.</b> <span class="d">10.0.0.5:9000 refused the connection. Retrying in 3 s (attempt 4).</span></div></div>
+    <div class="orow"><span class="pill live"><i></i>NDI</span><div><div class="n">BreadCamera (MC chính – Cam 2)</div><div class="m">Keyed · same as show</div></div><button class="ibtn" aria-label="Output menu">${icon('more')}</button></div>
+    <div class="orow"><span class="err-chip">${icon('retry')}SRT</span><div><div class="n mono" style="font-size:11.5px">srt://10.0.0.5:9000</div><div class="m">Composited · 1280×720 · 29.97</div></div><button class="ibtn" aria-label="Output menu">${icon('more')}</button></div>`, `<button class="ibtn" title="Add output">${icon('plus')}</button>`)}
+  <div style="padding:10px 12px"><button class="btn ghost-danger">${icon('trash')}Remove camera…</button></div>
+  </div></aside>`;
+}
+const emptyInspector = () => `<aside class="insp"><div class="insp-h"><span class="k">INSPECTOR</span><div class="t"><span class="n" style="color:var(--dim)">No camera selected</span></div></div><div class="insp-b"><p class="note" style="padding:12px">Select a camera in Multiview to edit its input, effects and outputs.</p></div></aside>`;
+
+const GRID = { 1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [3, 2], 6: [3, 2], 7: [4, 2], 8: [4, 2] };
+function multiviewWin(cams, o = {}) {
+  const center = cams.length ? `<div class="wall-wrap">${o.banner || ''}<div class="wall-area"><div class="wall" data-n="${cams.length}">${cams.map(c => tile(c, { dense: cams.length > 4, frozen: o.frozen })).join('')}</div></div></div>`
+    : `<div class="empty"><div><div class="frame">${icon('cam')}</div><span class="h">No cameras yet</span><span>Use Add camera in the toolbar (Ctrl+Shift+N). Each camera can send to several outputs.</span></div></div>`;
+  return titlebar(o.menu) + toolbar('mv') + `<div class="body"><div class="center">
+    <div class="subbar"><b>Multiview</b><span>${cams.length} cameras</span><span class="right">Layout ${seg(['Auto', '2×2', '3×2', '4×2'])}</span></div>${center}</div>
+    <div class="splitter" title="Drag to resize"></div>${cams.length ? inspector() : emptyInspector()}</div>` + statusbar(o.status);
 }
 
-/* Shell */
-const RAIL = (active) => `
-  <div class="brand"><span class="brand-mark">${icon('cam')}</span>BreadCamera</div>
-  <div class="show-pick" title="Open or switch show"><small>Show</small><span>Hội nghị Khách hàng 2026 ${icon('chev')}</span></div>
-  <div class="nav ${active === 'mv' ? 'on' : ''}" tabindex="0">${icon('grid')}Multiview</div>
-  <div class="nav ${active === 'cm' ? 'on' : ''}" tabindex="0">${icon('match')}Calibration</div>
-  <div class="spacer"></div>
-  <div class="nav ${active === 'st' ? 'on' : ''}" tabindex="0">${icon('settings')}Settings</div>
-  <div class="engine-line"><span>Engine <b>running · 2 h 14 min</b></span><span>Outputs keep running when this window closes.</span></div>
-  <button class="stop-all">Stop all outputs…</button>`;
-
-function topBar(title, meta, right, back) {
-  return `<header class="top">${back ? `<button class="icon-btn" aria-label="Back to Multiview">${icon('back')}</button>` : ''}
-    <h1>${title}</h1><div class="meta">${meta}</div><div class="right">${right}</div></header>`;
-}
-const metaShow = (n, extra = '') => `<span>59.94 fps</span><span class="sep">·</span><span>GPU 61%</span><span class="sep">·</span><span>${n} cameras</span>${extra}`;
-const addCam = `<button class="btn btn-primary">${icon('plus')}Add camera</button>`;
-
-function multiview(cams, { frozen = false, extraMeta = '', banner = '' } = {}) {
-  const dense = cams.length > 4;
-  return {
-    rail: 'mv',
-    html: topBar('Multiview', metaShow(cams.length, extraMeta), addCam) +
-      `<div class="work"><div class="wall-wrap">${banner}<div class="wall-area"><div class="wall" data-n="${cams.length}">
-        ${cams.map(c => tile(c, dense ? 2 : 4, frozen, dense)).join('')}</div></div></div></div>`
-  };
+function calibrationWin() {
+  const cams = [['Sân khấu trái', 'stageL', 'ok', 'ΔE 7.9 → 1.1'], ['MC chính – Cam 2', 'mc', 'todo', 'Not calibrated'], ['Khách mời Đà Nẵng', 'guest', 'ok', 'ΔE 6.2 → 1.6'], ['Toàn cảnh hội trường', 'wide', 'todo', 'Not calibrated'], ['Bục phát biểu', 'podium', 'todo', 'Not calibrated']];
+  const sw = CHART.map((c, i) => `<span class="swatch" title="Patch ${i + 1}"><i style="background:${c}"></i><i style="background:${SEEN[i]}"></i></span>`).join('');
+  return titlebar() + toolbar('cal') + `<div class="body"><div class="center">
+    <div class="subbar"><b>Calibration</b><span>2 of 5 calibrated</span><span class="right">Chart ${seg(['Printed card', 'Tablet screen'])}<button class="link">Save chart image for a tablet…</button></span></div>
+    <div class="cal"><div class="cal-list"><div class="hd">Cameras</div>
+      ${cams.map(([n, sc, st, t], i) => `<div class="cal-cam ${i === 1 ? 'on' : ''}"><div class="th">${scene(sc, { noTag: true })}</div><div style="min-width:0"><div class="n">${n}</div><div class="s ${st === 'ok' ? 'ok' : ''}">${st === 'ok' ? icon('check') : ''}${t}</div></div></div>`).join('')}
+      <p class="note" style="padding:10px">Calibrate each camera once before the show, under show lighting. Recalibrate only if the lighting changes.</p></div>
+      <div class="cal-view"><div class="pic">${scene('mc', { chart: true, handles: true })}</div></div></div></div>
+    <div class="splitter"></div>
+    <aside class="insp"><div class="insp-h"><span class="k">CALIBRATION · CAM 2</span><div class="t"><span class="in-chip ready">SRT</span><span class="n">MC chính – Cam 2</span></div></div><div class="insp-b">
+      ${sec('Steps', `<ol class="steps"><li class="done">Hold the chart in front of the camera, square on, about a quarter of the picture.</li><li class="done">Use the show lighting. Avoid glare.</li><li class="now">Drag the four corners onto the chart, then Capture.</li></ol>`, '<span class="st run">CHART 24/24</span>')}
+      ${sec('Chart reading', `<div class="swatches">${sw}</div><p class="note">Top: card values · bottom: what CAM 2 sees now</p><div class="de"><span class="note">Average ΔE now</span><span class="v">7.4</span><span class="note">target ≤ 2.0</span></div>`)}
+      <div style="padding:12px;display:grid;gap:8px"><button class="btn primary wide">${icon('check')}Capture CAM 2</button>
+      <p class="note">Takes 1 s of video, builds the correction and locks it for this camera.</p>
+      <div style="display:flex;gap:6px"><button class="btn">${icon('undo')}Undo last</button><button class="btn ghost-danger">Clear calibration…</button></div></div>
+    </div></aside></div>` + statusbar();
 }
 
-function field(label, value, { mono = false, unit = '', select = false, focus = false, hint = '' } = {}) {
-  return `<div class="field"><label>${label}</label><div class="input ${focus ? 'focus' : ''}"><span class="v ${mono ? 'mono' : ''}">${value}</span>${unit ? `<span class="unit">${unit}</span>` : ''}${select ? icon('chev') : ''}</div>${hint ? `<span class="hint">${hint}</span>` : ''}</div>`;
-}
-function slider(label, pct, val, center = false) {
-  return `<div class="field"><span class="lbl">${label}</span><div class="slider"><div class="track">${center ? '<span class="zero"></span>' : ''}<span class="fill" style="${center ? `left:${Math.min(50, pct)}%;width:${Math.abs(pct - 50)}%` : `width:${pct}%`}"></span><span class="knob" style="left:${pct}%"></span></div><span class="sl-v">${val}</span></div></div>`;
-}
+const dlg = (title, body, foot, cls = '') => `<div class="scrim"><div class="dlg ${cls}" role="dialog" aria-label="${title}"><div class="dlg-h">${title}<span class="x" title="Close">${CAP.close}</span></div>${body}<div class="dlg-f">${foot}</div></div></div>`;
+const CAMS4 = CAMS.slice(0, 4);
 
-function fxPanel(ic, name, body) {
-  return `<section class="panel"><div class="panel-h"><span class="fx-ic">${icon(ic)}</span><h3>${name}</h3><div class="right"><span class="state run">Running</span><span class="switch on" role="switch" aria-checked="true" aria-label="${name} on"></span><button class="icon-btn" style="width:30px;height:30px" aria-label="${name} menu: Remove effect">${icon('more')}</button></div></div><div class="panel-b">${body}</div></section>`;
-}
-function effectsBlock() {
-  return `<div class="fx-head"><h2>Effects</h2><div class="right"><button class="btn btn-outline btn-sm">${icon('plus')}Add effect</button></div></div>
-    <div class="chain" aria-label="Processing order"><span class="node">SRT in</span>${icon('arrow')}<span class="node fxn">Colour</span>${icon('arrow')}<span class="node fxn">Background removal</span>${icon('arrow')}<span class="node">2 outputs</span></div>
-    <p class="fx-note">Effects run in this fixed order. New effects show up in Add effect when BreadCamera ships them.</p>
-    ${fxPanel('color', 'Colour', `<dl class="kv"><dt>Calibrated</dt><dd>19:40 · printed card</dd><dt>Chart ΔE</dt><dd>7.4 → 1.1</dd></dl>
-      <button class="btn btn-outline btn-sm" style="justify-self:start">${icon('match')}Recalibrate</button>`)}
-    ${fxPanel('matte', 'Background removal', `${field('Quality', 'High quality', { select: true })}
-      <div class="row2">${field('Choke', '1', { mono: true, unit: 'px' })}${field('Feather', '2', { mono: true, unit: 'px' })}</div>
-      ${slider('Threshold', 42, '0.42')}`)}`;
-}
 const SCREENS = {
-  multiview: { label: 'Multiview', build: () => multiview(CAMS.slice(0, 4)) },
-  eight: { label: 'Multiview · 8 cameras', build: () => multiview(CAMS, { extraMeta: `<span class="warn-chip" title="The GPU missed its frame deadline 3 times in the last minute.">${icon('warn')}3 tick overruns</span>` }) },
-  empty: { label: 'Multiview · empty', build: () => ({ rail: 'mv', html: topBar('Multiview', metaShow(0), addCam) +
-    `<div class="work"><div class="empty"><div><div class="empty-frame">${icon('cam')}</div><h2>No cameras yet</h2>
-     <p>Add an SRT, NDI, capture card or USB camera with <b style="color:var(--text);font-weight:600">Add camera</b>. Each camera can send to several outputs.</p></div></div></div>` }) },
-  restart: { label: 'Engine restarting', build: () => multiview(CAMS.slice(0, 4), { frozen: true,
-    banner: `<div class="block warning" role="status">${icon('retry')}<div><b>Engine restarting.</b> <span class="detail">The engine stopped unexpectedly and is reloading this show. Outputs come back in about 3 seconds. Pictures below are the last frames received.</span></div></div>` }) },
-  detail: { label: 'Camera detail', build: () => {
-    const c = CAMS[1];
-    return { rail: 'mv', html: topBar(`MC chính – Cam 2 <span class="cam-id">CAM 2</span>`, `<span>SRT caller</span><span class="sep">·</span><span>1920×1080 59.94</span><span class="sep">·</span><span>8.4 Mb/s</span>`, `<button class="btn btn-primary">${icon('plus')}Add output</button>`, true) +
-    `<div class="work"><div class="detail">
-      <div class="col">
-        <div class="preview-big"><div class="pic">${scene('mc')}</div>${strip(c)}</div>
-        <section class="panel">
-          <div class="panel-h"><h3>Outputs</h3><div class="right"><span class="lbl" style="font-size:12px">2 outputs</span></div></div>
-          <div class="block danger" role="alert">${icon('err')}<div><b>SRT output failed.</b> <span class="detail">srt://10.0.0.5:9000 refused the connection. Retrying in 3 s (attempt 4). Other outputs are not affected.</span></div></div>
-          <table class="outs-t"><thead><tr><th>Output</th><th>Destination</th><th>Sends</th><th>Format</th><th></th></tr></thead><tbody>
-            <tr><td><span class="pill live"><i></i>NDI</span></td><td>BreadCamera (MC chính – Cam 2)</td><td><span class="chip">Keyed (fill + key)</span></td><td class="mono">Same as show</td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
-            <tr><td><span class="err-chip">${icon('retry')}SRT</span></td><td class="mono">srt://10.0.0.5:9000 · caller · 6 Mb/s</td><td><span class="chip">Composited</span></td><td class="mono">1280×720 · 29.97</td><td style="text-align:right"><button class="icon-btn" aria-label="Output menu">${icon('more')}</button></td></tr>
-          </tbody></table>
-        </section>
-      </div>
-      <div class="col">
-        <section class="panel"><div class="panel-h"><h3>Input</h3><div class="right"><span class="pill ready"><i></i>READY</span></div></div>
-          <div class="panel-b">
-            <div class="field"><span class="lbl">Mode</span><div class="seg"><span class="on">Caller</span><span>Listener</span></div></div>
-            ${field('SRT URL', 'srt://203.0.113.24:9001?streamid=feed-2', { mono: true })}
-            <div class="row2">${field('Latency', '120', { mono: true, unit: 'ms' })}${field('Passphrase', '••••••••••••')}</div>
-            <dl class="kv"><dt>Received</dt><dd>8.4 Mb/s · H.264</dd><dt>Dropped frames</dt><dd>0</dd><dt>Round trip</dt><dd>34 ms</dd></dl>
-          </div></section>
-        ${effectsBlock()}
-        <button class="btn btn-ghost-danger" style="justify-self:start">Remove camera…</button>
-      </div></div></div>` };
+  multiview: { label: 'Multiview', build: () => multiviewWin(CAMS4) },
+  eight: { label: '8 cameras', build: () => multiviewWin(CAMS, { status: { overruns: true, outs: '11 live' } }) },
+  empty: { label: 'Empty', build: () => multiviewWin([], { status: { outs: '0', retry: false } }) },
+  restart: { label: 'Engine restarting', build: () => multiviewWin(CAMS4, { frozen: true, status: { restart: true, outs: '0', retry: false },
+    banner: `<div class="block warning" role="status">${icon('retry')}<div><b>Engine restarting.</b> <span class="d">It stopped unexpectedly and is reloading this show. Outputs come back in about 3 seconds. The pictures are the last frames received.</span></div></div>` }) },
+  calibration: { label: 'Calibration', build: calibrationWin },
+  menu: { label: 'Camera menu', build: () => multiviewWin(CAMS4, { menu: 'Camera' }) + `<div class="menu" style="left:150px;top:32px">
+    <div class="it">${icon('plus')}<span>Add camera…</span><span class="k">Ctrl+Shift+N</span></div>
+    <div class="it hl">${icon('out')}<span>Add output…</span><span class="k">Ctrl+Shift+O</span></div>
+    <div class="it">${icon('fxadd')}<span>Add effect…</span><span class="k"></span></div><hr>
+    <div class="it">${icon('chart')}<span>Calibrate colour…</span><span class="k">Ctrl+K</span></div>
+    <div class="it">${icon('retry')}<span>Restart input</span><span class="k"></span></div><hr>
+    <div class="it danger">${icon('trash')}<span>Remove camera…</span><span class="k">Del</span></div></div>` },
+  settings: { label: 'Settings', build: () => multiviewWin(CAMS4) + dlg('Settings', `<div class="wrap"><div class="cats"><span class="on">Show</span><span>Engine</span><span>About</span></div>
+    <div class="pane"><h3>Show format</h3>
+      ${prop('Frame rate', ctl('59.94', { select: true, mono: true }))}
+      ${prop('Resolution', ctl('1920×1080', { select: true, mono: true }))}
+      <p class="note">Every camera is processed at this format. Each output can send a smaller size or half the frame rate.</p>
+      <h3 style="margin-top:8px">Signal loss</h3>
+      ${prop('Hold the last frame', ctl('5', { mono: true, unit: 's', spin: true }))}
+      ${prop('Slate image', ctl('Built-in slate', { mono: true }))}
+      <div class="prop"><span></span><div class="slate-th">${scene('hanoi', { slate: true, noTag: true })}</div></div></div></div>`,
+    `<button class="btn">Cancel</button><button class="btn primary">Save</button>`, 'settings-dlg') },
+  rate: { label: 'Change frame rate', build: () => multiviewWin(CAMS4) + dlg('Change the frame rate?', `<div class="dlg-b"><p>From <strong class="num">59.94</strong> to <strong class="num">50</strong> fps. Every output restarts and loses picture for about 1 second.</p></div>`,
+    `<button class="btn">Cancel</button><button class="btn primary">Change frame rate</button>`) },
+  addcam: { label: 'Add camera', build: () => multiviewWin(CAMS4) + dlg('Add camera', `<div class="dlg-b">
+      ${prop('Name', ctl('Khách mời Đà Nẵng', { focus: true }))}
+      ${prop('Input type', ctl('SRT', { select: true }))}
+      ${prop('Mode', seg(['Caller', 'Listener']))}
+      ${prop('URL', ctl('srt://203.0.113.24:9001?streamid=feed-3', { mono: true }))}
+      ${prop('Latency', ctl('120', { mono: true, unit: 'ms', spin: true }))}
+      ${prop('Passphrase', ctl('<span style="color:var(--disabled)">Optional, stored encrypted</span>'))}
+      <p class="note">Names can be in any language.</p></div>`,
+    `<button class="btn">Cancel</button><button class="btn primary">${icon('plus')}Add camera</button>`) },
+  addfx: { label: 'Add effect', build: () => {
+    const row = (cls, ic, name, desc, req, tag) => `<div class="pick-row ${cls}"><span class="rd"></span><span class="ic">${icon(ic)}</span><div><b>${name}</b><p>${desc}</p>${req ? `<span class="req">${icon('check')}${req}</span>` : ''}</div>${tag ? `<span class="tag2">${tag}</span>` : ''}</div>`;
+    return multiviewWin(CAMS4) + dlg('Add effect to CAM 2', `<div class="dlg-b"><div class="pick">
+      ${row('sel', 'bg', 'Background', 'Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.', 'Needs Background removal, already on this camera')}
+      ${row('done', 'color', 'Colour', 'One-time calibration against a colour chart, then locked.', '', 'ADDED')}
+      ${row('done', 'matte', 'Background removal', 'AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).', '', 'ADDED')}</div>
+      <p class="note">New effects appear here when BreadCamera ships them. Each runs in its fixed place in the chain.</p></div>`,
+      `<button class="btn">Cancel</button><button class="btn primary">${icon('plus')}Add effect</button>`);
   } },
-  colour: { label: 'Calibration', build: () => {
-    const cams = [['Sân khấu trái', 'stageL', 'ok', 'ΔE 7.9 → 1.1'], ['MC chính – Cam 2', 'mc', 'todo', 'Not calibrated'], ['Khách mời Đà Nẵng', 'guest', 'ok', 'ΔE 6.2 → 1.6'], ['Toàn cảnh hội trường', 'wide', 'todo', 'Not calibrated'], ['Bục phát biểu', 'podium', 'todo', 'Not calibrated']];
-    const sw = CHART.map((c, i) => `<span class="sw" title="Patch ${i + 1}"><i style="background:${c}"></i><i style="background:${SEEN[i]}"></i></span>`).join('');
-    return { rail: 'cm', html: topBar('Calibration', `<span>Printed card</span><span class="sep">·</span><span>2 of 5 calibrated</span>`, `<button class="btn btn-primary">${icon('check')}Capture CAM 2</button>`) +
-    `<div class="work" style="overflow:hidden"><div class="cm">
-      <div class="cm-list"><h4>Cameras</h4>
-        ${cams.map(([n, sc, st, t], i) => `<div class="cm-cam ${i === 1 ? 'on' : ''}">
-          <span class="check ${st === 'ok' ? 'on' : ''}" aria-label="${st === 'ok' ? 'Calibrated' : 'Not calibrated'}">${st === 'ok' ? icon('check') : ''}</span>
-          <div class="thumb">${scene(sc, { noTag: true })}</div>
-          <div style="min-width:0"><div class="n">${n}</div><div class="s ${st === 'ok' ? 'ok' : ''}">${t}</div></div></div>`).join('')}
-        <p class="fx-note" style="padding:12px 8px 0">Calibrate every camera once before the show, under show lighting. Recalibrate only if the lighting changes.</p>
-      </div>
-      <div class="cm-main">
-        <div class="cal-top">
-          <div class="field"><span class="lbl">Chart</span><div class="seg"><span class="on">Printed card</span><span>Tablet screen</span></div></div>
-          <p class="fx-note" style="max-width:520px">Printed card: each camera is corrected to the card's known colours (ColorChecker Classic 24). Tablet screen: colours depend on the tablet, so every camera is matched to the first calibrated camera's view of the same tablet. <button class="link">Save chart image for a tablet…</button></p>
-        </div>
-        <div class="cal-grid">
-          <figure class="cal-pic"><figcaption><b>CAM 2 · MC chính – Cam 2</b><span class="right"><span class="state run">Chart found · 24 / 24 patches</span></span></figcaption>
-            <div class="pic">${scene('mc', { chart: true, handles: true })}</div>
-            <p class="hint-line">${icon('matte')}Drag the four corners onto the chart's corners. Each white square is where a patch is read.</p></figure>
-          <div class="col">
-            <section class="panel"><div class="panel-h"><h3>Steps</h3></div><div class="panel-b">
-              <ol class="steps"><li class="done">Hold the chart in front of the camera, square on, filling about a quarter of the picture.</li>
-              <li class="done">Use the show lighting. Avoid glare on the chart.</li>
-              <li class="now">Check the corners, then click <b>Capture CAM 2</b>.</li></ol></div></section>
-            <section class="panel"><div class="panel-h"><h3>Chart reading</h3><div class="right"><span class="mono" style="font-size:12px;color:var(--dim)">top: card · bottom: CAM 2</span></div></div>
-              <div class="panel-b"><div class="swatches">${sw}</div>
-              <div class="de"><span class="lbl">Average ΔE now</span><span class="val num">7.4</span><span class="was">target ≤ 2.0</span></div>
-              <span class="fx-note" style="padding:0">Capture takes 1 s of video, builds the correction and locks it for this camera.</span></div></section>
-            <div style="display:flex;gap:8px"><button class="btn btn-outline btn-sm">${icon('undo')}Undo last calibration</button><button class="btn btn-ghost-danger btn-sm">Clear calibration…</button></div>
-          </div>
-        </div>
-      </div></div></div>` };
-  } },
-  settings: { label: 'Settings', build: () => ({ rail: 'st', html: topBar('Settings', '', `<button class="btn btn-primary">Save settings</button>`) +
-    `<div class="work"><div class="settings">
-      <section class="panel"><div class="panel-h"><h3>Show</h3></div><div class="panel-b">
-        <div class="row2">${field('Frame rate', '59.94', { select: true, mono: true })}${field('Resolution', '1920×1080', { select: true, mono: true })}</div>
-        <p class="fx-note" style="padding:0;margin-top:-6px">Every camera is processed at this format. Each output can send a smaller size or half the frame rate instead.</p>
-        ${field('Hold the last frame on signal loss', '5', { mono: true, unit: 'seconds' })}
-        <div class="field"><label>Slate image</label><div style="display:flex;gap:12px;align-items:flex-start"><div style="flex:1;display:grid;gap:6px"><div class="input"><span class="v mono" style="color:var(--dim)">Built-in slate</span>${icon('folder')}</div><span class="hint">Leave empty for the built-in slate.</span></div><div class="slate-thumb">${scene('hanoi', { slate: true, noTag: true })}</div></div></div>
-      </div></section>
-      <section class="panel"><div class="panel-h"><h3>Engine</h3></div><div class="panel-b">
-        <dl class="kv"><dt>GPU</dt><dd>NVIDIA GeForce RTX 4070 · driver 581.57</dd><dt>Background removal</dt><dd>NVIDIA Maxine AI Green Screen</dd><dt>Preview encoder</dt><dd>NVENC H.264</dd><dt>Show file</dt><dd>D:\\Shows\\Hội nghị Khách hàng 2026.bcshow</dd></dl>
-      </div></section>
-    </div></div>` }) },
-  addfx: { label: 'Add effect', dialog: true, build: () => {
-    const base = SCREENS.detail.build();
-    const row = (cls, ic, name, desc, req, tag) => `<div class="pick-row ${cls}" role="radio" aria-checked="${cls === 'sel'}" ${cls === 'done' ? 'aria-disabled="true"' : ''}>
-      <span class="radio"></span><span class="ic">${icon(ic)}</span><div><b>${name}</b><p>${desc}</p>${req ? `<span class="req">${req}</span>` : ''}</div>${tag ? `<span class="chip">${tag}</span>` : ''}</div>`;
-    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-fx" style="width:560px"><h2 id="dlg-fx">Add effect to CAM 2</h2><div class="body">
-      <div class="pick" role="radiogroup" aria-label="Effects">
-        ${row('sel', 'bg', 'Background', 'Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.', `${icon('check')}Needs Background removal, already on this camera`)}
-        ${row('done', 'color', 'Colour', 'Calibrates this camera once against a colour chart (printed card or tablet), then locks.', '', 'Added')}
-        ${row('done', 'matte', 'Background removal', 'AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).', '', 'Added')}
-      </div>
-      <p style="font-size:12px;color:var(--dim)">The effect starts with its default settings and runs in its fixed place in the chain.</p>
-      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">${icon('plus')}Add effect</button></div></div></div>`;
-    return base;
-  } },
-  addout: { label: 'Add output', dialog: true, build: () => {
-    const base = SCREENS.detail.build();
-    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-o"><h2 id="dlg-o">Add output to CAM 2</h2><div class="body">
-      <div class="row2">${field('Output type', 'NDI', { select: true })}<div class="field"><span class="lbl">Sends</span><div class="seg" style="width:max-content"><span class="on">Keyed (fill + key)</span><span>Composited</span></div></div></div>
-      ${field('NDI source name', 'BreadCamera (MC chính – Cam 2)')}
-      <div class="row2">${field('Resolution', 'Same as show', { select: true })}${field('Frame rate', 'Half rate · 29.97', { select: true })}</div>
-      <p style="font-size:12px;color:var(--dim)">Resolution: same as show, or smaller (1280×720, 960×540). Frame rate: same as show, or half (every second frame). Other rates are not offered because converting them judders.</p>
-      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">${icon('plus')}Add output</button></div></div></div>`;
-    return base;
-  } },
-  addcam: { label: 'Add camera', dialog: true, build: () => {
-    const base = multiview(CAMS.slice(0, 3));
-    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-t"><h2 id="dlg-t">Add camera</h2><div class="body">
-      ${field('Name', 'Khách mời Đà Nẵng', { focus: true, hint: 'Any language works, including Vietnamese.' })}
-      <div class="row2">${field('Input type', 'SRT', { select: true })}<div class="field"><span class="lbl">Mode</span><div class="seg" style="width:max-content"><span class="on">Caller</span><span>Listener</span></div></div></div>
-      ${field('SRT URL', 'srt://203.0.113.24:9001?streamid=feed-3', { mono: true })}
-      <div class="row2">${field('Latency', '120', { mono: true, unit: 'ms' })}${field('Passphrase', '', { hint: 'Optional. Stored encrypted on this PC.' })}</div>
-      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">Add camera</button></div></div></div>`;
-    return base;
-  } },
-  stopall: { label: 'Stop all outputs', dialog: true, build: () => {
-    const base = multiview(CAMS.slice(0, 4));
-    base.html += `<div class="scrim"><div class="dialog" role="alertdialog" aria-labelledby="dlg-s"><h2 id="dlg-s">Stop all outputs?</h2><div class="body">
-      <p>Every receiver loses picture now: <strong>9 outputs on 4 cameras</strong> in show <strong>Hội nghị Khách hàng 2026</strong>.</p>
-      <div class="list-out"><div><span class="pill live"><i></i>NDI</span>4 receivers in OBS/vMix</div><div><span class="pill live"><i></i>SDI</span>1 key + fill pair</div><div><span class="pill live"><i></i>VCAM</span>1 virtual camera</div><div><span class="pill live"><i></i>OMT</span>1 · <span class="pill live"><i></i>FS</span>1 · <span class="err-chip">SRT</span>1 retrying</div></div>
-      <p>The engine and this show stay open. Start outputs again from each camera.</p>
-      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-danger">${icon('power')}Stop all outputs</button></div></div></div>`;
-    return base;
-  } },
-  rate: { label: 'Change frame rate', dialog: true, build: () => {
-    const base = SCREENS.settings.build();
-    base.html += `<div class="scrim"><div class="dialog" role="alertdialog" aria-labelledby="dlg-r"><h2 id="dlg-r">Change the frame rate?</h2><div class="body">
-      <p>From <strong class="num">59.94</strong> to <strong class="num">50</strong> fps. Every output restarts and loses picture for about 1 second.</p>
-      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">Change frame rate</button></div></div></div>`;
-    return base;
-  } }
+  addout: { label: 'Add output', build: () => multiviewWin(CAMS4) + dlg('Add output to CAM 2', `<div class="dlg-b">
+      ${prop('Output type', ctl('NDI', { select: true }))}
+      ${prop('Sends', seg(['Keyed (fill + key)', 'Composited']))}
+      ${prop('NDI source name', ctl('BreadCamera (MC chính – Cam 2)'))}
+      ${prop('Resolution', ctl('Same as show', { select: true }))}
+      ${prop('Frame rate', ctl('Half rate · 29.97', { select: true }))}
+      <p class="note">Smaller sizes: 1280×720, 960×540. Frame rate: same as show or half. Other rates are not offered because converting them judders.</p></div>`,
+    `<button class="btn">Cancel</button><button class="btn primary">${icon('plus')}Add output</button>`) },
+  stopall: { label: 'Stop all outputs', build: () => multiviewWin(CAMS4) + dlg('Stop all outputs?', `<div class="dlg-b">
+      <p>Every receiver loses picture now: <strong>9 outputs on 4 cameras</strong> in <strong>Hội nghị Khách hàng 2026</strong>.</p>
+      <p>The engine and the show stay open. Start outputs again from each camera.</p></div>`,
+    `<button class="btn">Cancel</button><button class="btn danger">${icon('power')}Stop all outputs</button>`) }
 };
 
-/* sizing: keep every tile 16:9 and the whole wall inside the work area */
-const GRID = { 1: [1, 1], 2: [2, 1], 3: [2, 2], 4: [2, 2], 5: [3, 2], 6: [3, 2], 7: [4, 2], 8: [4, 2] };
 function sizeWall() {
   document.querySelectorAll('.wall').forEach(w => {
-    const n = +w.dataset.n, [cols, rows] = GRID[n], area = w.parentElement;
-    const W = area.clientWidth - 4, H = area.clientHeight - 4, strip = 33, gap = 2;
-    const byW = (W - gap * (cols - 1)) / cols;
-    const byH = ((H - gap * (rows - 1)) / rows - strip) * 16 / 9;
-    const tw = Math.floor(Math.min(byW, byH));
+    const n = +w.dataset.n, [cols, rows] = GRID[n], a = w.parentElement;
+    const W = a.clientWidth - 8, H = a.clientHeight - 8, strip = 29, gap = 3;
+    const tw = Math.floor(Math.min((W - gap * (cols - 1)) / cols, ((H - gap * (rows - 1)) / rows - strip) * 16 / 9));
     w.style.gridTemplateColumns = `repeat(${cols}, ${tw}px)`;
   });
 }
-
 const bar = document.querySelector('.mockbar');
 function show(id) {
-  const s = SCREENS[id].build();
-  document.getElementById('rail').innerHTML = RAIL(s.rail);
-  document.getElementById('main').innerHTML = s.html;
+  document.getElementById('win').innerHTML = SCREENS[id].build();
   bar.querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.id === id));
   try { history.replaceState(null, '', '#' + id); } catch (e) {}
   sizeWall();
 }
-Object.entries(SCREENS).forEach(([id, s]) => {
-  const b = document.createElement('button');
-  b.role = 'tab'; b.dataset.id = id; b.textContent = s.label;
-  b.onclick = () => show(id);
-  bar.appendChild(b);
-});
+Object.entries(SCREENS).forEach(([id, s]) => { const b = document.createElement('button'); b.role = 'tab'; b.dataset.id = id; b.textContent = s.label; b.onclick = () => show(id); bar.appendChild(b); });
 bar.insertAdjacentHTML('beforeend', '<span class="note">Pictures are synthetic. Camera and show names are user data.</span>');
 addEventListener('resize', sizeWall);
 show(SCREENS[location.hash.slice(1)] ? location.hash.slice(1) : 'multiview');
