@@ -19,16 +19,16 @@ The UI is a React app hosted in WebView2 inside the Windows desktop shell
 
 - **Event production crews** on the Windows production PC next to OBS/vMix. The
   operator takes several cameras in, cleans them up (background removal, blur or
-  replacement, color matching) and sends each one on to the switcher or a display.
+  replacement, colour calibration) and sends each one on to the switcher or a display.
 - **How they use it (confirmed 2026-10-08):** heavy use during setup before the
-  show (inputs, matte, color match, outputs). During the show it sits on a side
+  show (inputs, matte, colour calibration, outputs). During the show it sits on a side
   monitor or in the tray, and a problem must be obvious at a glance.
 
 ## Product Purpose
 
 Multi-camera GPU processing for live production: AI background removal without a
-green screen, background blur or replacement, and one-shot color matching across
-cameras, with more pipeline stages added later.
+green screen, background blur or replacement, and one-time colour calibration of
+each camera against a colour chart, with more effects added later as add-ins.
 
 Success means a camera's output never goes black because of BreadCamera, and one
 RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
@@ -42,8 +42,8 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
   camera, fullscreen).
 - **Keyed output.** Outputs can carry fill plus alpha (NDI, OMT, SDI key+fill),
   so the switcher composites the person over its own background.
-- **Cross-camera color match.** One click matches every camera to a reference
-  camera, then locks; manual trims sit on top.
+- **Chart calibration.** Each camera is calibrated once against a printed
+  ColorChecker or a tablet showing the chart, then locked, so every camera matches.
 - **The broadcast does not fail.** The engine runs headless and keeps every
   output going when the UI is closed. An input drop holds the last frame, then
   shows the slate. A failing stage is bypassed for that camera only. A failing
@@ -56,14 +56,14 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
   remote cameras in over SRT.
 - **Object model (confirmed 2026-10-08):** no level 1 (standalone, no login).
   Level 2 is the **Show**, one show file per event. Level 3 is where a signal goes
-  in or out: **Camera** (input) and **Output** ("Đầu ra").
+  in or out: **Camera** (input) and **Output**.
 - Closing the window hides the UI to the tray; outputs keep running. Stopping
   everything is a separate action behind a confirm dialog whose primary button
-  reads "Dừng tất cả đầu ra".
-- Screens in v1: Multiview (all cameras with status, effect badges and errors),
-  Camera detail (input settings, stage panels, output list), Color match
-  (reference and target side by side, region boxes, Match, trims) and Settings
-  (show frame rate, GPU and matte backend, input-loss hold time, slate image).
+  reads "Stop all outputs".
+- **UI (confirmed 2026-10-08):** a native Windows pro tool, English only. Title
+  bar with menus, toolbar, Multiview with a docked Inspector for the selected
+  camera, status bar; Settings is a dialog. Colour calibration runs inside the
+  camera's Colour effect, not on its own page. Reference: `docs/design/mockups/`.
 
 ## Capabilities and Constraints
 
@@ -75,16 +75,18 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
 - AJA input and output are experimental, and the UI labels them "not verified on
   hardware".
 - Previews: about 480×270 at 30 fps per Multiview tile, streamed only while the
-  tile is visible; 720p in Camera detail and Color match.
-- **Undecided:** the Vietnamese term for Show, and whether "Camera" stays in
-  English in Vietnamese copy. Add both to the glossary once decided.
+  tile is visible; 720p for the selected camera while calibrating.
+- **English only (confirmed 2026-10-08).** Names the operator types (cameras,
+  outputs, shows) can be in any language and are Unicode end to end.
+- Show format: one frame rate (50, 59.94, 60) and resolution (1280×720,
+  1920×1080); each output may send a smaller size or half the frame rate.
 
 ## Brand Commitments
 
 - Name: **BreadCamera**, in that camel-case spelling, as part of BM Solutions.
-- The ecosystem glossary, the four signal states (Sẵn sàng · Đang kết nối ·
-  Đang phát · Tắt) and the error/confirm/form rules in the UX contract apply
-  unchanged. Vietnamese first, English second.
+- The four signal states in English (Ready · Connecting · Live · Offline), the
+  error/confirm/form rules in the UX contract apply unchanged. BreadCamera is
+  English only, unlike the rest of the ecosystem (owner decision 2026-10-08).
 
 ## Evidence on Hand
 

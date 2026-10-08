@@ -2,6 +2,10 @@
 
 Date: 2026-10-08
 Status: approved (2026-10-08). Amended 2026-10-08 for the build machine (§7.2) and M0 result (§7.1).
+Amended 2026-10-08 after the UI mockup review (owner): English-only UI with Unicode names, native pro-tool
+layout with a docked Inspector (§6.4), effects as per-camera add-ins (§5.4), one-time chart calibration instead
+of reference matching (§5.3), show resolution and per-output format (§3.2, §4.3), three-state input health (§6.1).
+Reference mockups: `docs/design/mockups/index.html`; Multiview brief: `docs/design/multiview.md`.
 
 ## 1. Purpose
 
@@ -13,7 +17,8 @@ The processing in v1 is:
 
 - AI background removal without a green screen.
 - Background blur or replacement.
-- One-shot color matching between cameras.
+- One-time colour calibration of each camera against a colour chart, so all
+  cameras match.
 
 The pipeline is built so that more processing stages can be added later.
 
@@ -24,7 +29,7 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 ### 1.1 Success criteria
 
 - One RTX 4070-class PC handles **4 cameras at 1080p60**, every camera running
-  background removal plus color matching, with no tick overruns.
+  background removal plus colour correction, with no tick overruns.
 - BreadCamera adds **≤ 50 ms** end-to-end latency per camera.
 - No failure of one component blacks out an output:
   - An input drop leads to hold, then a slate.
@@ -43,7 +48,9 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 | Inputs | SRT (which covers BreadCall per-feed SRT), NDI, DeckLink, AJA, USB/UVC. LiveKit later |
 | Outputs | NDI, OMT, SRT, Windows virtual camera, SDI (DeckLink/AJA), fullscreen display |
 | Background removal | NVIDIA Maxine VFX SDK AI Green Screen, plus an ONNX fallback behind the same interface |
-| Color matching | One-shot auto-match to a reference camera, then locked, with manual trims on top |
+| Colour | One-time calibration per camera against a colour chart (printed ColorChecker Classic 24, or a tablet showing the same chart), then locked |
+| UI | Native Windows pro-tool layout: title bar with menus, toolbar, Multiview with a docked Inspector, status bar. English only; names the operator types (cameras, outputs, shows) can be in any language |
+| Show format | One show-wide frame rate and resolution; each output may send a smaller size or half the frame rate |
 | Stack | C++20 engine. UI in React + `@bmsolutionsvn/design` hosted in WebView2 |
 | Process model | Headless engine process plus a UI shell process that supervises it |
 
@@ -51,7 +58,8 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 
 - Standalone tool: no Kinde login and no billing in v1.
 - Windows 11 is required, because the virtual camera uses `MFCreateVirtualCamera`.
-- Every camera runs at a single show-wide frame rate (50, 59.94 or 60).
+- Every camera runs at a single show-wide frame rate (50, 59.94 or 60) and
+  resolution (1280×720 or 1920×1080).
 
 ## 2. Architecture
 
@@ -113,6 +121,8 @@ Input ─▶ Decode ─▶ To RGBA ─▶ Color ─▶ Matte ─▶ Background �
 
 - A compute shader converts NV12, P010, UYVY or BGRA into RGBA16F, in linear
   BT.709.
+- The same pass scales to the show resolution. An input of another size or
+  aspect is scaled to fit and letterboxed; it is never stretched.
 
 **Stages**
 
@@ -206,6 +216,15 @@ Every camera can have several outputs. Each output sends one of two things:
 | SDI | DeckLink, AJA (experimental) | ✅ key+fill | Fill and key go out on two SDI ports |
 | Fullscreen | Borderless D3D11 swapchain on a chosen monitor | ❌ | LED walls, projectors, confidence monitors |
 
+**Output format.** By default an output sends the show format. Each output
+may override it:
+
+- **Resolution:** same as show, 1280×720 or 960×540 (never larger than the
+  show). The scale is one GPU pass per distinct size, shared by every output
+  of that camera that uses the same size.
+- **Frame rate:** same as show, or **half** (every second tick, e.g. 29.97
+  from 59.94). No other rate conversion is offered, because it judders.
+
 ## 5. Effects
 
 ### 5.1 Matte (background removal)
@@ -255,35 +274,40 @@ Notes:
   the same way on both backends.
 - Video backgrounds are out of scope for v1.
 
-### 5.3 Color match (one-shot)
+### 5.3 Colour calibration (one-time, chart-based)
 
-**Steps**
+Each camera is calibrated once, before the show, under show lighting. The
+result is locked; the operator calibrates again only if the lighting changes.
 
-1. The operator picks a reference camera and one or more target cameras.
-2. Optionally, the operator draws a region box on each camera over shared
-   content: a face, a shirt or a grey card. With no box, the whole frame is
-   used.
-3. The operator clicks **Match**. The engine averages about 1 s of frames from
-   each camera, before the matte stage.
-4. The engine solves the correction in three passes:
-   1. White-balance and exposure gains from the means of the regions.
-   2. Mean and spread transfer in Lab color space.
-   3. Per-channel tone-curve matching (CDF matching). The curves are clamped
-      and smoothed so they cannot cause banding or extreme shifts.
-5. The result is baked into a **33³ 3D LUT** for each target camera. The LUT
-   stays **locked** until the next Match.
+**Charts**
 
-**Trims on top of the LUT**
+- **Printed card:** an X-Rite / Calibrite ColorChecker Classic 24. The target
+  is the card's published reference values.
+- **Tablet screen:** a tablet showing BreadCamera's chart image (the same 6×4
+  layout, sRGB values) at full brightness. A tablet's colours are not absolute,
+  so the target is the **first camera calibrated with that tablet in this
+  show**: every other camera is matched to that camera's reading of the same
+  tablet.
 
-- exposure;
-- temperature and tint;
-- lift, gamma and gain;
-- saturation.
+**Flow (in the Inspector, §6.4)**
 
-**Also included**
+1. The operator clicks **Calibrate** on the camera's Colour effect. Multiview
+   shows that camera alone; every other camera and every output keeps running.
+2. The operator holds the chart in front of the camera.
+3. The engine finds the chart and places its four corners automatically
+   (OpenCV `mcc` ColorChecker detector). The operator drags a corner only if
+   it is wrong; with no chart found, the operator places all four by hand.
+4. **Capture:** the engine averages about 1 s of frames, before the matte
+   stage, and samples the centre of each of the 24 patches.
+5. **Solve:** in linear light, a 3×3 colour matrix plus per-channel 1D tone
+   curves (monotonic, smoothed, clamped) fitted by least squares to minimise
+   the mean ΔE2000 over the 24 patches. The result is baked into a **33³ 3D
+   LUT** for that camera and locked.
+6. The result is shown in plain words: **Good match** (mean ΔE2000 ≤ 2),
+   **Fair** (≤ 4) or **Poor** (> 4, with "check the lighting and glare"). The
+   numbers are in a tooltip.
 
-- **.cube LUT import**, using the same LUT texture.
-- **Undo** (one step back to the previous LUT) and **reset**.
+**Also included:** **Undo** (back to the previous LUT) and **Clear**.
 
 ### 5.4 Adding stages
 
@@ -291,6 +315,12 @@ Notes:
 - The UI builds each stage panel from that schema.
 - Adding a new effect means writing one stage class plus registering it.
 - In v1 the stage order is fixed. A node graph is a later sub-project.
+- **Effects are per-camera add-ins.** The operator adds an effect to a camera
+  (Add effect) and removes it again. An effect that is not added is skipped
+  and costs nothing. Every registered stage appears in Add effect
+  automatically, so a new effect needs no UI work beyond its schema.
+- A stage's schema declares its dependencies (Background needs Matte). Add
+  effect explains a missing dependency instead of hiding the effect.
 
 ## 6. Control API, show file, UI
 
@@ -307,9 +337,10 @@ Notes:
 **Messages**
 
 - Commands:
-  - add or remove a camera, input or output;
-  - set stage parameters;
-  - run color match;
+  - add or remove a camera, input or output (with its output format);
+  - add or remove a stage on a camera, and set stage parameters;
+  - colour calibration: find the chart, set corners, capture, undo, clear;
+  - set the show format (frame rate, resolution);
   - save or load a show.
 - When a client connects, the engine pushes a full state snapshot. After that
   it sends patches.
@@ -319,8 +350,15 @@ Notes:
   - GPU time per stage;
   - end-to-end latency;
   - health of each output.
-- Every input and output uses the UX-contract signal states, in this order:
-  Ready, Connecting, Live, Offline.
+- Every output uses the UX-contract signal states, in this order: Ready,
+  Connecting, Live, Offline.
+- Every input reports its health as one of:
+  - **receiving** — frames arriving cleanly (shown green);
+  - **degraded** — SRT packet loss above 1 %, or any dropped or repeated
+    frame in the last 10 s, or reconnecting (shown yellow);
+  - **down** — no frames; holding the last frame or showing the slate (shown
+    red, with the hold countdown or `SLATE`);
+  - **offline** — not started (shown grey).
 - Errors are not one of the signal states. They are reported separately, as
   persistent error blocks.
 
@@ -329,10 +367,10 @@ Notes:
 - A single JSON file stored in `%APPDATA%\BreadCamera\shows\`. It holds:
   - cameras;
   - inputs;
-  - stage parameters;
-  - LUTs;
-  - outputs;
-  - show settings.
+  - the stages added to each camera, and their parameters;
+  - LUTs and the chart readings they came from;
+  - outputs, with their format overrides;
+  - show settings, including the show format.
 - Autosave is debounced and runs after every change. A last-known-good copy is
   kept, and the engine loads it after a crash.
 - Secrets such as SRT passphrases are encrypted with **DPAPI**. They are never
@@ -350,25 +388,58 @@ Notes:
 
 ### 6.4 UI
 
-**Stack**
+The reference is the approved mockup `docs/design/mockups/index.html`; the
+Multiview strip and colour rules are in `docs/design/multiview.md`.
 
-- React + `@bmsolutionsvn/design` (MUI), built with Vite and embedded in the
-  shell exe.
-- Runs on the WebView2 Evergreen runtime.
-- Follows the shared UX contract: the shell layout, one primary action per
-  screen, the signal states, confirm dialogs and persistent error blocks.
-- Vietnamese first, English second, using the glossary terms exactly.
+**Stack and language**
 
-**Screens**
+- React + `@bmsolutionsvn/design` tokens (colours, mono numbers), built with
+  Vite and embedded in the shell exe, on the WebView2 Evergreen runtime.
+- **English only.** No language setting and no translation tables.
+- **Names are Unicode end to end.** Camera, output and show names can be in
+  any language (e.g. "Sân khấu trái"). They are UTF-8 in the engine, the API
+  and the show file, and are converted to UTF-16 only at Win32/COM boundaries
+  (window title, virtual-camera friendly name, message boxes). NDI source
+  names are sent as UTF-8.
 
-- **Multiview** — a grid of all cameras showing status, effect badges and
-  errors.
-- **Camera detail** — input settings, the stage panels (generated from each
-  stage's schema) and the output list.
-- **Color match** — the reference and target cameras side by side, region
-  boxes, the Match button and the trims.
-- **Settings** — show frame rate, GPU and matte backend, input-loss hold time
-  and slate image.
+**Look: a native Windows pro tool**
+
+- The Cyan Blueprint palette, Segoe UI Variable at 12 px, JetBrains Mono for
+  numbers, 26 px controls, label-left property rows.
+- The ecosystem rules still hold: signal states and errors are separate bands
+  and shapes; errors are persistent blocks, never toasts; destructive actions
+  go through a confirm dialog whose button names the action.
+
+**Window**
+
+- **Title bar** (custom, dark): menus File, Show, Camera, Output, View, Help;
+  the show name; minimise, maximise and close. Close hides to the tray.
+- **Toolbar:** Add camera, Add output, Add effect · Settings · Stop all
+  outputs….
+- **Centre: Multiview.** 1–8 tiles (layout Auto, 2×2, 3×2, 4×2), each a
+  16:9 picture over a **one-row state strip**: input chip (filled; green
+  receiving, yellow degraded, red down with the countdown or `SLATE`, grey
+  offline) · `CAM n` · name (cut with an ellipsis) · effect icons · → ·
+  output pills (outlined, signal state; a failed output is a rose chip) · a
+  mark for an unseen recovered fault. Clicking a tile selects it; nothing on
+  a tile changes an output.
+- **Right: Inspector** (docked, resizable) for the selected camera: Input,
+  Effects (Add effect, the chain, one group per added effect generated from
+  its schema, with on/off and Remove), Outputs (Add output, one row per
+  output with its format), Remove camera. **Calibrate** on the Colour effect
+  runs §5.3 in place: Multiview shows that camera alone until Capture or
+  Cancel.
+- **Status bar:** engine state and uptime, show format, GPU and matte
+  backend, tick overruns, outputs live and retrying, last save.
+
+**Dialogs**
+
+- Settings (Show: frame rate, resolution, hold time, slate; Engine: GPU,
+  matte backend, preview encoder; About).
+- Add camera, Add output (type, keyed or composited, name, resolution, frame
+  rate), Add effect.
+- Confirms: Stop all outputs, change of show format, remove camera, remove
+  output, clear calibration.
 
 ## 7. Repo and build
 
@@ -421,8 +492,14 @@ The machine that builds and tests BreadCamera overnight (Hermes) has an **AMD Ra
   - the output queue drop policy;
   - the signal and error state machines;
   - saving, loading and migrating the show file, and the DPAPI round-trip;
-  - **the color-match solver.** The test applies a known transform to a test
-    image, runs Match and checks that the mean ΔE2000 is below 2.
+  - **the calibration solver.** The test renders a synthetic ColorChecker,
+    applies a known colour transform, runs the solver and checks that the
+    mean ΔE2000 is below 2;
+  - **chart detection** on synthetic chart images: rotated, scaled, partly
+    lit, and in the tablet style;
+  - **Unicode names:** a camera named "Sân khấu trái – Cam 2" round-trips
+    through the API, the show file, the NDI source name and the
+    virtual-camera name unchanged.
 
 ### 8.2 GPU tests
 
@@ -431,6 +508,7 @@ These run locally on an RTX machine.
 - Golden-image comparisons, with a tolerance, for:
   - the RGBA conversion;
   - the LUT;
+  - output scaling and half-rate output;
   - blur;
   - choke and feather.
 - A matte smoke test on a sample clip.
@@ -465,11 +543,11 @@ There is one implementation plan per milestone. They are written in order.
 | # | Delivers | Done when |
 |---|---|---|
 | **M0** | ~~Confirm the Maxine license~~ **Done 2026-10-08** (§7.1): commercial use allowed. | — |
-| **M1** | End-to-end passthrough: SRT input → decode → tick → NDI and fullscreen outputs. Also the control API, show file, supervisor and a minimal multiview UI. | 4× 1080p60 passthrough with the input-loss hold and slate working. |
+| **M1** | End-to-end passthrough: SRT input → decode → tick → NDI and fullscreen outputs, with the show format and per-output format. Also the control API, show file, supervisor and the native UI shell (title bar, toolbar, Multiview, Inspector, status bar). | 4× 1080p60 passthrough with the input-loss hold and slate working. |
 | **M2** | Matte (batched Maxine) and the background modes keyed, blur and replace. Alpha over NDI. | All 4 cameras matted within budget. Keyed output works in vMix and OBS. |
-| **M3** | Color match, trims and .cube import. | The solver test passes. Matching works on real cameras. |
+| **M3** | Colour calibration: chart detection, the solver, the Calibrate flow in the Inspector. | The solver and detection tests pass. Calibration works on real cameras with a printed card and with a tablet. |
 | **M4** | The remaining I/O: NDI input, DeckLink, AJA (experimental), UVC, OMT, SRT output, virtual camera, SDI output. | Every adapter works except AJA. AJA compiles and is labeled experimental. |
-| **M5** | Hardening: the soak and fault-injection tests, the installer and the Vietnamese and English strings. | §8.3 and §8.4 pass. A clean install works on a fresh Windows 11 machine. |
+| **M5** | Hardening: the soak and fault-injection tests, the installer, the Settings dialog and the error text. | §8.3 and §8.4 pass. A clean install works on a fresh Windows 11 machine. |
 | **M6** | Non-NVIDIA path: the ONNX matte backend (the AMF/QSV/MF encoders already come with §7.2). | The 4-camera load runs on an AMD or Intel GPU at a documented, possibly lower, quality and frame rate. |
 
 ## 10. Out of scope (later sub-projects)
@@ -480,5 +558,8 @@ There is one implementation plan per milestone. They are written in order.
 - Video backgrounds.
 - A user-reorderable node graph of stages.
 - Remote control, for example from the BreadCall director page.
-- Continuous color matching.
+- Continuous colour matching.
+- Manual colour trims and `.cube` LUT import.
+- UI languages other than English.
+- A 3840×2160 show format.
 - More than one GPU.

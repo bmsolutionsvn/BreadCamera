@@ -39,11 +39,11 @@ broadcast under-monitor display): a hairline-bounded mono band that is
   More than fit: `+N`.
 - In vs out is told apart at a glance by **filled chip on the left vs outlined
   pills after the arrow**. The colour of each still means its state.
-- Every code and icon carries its full Vietnamese name in a tooltip and
-  `aria-label` (e.g. `SRT` → "Đầu vào SRT — Đang phát").
+- Every code and icon carries its full name in a tooltip and `aria-label`
+  (e.g. `SRT` → "SRT input: receiving").
 - Long messages never go on the strip: the strip shows the short form (input
   chip reads `00:04` while holding a frame, `SLATE` once the slate is up) and
-  the full sentence is in the tooltip and on Camera detail.
+  the full sentence is in the tooltip and in the Inspector.
 
 A state that changes keeps a mark on its strip until the operator opens that
 camera, so faults that recovered on their own (e.g. "SRT dropped 3 s at 20:14")
@@ -54,7 +54,9 @@ are still seen.
 - One production-ready screen. A tile click opens Camera detail; nothing else
   on a tile is interactive.
 - Top bar: show name, frame rate, GPU load, and a tick-overrun counter shown
-  only when above 0. Primary action top right: **Thêm camera**.
+  only when above 0. **Superseded 2026-10-08:** the window is now a native pro
+  tool (spec §6.4): Add camera is in the toolbar, show stats are in the status
+  bar, and a tile click selects the camera for the docked Inspector.
 - Anti-goals: controls on tiles; toasts for errors; automatic reordering; red
   tally borders (BreadCamera does not know what the switcher has on air, and red
   already means "Đang phát"); glow or gradient.
@@ -63,14 +65,14 @@ are still seen.
 
 | Cameras | Grid |
 |---|---|
-| 0 | Empty state offering Thêm camera |
+| 0 | Empty state pointing to Add camera |
 | 1 | One tile fills the work area |
 | 2 | 2×1 |
 | 3–4 | 2×2 (typical) |
 | 5–6 | 3×2 |
 | 7–8 | 4×2 |
 
-- Input: Sẵn sàng · Đang kết nối · Đang phát · Tắt.
+- Input health: receiving · degraded · down · offline (spec §6.1). Outputs: Ready · Connecting · Live · Offline.
 - Input lost: last frame held with a countdown on the strip ("Mất tín hiệu
   00:04"), then the slate.
 - Stage bypassed: that effect badge turns to the error band.
@@ -101,7 +103,7 @@ these pictures, so nothing tinted sits on or around them.
 | Page behind the wall | Plate | `plate-black` |
 | Rail | Rail, active item cyan wash | `rail-black`, `blueprint-cyan-wash` + `blueprint-cyan` |
 | Top bar | Surface, hairline below; mono numbers in muted text | `surface`, `hairline`, `text-muted` |
-| Thêm camera | The one cyan fill on the screen | `blueprint-cyan`, `ink-on-cyan` |
+| Add camera | Cyan icon in the toolbar | `blueprint-cyan`, `ink-on-cyan` |
 | Gaps between tiles | 2px of plate, no borders, so the pictures read as one wall | `plate-black` |
 | Picture | Untouched video. No overlay, tint, dim or vignette in any state | — |
 | Alpha checkerboard | 8px squares of two *neutral* greys (no blue cast), so a keyed edge reads true | `#141414` / `#1F1F1F` (BreadCamera-private, video only) |
@@ -119,7 +121,7 @@ these pictures, so nothing tinted sits on or around them.
 |---|---|---|
 | Output sending | Red pill, pulsing dot. **All Live dots share one clock**, so a healthy wall breathes in unison; any pill out of step or out of red is the exception | `signal-live` / `signal-live-text` |
 | Input or output reconnecting | Amber pill | `signal-connecting` / `-text` |
-| Input lost, holding last frame | Strip gets a Warning left border on its 8% wash; input chip turns amber and reads `00:04` counting down. Tooltip: "Mất tín hiệu · đang giữ khung hình cuối" | `system-warning`, `signal-connecting` |
+| Input lost, holding last frame | Strip gets a Warning left border on its 8% wash; input chip turns amber and reads `00:04` counting down. Tooltip: "Signal down, holding the last frame" | `system-warning`, `signal-connecting` |
 | Slate showing (hold ran out) | Strip left border and wash in Danger; input chip reads `SLATE` | `system-danger` |
 | Stage bypassed | That effect icon turns rose | `system-danger` |
 | Output failed | That output: rose error chip (4px, not a pill) with retry text; never red | `system-danger` |
@@ -147,6 +149,5 @@ these pictures, so nothing tinted sits on or around them.
 
 ## 8. Open decisions (do not guess)
 
-- The Vietnamese term for Show.
 - Whether camera order can be changed, and where.
-- Exact Vietnamese wording of the slate and engine-restart messages.
+- None on wording: the UI is English only (spec §6.4).
