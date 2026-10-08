@@ -579,7 +579,8 @@ In priority order:
 4. **Audio noise suppression and room echo removal.** This needs an audio stage type, since today's stages are video only. The stage reports the delay it adds, and the camera's video is delayed by the same amount so lips stay in sync.
 5. **Live speech-to-text captions.** These are per show, not per camera. They go out as their own output, either as text with a transparent background (fill and key) or as caption data, for the switcher to lay over the picture. Expected delay is 1–3 s. Vietnamese accuracy must be confirmed before the work is committed. Captions can be in any language; the rule that the UI is English only does not apply to them.
 
-Rejected:
+Not on the roadmap:
 
-- **Not planned:** frame interpolation (it adds delay and artifacts; frame repeat covers 25/30 fps sources), eye-contact and head-pose correction, and skin smoothing.
+- **Maybe later, not scheduled:** subtle skin smoothing, and opt-in eye-contact correction for each camera.
+- **Not planned:** frame interpolation (it adds delay and artifacts; frame repeat covers 25/30 fps sources) and head-pose correction.
 - **Never:** face or body reshaping, virtual makeup, age or gender morphing, and voice changing. The one exception is a future identity-protection pack (voice disguise with face blur), and only if a customer asks for it.
