@@ -414,8 +414,10 @@ Multiview strip and colour rules are in `docs/design/multiview.md`.
 
 - **Title bar** (custom, dark): menus File, Show, Camera, Output, View, Help;
   the show name; minimise, maximise and close. Close hides to the tray.
-- **Toolbar:** Add camera, Add output, Add effect · Settings · Stop all
-  outputs….
+- **Toolbar:** Add camera · Settings · Stop all outputs…. Adding an output
+  or an effect belongs to a camera, so it is done in that camera's Inspector
+  (the + on Effects and on Outputs) or from the Camera menu, never from the
+  toolbar.
 - **Centre: Multiview.** 1–8 tiles (layout Auto, 2×2, 3×2, 4×2), each a
   16:9 picture over a **one-row state strip**: input chip (filled; green
   receiving, yellow degraded, red down with the countdown or `SLATE`, grey

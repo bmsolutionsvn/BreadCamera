@@ -67,6 +67,7 @@ button { font: inherit; color: inherit; }
 .tb svg.i { color: var(--muted); }
 .tb.accent svg.i { color: var(--cyan); }
 .tb.danger { color: var(--danger); } .tb.danger svg.i { color: var(--danger); }
+.tb.sm { height: 22px; padding: 0 6px; font-weight: 400; color: var(--muted); } .tb.sm svg.i { width: 12px; height: 12px; color: var(--cyan); }
 .tsep { width: 1px; height: 20px; background: var(--hair); margin: 0 4px; }
 .tspace { flex: 1; }
 
@@ -405,8 +406,6 @@ const titlebar = (open) => `<div class="titlebar"><span class="app-ic">${icon('c
   <div class="wintitle">Hội nghị Khách hàng 2026 — BreadCamera</div><div class="caption"><span title="Minimise">${CAP.min}</span><span title="Maximise">${CAP.max}</span><span class="close" title="Close to tray: outputs keep running">${CAP.close}</span></div></div>`;
 const toolbar = (ws) => `<div class="toolbar">
   <button class="tb accent" title="Add camera (Ctrl+Shift+N)">${icon('plus')}Add camera</button>
-  <button class="tb" title="Add output to the selected camera (Ctrl+Shift+O)">${icon('out')}Add output</button>
-  <button class="tb" title="Add effect to the selected camera">${icon('fxadd')}Add effect</button>
   <span class="tspace"></span>
   <button class="tb" title="Settings (Ctrl+,)">${icon('settings')}Settings</button>
   <span class="tsep"></span>
@@ -448,11 +447,11 @@ function inspector(o = {}) {
       <p class="note">Drag a corner on the picture only if it is wrong. Tablet: show the chart image at full brightness.</p>`)
     : group('color', 'Colour', `${prop('Calibration', '<span class="ok-line" title="Average colour error 7.4 before, 1.1 after (ΔE2000)">' + icon('check') + 'Good match · 19:40</span>')}<div><button class="btn">${icon('chart')}Calibrate again</button></div>`)}
     ${group('matte', 'Background removal', `${prop('Quality', ctl('High quality', { select: true }))}<div class="row2">${prop('Choke', ctl('1', { mono: true, unit: 'px', spin: true }))}${prop('Feather', ctl('2', { mono: true, unit: 'px', spin: true }))}</div>${prop('Threshold', slider(42, '0.42'))}`)}
-    <p class="note">Effects run in this fixed order.</p>`, `<button class="ibtn" title="Add effect">${icon('plus')}</button>`)}
+    <p class="note">Effects run in this fixed order.</p>`, `<button class="tb sm" title="Add effect to this camera">${icon('plus')}Add effect</button>`)}
   ${sec('Outputs', `
     <div class="block danger" role="alert">${icon('err')}<div><b>SRT output failed.</b> <span class="d">10.0.0.5:9000 refused the connection. Retrying in 3 s (attempt 4).</span></div></div>
     <div class="orow"><span class="pill live"><i></i>NDI</span><div><div class="n">BreadCamera (MC chính – Cam 2)</div><div class="m">Keyed · same as show</div></div><button class="ibtn" aria-label="Output menu">${icon('more')}</button></div>
-    <div class="orow"><span class="err-chip">${icon('retry')}SRT</span><div><div class="n mono" style="font-size:11.5px">srt://10.0.0.5:9000</div><div class="m">Composited · 1280×720 · 29.97</div></div><button class="ibtn" aria-label="Output menu">${icon('more')}</button></div>`, `<button class="ibtn" title="Add output">${icon('plus')}</button>`)}
+    <div class="orow"><span class="err-chip">${icon('retry')}SRT</span><div><div class="n mono" style="font-size:11.5px">srt://10.0.0.5:9000</div><div class="m">Composited · 1280×720 · 29.97</div></div><button class="ibtn" aria-label="Output menu">${icon('more')}</button></div>`, `<button class="tb sm" title="Add output to this camera">${icon('plus')}Add output</button>`)}
   <div style="padding:10px 12px"><button class="btn ghost-danger">${icon('trash')}Remove camera…</button></div>
   </div></aside>`;
 }
