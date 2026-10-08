@@ -33,7 +33,8 @@ body { background: var(--plate); color: var(--text); font: 400 14px/1.5 var(--sa
 svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 /* mockup chrome (not part of the app) */
-.mockbar { height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: #000; border-bottom: 1px solid var(--hair); overflow-x: auto; white-space: nowrap; }
+.mockbar { height: 40px; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: #000; border-bottom: 1px solid var(--hair); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.mockbar::-webkit-scrollbar { display: none; }
 .mockbar .tag { font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--dim); margin-right: 8px; }
 .mockbar button { font: 500 12px var(--sans); color: var(--muted); background: none; border: 1px solid transparent; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
 .mockbar button:hover { color: var(--text); background: var(--surface-hover); }
@@ -180,6 +181,31 @@ table.outs-t { width: 100%; border-collapse: collapse; font-size: 13px; }
 .outs-t tr.err-row td { padding: 0; }
 .chip { height: 22px; padding: 0 8px; border-radius: 4px; border: 1px solid var(--hair); color: var(--muted); font-size: 12px; display: inline-flex; align-items: center; }
 
+/* effects (add-ins) */
+.fx-head { display: flex; align-items: center; gap: 10px; padding: 4px 2px 0; }
+.fx-head h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.fx-head .right { margin-left: auto; }
+.chain { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; padding: 0 2px; }
+.node { height: 26px; padding: 0 7px; border-radius: 4px; border: 1px solid var(--hair); background: var(--surface); font: 500 12px var(--sans); color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.node.fxn { color: var(--text); border-color: var(--hair-strong); }
+.node.fxn svg.i { width: 13px; height: 13px; color: var(--muted); }
+.chain > svg.i { width: 12px; height: 12px; color: var(--disabled); }
+.fx-note { font-size: 12px; color: var(--dim); padding: 0 2px; }
+.panel-h .fx-ic { color: var(--muted); display: grid; }
+.btn-sm { height: 30px; padding: 0 10px; font-size: 13px; }
+.pick { display: grid; gap: 6px; }
+.pick-row { display: grid; grid-template-columns: 20px 28px 1fr auto; gap: 12px; align-items: start; padding: 12px; border: 1px solid var(--hair); border-radius: 6px; background: var(--surface); color: var(--text); }
+.pick-row.sel { border-color: var(--cyan); }
+.pick-row.done { opacity: .55; }
+.pick-row .radio { width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--hair-strong); margin-top: 2px; display: grid; place-items: center; }
+.pick-row.sel .radio { border-color: var(--cyan); }
+.pick-row.sel .radio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); }
+.pick-row .ic { width: 28px; height: 28px; border-radius: 4px; border: 1px solid var(--hair); display: grid; place-items: center; color: var(--muted); }
+.pick-row b { font-weight: 600; font-size: 14px; display: block; }
+.pick-row p { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.pick-row .req { font: 400 12px var(--mono); color: var(--dim); margin-top: 6px; display: flex; align-items: center; gap: 6px; }
+.pick-row .req svg.i { width: 12px; height: 12px; color: var(--success); }
+
 /* colour match */
 .cm { display: grid; grid-template-columns: 288px minmax(0,1fr); height: 100%; min-height: 0; }
 .cm-list { border-right: 1px solid var(--hair); padding: 12px 8px; overflow: auto; display: grid; align-content: start; gap: 2px; }
@@ -324,15 +350,15 @@ const IN_NAMES = { SRT: 'SRT input', NDI: 'NDI input', SDI: 'DeckLink input', US
 const ST = { live: 'Live', conn: 'Connecting', ready: 'Ready', off: 'Offline' };
 const CAMS = [
   { n: 1, name: 'Sân khấu trái', scene: 'stageL', in: 'SRT', st: 'live', fx: ['on','on','on'], outs: [['NDI','live'],['SDI','live']] },
-  { n: 2, name: 'MC chính – Cam 2', scene: 'mc', in: 'SRT', st: 'live', fx: ['on','on','on'], outs: [['NDI','live'],['SRT','err','retry 3s']] },
+  { n: 2, name: 'MC chính – Cam 2', scene: 'mc', in: 'SRT', st: 'live', fx: ['on','on','off'], outs: [['NDI','live'],['SRT','err','retry 3s']] },
   { n: 3, name: 'Khách mời Đà Nẵng', scene: 'guest', in: 'NDI', st: 'conn', hold: '00:04', fx: ['on','on','on'], outs: [['NDI','live']], strip: 'warn' },
   { n: 4, name: 'Toàn cảnh hội trường', scene: 'wide', in: 'SDI', st: 'live', keyed: true, fx: ['on','on','on'], outs: [['NDI','live'],['OMT','live'],['VCAM','live'],['FS','live']], seen: '20:14' },
-  { n: 5, name: 'Bục phát biểu', scene: 'podium', in: 'USB', st: 'live', fx: ['on','off','on'], outs: [['VCAM','live']] },
-  { n: 6, name: 'Hậu trường', scene: 'back', in: 'SDI', st: 'live', fx: ['bad','on','on'], outs: [['NDI','live']] },
-  { n: 7, name: 'Webcam đạo diễn', scene: 'webcam', in: 'USB', st: 'off', fx: ['off','off','on'], outs: [['NDI','off']] },
+  { n: 5, name: 'Bục phát biểu', scene: 'podium', in: 'USB', st: 'live', fx: ['on','on','off'], outs: [['VCAM','live']] },
+  { n: 6, name: 'Hậu trường', scene: 'back', in: 'SDI', st: 'live', fx: ['on','bad','on'], outs: [['NDI','live']] },
+  { n: 7, name: 'Webcam đạo diễn', scene: 'webcam', in: 'USB', st: 'off', fx: ['on','off','off'], outs: [['NDI','off']] },
   { n: 8, name: 'Cầu nối Hà Nội', scene: 'hanoi', in: 'SRT', st: 'conn', slate: true, fx: ['on','on','on'], outs: [['NDI','live']], strip: 'err' }
 ];
-const FX = [['matte', 'Background removal'], ['bg', 'Background'], ['color', 'Colour match']];
+const FX = [['color', 'Colour'], ['matte', 'Background removal'], ['bg', 'Background']];
 const FXSTATE = { on: 'running', off: 'not used', bad: 'bypassed after an error' };
 
 function strip(c, maxOuts = 4, frozenAll = false, dense = false) {
@@ -340,7 +366,7 @@ function strip(c, maxOuts = 4, frozenAll = false, dense = false) {
   const chipText = c.slate ? 'SLATE' : (c.hold || c.in);
   const chipCls = c.slate ? 'err' : st;
   const chipTitle = c.slate ? `${IN_NAMES[c.in]} — signal lost, showing the slate` : c.hold ? `${IN_NAMES[c.in]} — signal lost, holding the last frame (${c.hold} left)` : `${IN_NAMES[c.in]} — ${ST[st]}`;
-  const fx = FX.map(([k, label], i) => (dense && c.fx[i] === 'on') ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : c.fx[i] === 'off' ? 'unused' : ''}" title="${label} — ${FXSTATE[c.fx[i]]}" aria-label="${label} — ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
+  const fx = FX.map(([k, label], i) => (c.fx[i] === 'off' || (dense && c.fx[i] === 'on')) ? '' : `<span class="${c.fx[i] === 'bad' ? 'bad' : c.fx[i] === 'off' ? 'unused' : ''}" title="${label} — ${FXSTATE[c.fx[i]]}" aria-label="${label} — ${FXSTATE[c.fx[i]]}">${icon(k)}</span>`).join('');
   const shown = c.outs.slice(0, maxOuts), rest = c.outs.length - shown.length;
   const outs = shown.map(([k, s, note]) => {
     if (frozenAll) s = 'off';
@@ -397,6 +423,19 @@ function slider(label, pct, val, center = false) {
   return `<div class="field"><span class="lbl">${label}</span><div class="slider"><div class="track">${center ? '<span class="zero"></span>' : ''}<span class="fill" style="${center ? `left:${Math.min(50, pct)}%;width:${Math.abs(pct - 50)}%` : `width:${pct}%`}"></span><span class="knob" style="left:${pct}%"></span></div><span class="sl-v">${val}</span></div></div>`;
 }
 
+function fxPanel(ic, name, body) {
+  return `<section class="panel"><div class="panel-h"><span class="fx-ic">${icon(ic)}</span><h3>${name}</h3><div class="right"><span class="state run">Running</span><span class="switch on" role="switch" aria-checked="true" aria-label="${name} on"></span><button class="icon-btn" style="width:30px;height:30px" aria-label="${name} menu: Remove effect">${icon('more')}</button></div></div><div class="panel-b">${body}</div></section>`;
+}
+function effectsBlock() {
+  return `<div class="fx-head"><h2>Effects</h2><div class="right"><button class="btn btn-outline btn-sm">${icon('plus')}Add effect</button></div></div>
+    <div class="chain" aria-label="Processing order"><span class="node">SRT in</span>${icon('arrow')}<span class="node fxn">Colour</span>${icon('arrow')}<span class="node fxn">Background removal</span>${icon('arrow')}<span class="node">2 outputs</span></div>
+    <p class="fx-note">Effects run in this fixed order. New effects show up in Add effect when BreadCamera ships them.</p>
+    ${fxPanel('color', 'Colour', `<dl class="kv"><dt>Matched to</dt><dd>CAM 1 · 20:02</dd><dt>Remaining ΔE</dt><dd>1.8</dd></dl>
+      <button class="btn btn-outline btn-sm" style="justify-self:start">${icon('match')}Open colour match</button>`)}
+    ${fxPanel('matte', 'Background removal', `${field('Quality', 'High quality', { select: true })}
+      <div class="row2">${field('Choke', '1', { mono: true, unit: 'px' })}${field('Feather', '2', { mono: true, unit: 'px' })}</div>
+      ${slider('Threshold', 42, '0.42')}`)}`;
+}
 const SCREENS = {
   multiview: { label: 'Multiview', build: () => multiview(CAMS.slice(0, 4)) },
   eight: { label: 'Multiview · 8 cameras', build: () => multiview(CAMS, { extraMeta: `<span class="warn-chip" title="The GPU missed its frame deadline 3 times in the last minute.">${icon('warn')}3 tick overruns</span>` }) },
@@ -428,20 +467,7 @@ const SCREENS = {
             <div class="row2">${field('Latency', '120', { mono: true, unit: 'ms' })}${field('Passphrase', '••••••••••••')}</div>
             <dl class="kv"><dt>Received</dt><dd>8.4 Mb/s · H.264</dd><dt>Dropped frames</dt><dd>0</dd><dt>Round trip</dt><dd>34 ms</dd></dl>
           </div></section>
-        <section class="panel"><div class="panel-h"><h3>Background removal</h3><div class="right"><span class="state run">Running</span><span class="switch on" role="switch" aria-checked="true" aria-label="Background removal"></span></div></div>
-          <div class="panel-b">
-            ${field('Quality', 'High quality', { select: true })}
-            <div class="row2">${field('Choke', '1', { mono: true, unit: 'px' })}${field('Feather', '2', { mono: true, unit: 'px' })}</div>
-            ${slider('Threshold', 42, '0.42')}
-          </div></section>
-        <section class="panel"><div class="panel-h"><h3>Background</h3><div class="right"><span class="state run">Running</span></div></div>
-          <div class="panel-b">
-            ${field('Background mode', 'Blur', { select: true })}
-            ${slider('Blur', 30, '24 px')}
-          </div></section>
-        <section class="panel"><div class="panel-h"><h3>Colour</h3><div class="right"><span class="state run">Running</span></div></div>
-          <div class="panel-b"><dl class="kv"><dt>Matched to</dt><dd>CAM 1 · 20:02</dd><dt>Remaining ΔE</dt><dd>1.8</dd></dl>
-            <button class="btn btn-outline" style="justify-self:start">${icon('match')}Open colour match</button></div></section>
+        ${effectsBlock()}
         <button class="btn btn-ghost-danger" style="justify-self:start">Remove camera…</button>
       </div></div></div>` };
   } },
@@ -490,6 +516,20 @@ const SCREENS = {
         <dl class="kv"><dt>GPU</dt><dd>NVIDIA GeForce RTX 4070 · driver 581.57</dd><dt>Background removal</dt><dd>NVIDIA Maxine AI Green Screen</dd><dt>Preview encoder</dt><dd>NVENC H.264</dd><dt>Show file</dt><dd>D:\\Shows\\Hội nghị Khách hàng 2026.bcshow</dd></dl>
       </div></section>
     </div></div>` }) },
+  addfx: { label: 'Add effect', dialog: true, build: () => {
+    const base = SCREENS.detail.build();
+    const row = (cls, ic, name, desc, req, tag) => `<div class="pick-row ${cls}" role="radio" aria-checked="${cls === 'sel'}" ${cls === 'done' ? 'aria-disabled="true"' : ''}>
+      <span class="radio"></span><span class="ic">${icon(ic)}</span><div><b>${name}</b><p>${desc}</p>${req ? `<span class="req">${req}</span>` : ''}</div>${tag ? `<span class="chip">${tag}</span>` : ''}</div>`;
+    base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-fx" style="width:560px"><h2 id="dlg-fx">Add effect to CAM 2</h2><div class="body">
+      <div class="pick" role="radiogroup" aria-label="Effects">
+        ${row('sel', 'bg', 'Background', 'Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.', `${icon('check')}Needs Background removal, already on this camera`)}
+        ${row('done', 'color', 'Colour', 'Match this camera to a reference camera, then trim by hand.', '', 'Added')}
+        ${row('done', 'matte', 'Background removal', 'AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).', '', 'Added')}
+      </div>
+      <p style="font-size:12px;color:var(--dim)">The effect starts with its default settings and runs in its fixed place in the chain.</p>
+      </div><div class="actions"><button class="btn btn-outline">Cancel</button><button class="btn btn-primary">${icon('plus')}Add effect</button></div></div></div>`;
+    return base;
+  } },
   addcam: { label: 'Add camera', dialog: true, build: () => {
     const base = multiview(CAMS.slice(0, 3));
     base.html += `<div class="scrim"><div class="dialog" role="dialog" aria-labelledby="dlg-t"><h2 id="dlg-t">Add camera</h2><div class="body">
