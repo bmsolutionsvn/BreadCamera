@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** AI background removal (NVIDIA Maxine AI Green Screen, batched across cameras) plus the background stage (keyed fill+alpha, masked blur, replace), with per-stage bypass on failure or overrun, alpha over NDI, and a camera detail screen with stage panels.
+**Goal:** AI background removal (NVIDIA Maxine AI Green Screen, batched across cameras) plus the background stage (keyed fill+alpha, masked blur, replace), with per-stage bypass on failure or overrun, alpha over NDI, and the Inspector's Effects section where effects are per-camera add-ins.
+
+**Amended 2026-10-08 after the UI mockup review (owner):** English-only UI; effects are add-ins (spec §5.4) — a stage is *added* to a camera when its kind is a key in `CameraConfig::stages`, `removeStage` takes it out, and schemas carry a label, description, icon, dependencies and the params applied on add; Task 6 is rewritten for M1's native window (Inspector Effects section, Add effect dialog, strip icons).
 
 **Architecture:** The camera tick from M1 splits into two halves around one batched matte call per tick: `beginTick` (pick + convert) → `MatteService` (one `MatteBackend::process` for every camera that wants a matte) → `endTick` (refine alpha → background compositor → readback → fan-out). Each stage is guarded by a `StageGuard` (bypass on exception or sustained overrun, retry after 5 s). The background maths are compute shaders on the shared D3D11 device; the Maxine backend is behind `BC_WITH_MAXINE` and stages its frames through CPU memory (guaranteed NvCVImage API). Parameters live in the show as `stages` per camera and are validated by pure schema code that the router and the UI share.
 
@@ -14,7 +16,7 @@
 
 ## Global Constraints
 
-- Everything in M1's Global Constraints still applies (build/test scripts, LGPL FFmpeg, `BC_WITH_*` + `BC_REQUIRES`, never black, 127.0.0.1 + token, DPAPI secrets, signal states, Vietnamese-first UI copy, conventional commits).
+- Everything in M1's Global Constraints still applies (build/test scripts, LGPL FFmpeg, `BC_WITH_*` + `BC_REQUIRES`, never black, 127.0.0.1 + token, DPAPI secrets, signal states, English-only UI with Unicode names, conventional commits).
 - Stage order is fixed: **Color → Matte → Background** (spec §3.2). M2 builds Matte and Background; Color arrives in M3 and slots in before Matte.
 - A stage failure bypasses **that stage for that camera only**, shows an error, and retries after **5 s** (spec §3.6). A bypassed matte means alpha = 1 (opaque passthrough), never a black or transparent frame.
 - Matte runs at **1280×720** for every camera (one batch needs one size); the refined alpha is resampled to each frame's size (spec §5.1 "reduced resolution, refined at full resolution").
@@ -45,7 +47,7 @@ src/gpu/shaders/alpha_threshold.hlsl, alpha_morph.hlsl, alpha_blur.hlsl,
 src/engine/matte.h/.cpp           MatteJob, MatteBackend, makeMatteBackend
 src/engine/maxine_matte.h/.cpp    Maxine backend (BC_WITH_MAXINE)
 cmake/FindMaxine.cmake
-ui/src/screens/CameraDetail.tsx, ui/src/components/StageForm.tsx
+ui/src/inspector/Effects.tsx, ui/src/inspector/StageForm.tsx, ui/src/dialogs/AddEffectDialog.tsx
 tests/support/test_matte.h
 ```
 
@@ -66,11 +68,12 @@ tests/support/test_matte.h
 **Interfaces:**
 - Consumes: `CameraConfig`, `cameraToJson`, `cameraFromJson`, `ShowError` (M1 Task 3); `CommandRouter` (M1 Task 11).
 - Produces:
-  - `bc::StageField { std::string key, type; double min = 0, max = 0, step = 0; std::vector<std::string> options; nlohmann::json def; std::string labelVi, labelEn; }` — `type` is `"number" | "enum" | "bool" | "color" | "path"`.
-  - `bc::StageSchema { std::string kind, labelVi, labelEn; std::vector<StageField> fields; }`.
+  - `bc::StageField { std::string key, type; double min = 0, max = 0, step = 0; std::vector<std::string> options, optionLabels; nlohmann::json def; std::string label; }` — `type` is `"number" | "enum" | "bool" | "color" | "path"`. The first field of every schema is `enabled` (bool): the UI shows it as the effect's on/off switch.
+  - `bc::StageSchema { std::string kind, label, description, icon; std::vector<std::string> needs; nlohmann::json onAdd; std::vector<StageField> fields; }` — `icon` is a UI icon name (`matte`, `bg`, `color`); `needs` (JSON `requires`) lists stage kinds that must be added first; `onAdd` is the params the UI sends when the operator adds the effect. `stageSchemas()` is in pipeline order (spec §3.2), so the UI draws the chain from it.
   - `const std::vector<StageSchema>& bc::stageSchemas()`; `const StageSchema* bc::findStageSchema(std::string_view)`; `nlohmann::json bc::schemaToJson(const StageSchema&)`; `nlohmann::json bc::normalizeStageParams(std::string_view kind, const nlohmann::json& params)` (fills defaults, rejects unknown keys / wrong types / out of range / unknown enum values; throws `std::invalid_argument`).
   - `CameraConfig::stages` — `nlohmann::json` object `{ "<kind>": {normalized params} }`, default `{}`; a missing kind means "all defaults".
-  - Commands: `setStage {cameraId, stage, params}` → `{}` (stores normalized params; `params` may be partial: it is merged over the current values, then normalized); `getStageSchemas` → array of schema JSON.
+  - Commands: `setStage {cameraId, stage, params}` → `{}` (adds the stage if it is not there yet; stores normalized params; `params` may be partial: it is merged over the current values, then normalized); `removeStage {cameraId, stage}` → `{}` (takes the stage off the camera; `not-found` if it was not added); `getStageSchemas` → array of schema JSON.
+  - **Add-in rule (spec §5.4):** a stage runs for a camera only if its kind is a key in `CameraConfig::stages` and its params turn it on. A missing kind normalizes to "off" (matte `enabled` defaults to false, background `mode` defaults to `none`), so the engine needs no separate "added" flag.
 
 Schemas (M3 adds `color`):
 | kind | key | type | range / options | default |
@@ -80,12 +83,13 @@ Schemas (M3 adds `color`):
 | | `choke` | number | −8..8 step 1 | 0 |
 | | `feather` | number | 0..8 step 0.5 | 1 |
 | | `threshold` | number | 0..1 step 0.01 | 0.5 |
-| `background` | `mode` | enum | `none`, `keyed`, `blur`, `replace` | `none` |
+| `background` | `enabled` | bool | | `true` |
+| | `mode` | enum | `none`, `keyed`, `blur`, `replace` | `none` |
 | | `blur` | number | 1..50 step 1 | 12 |
 | | `color` | color | `#rrggbb` | `#101418` |
 | | `image` | path | ≤ 1024 chars, empty = use colour | `""` |
 
-Vietnamese labels: matte "Tách nền" (enabled "Bật", quality "Chất lượng" with options shown as "Chất lượng cao"/"Hiệu năng", choke "Co viền (px)", feather "Làm mềm viền (px)", threshold "Ngưỡng"); background "Nền" (mode "Chế độ nền": "Không", "Tách nền (key + fill)", "Làm mờ", "Thay nền"; blur "Độ mờ (px)"; color "Màu nền"; image "Ảnh nền"). English: Background removal / Enabled / Quality ("High quality", "Performance") / Choke (px) / Feather (px) / Threshold; Background / Background mode ("None", "Keyed (fill + key)", "Blur", "Replace") / Blur (px) / Colour / Image. The enum option labels travel as `optionLabelsVi` / `optionLabelsEn` arrays in the schema JSON, same order as `options`.
+Labels (English only): matte "Background removal" — description "AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).", icon `matte`, requires nothing, `onAdd` `{"enabled": true}`; fields On / Quality ("High quality", "Performance") / Choke (px) / Feather (px) / Threshold. Background "Background" — description "Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.", icon `bg`, requires `["matte"]`, `onAdd` `{"enabled": true, "mode": "blur"}`; fields On / Background mode ("None", "Keyed (fill + key)", "Blur", "Replace") / Blur (px) / Colour / Image. The enum option labels travel as `optionLabels`, same order as `options`. A background that is switched off behaves as mode `none` (Task 2).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -101,6 +105,7 @@ TEST_CASE("normalizeStageParams: fills defaults") {
   auto m = bc::normalizeStageParams("matte", json::object());
   CHECK(m == json{{"enabled", false}, {"quality", "quality"}, {"choke", 0}, {"feather", 1}, {"threshold", 0.5}});
   auto b = bc::normalizeStageParams("background", {{"mode", "blur"}});
+  CHECK(b["enabled"] == true);
   CHECK(b["mode"] == "blur");
   CHECK(b["blur"] == 12);
   CHECK(b["color"] == "#101418");
@@ -119,16 +124,23 @@ TEST_CASE("normalizeStageParams: rejects bad input") {
   CHECK_THROWS_AS(bc::normalizeStageParams("matte", json::array()), std::invalid_argument);
 }
 
-TEST_CASE("stage schemas: matte and background, with labels and option labels") {
+TEST_CASE("stage schemas: pipeline order, labels, add-in metadata, enabled first") {
   auto* m = bc::findStageSchema("matte");
   REQUIRE(m);
-  CHECK(m->labelVi == "Tách nền");
+  CHECK(m->label == "Background removal");
+  CHECK(m->onAdd == json{{"enabled", true}});
   auto j = bc::schemaToJson(*bc::findStageSchema("background"));
   CHECK(j["kind"] == "background");
-  auto& mode = j["fields"][0];
+  CHECK(j["icon"] == "bg");
+  CHECK(j["requires"] == json::array({"matte"}));
+  CHECK(j["onAdd"]["mode"] == "blur");
+  CHECK(j["fields"][0]["key"] == "enabled");
+  auto& mode = j["fields"][1];
   CHECK(mode["key"] == "mode");
-  CHECK(mode["options"].size() == mode["optionLabelsVi"].size());
-  CHECK(bc::stageSchemas().size() == 2);
+  CHECK(mode["options"].size() == mode["optionLabels"].size());
+  REQUIRE(bc::stageSchemas().size() == 2);
+  CHECK(bc::stageSchemas()[0].kind == "matte");  // pipeline order (M3 puts color first)
+  for (auto& s : bc::stageSchemas()) CHECK(s.fields.front().key == "enabled");
 }
 ```
 
@@ -170,6 +182,17 @@ TEST_CASE("CommandRouter: setStage merges, normalizes and validates") {
   CHECK(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", "nope"}, {"stage", "matte"}, {"params", json::object()}}}})["error"]["code"] == "not-found");
   CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 2);
 }
+
+TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  REQUIRE(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}, {"params", {{"enabled", true}, {"mode", "blur"}}}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages.contains("background"));
+  REQUIRE(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["ok"] == true);
+  CHECK_FALSE(r.show().cameras[0].stages.contains("background"));
+  CHECK(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["error"]["code"] == "not-found");
+}
 ```
 
 Add `tests/stage_params_test.cpp` to `bc_tests` and `src/core/stage_params.cpp` to `bc_core`.
@@ -196,18 +219,24 @@ struct StageField {
   std::string type;  // number | enum | bool | color | path
   double min = 0, max = 0, step = 0;
   std::vector<std::string> options;
-  std::vector<std::string> optionLabelsVi, optionLabelsEn;
+  std::vector<std::string> optionLabels;
   nlohmann::json def;
-  std::string labelVi, labelEn;
+  std::string label;
 };
 
+// spec §5.4: every stage has a parameter schema; the UI builds its group from it and
+// lists it in Add effect. Effects are per-camera add-ins.
 struct StageSchema {
   std::string kind;
-  std::string labelVi, labelEn;
-  std::vector<StageField> fields;
+  std::string label;
+  std::string description;
+  std::string icon;                   // UI icon name
+  std::vector<std::string> needs;     // stage kinds that must be added first (JSON: "requires"; `requires` is a C++20 keyword)
+  nlohmann::json onAdd;               // params the UI sends when the operator adds it
+  std::vector<StageField> fields;     // fields[0] is always "enabled"
 };
 
-// spec §5.4: every stage has a parameter schema; the UI builds its panel from it.
+// In pipeline order (spec §3.2).
 const std::vector<StageSchema>& stageSchemas();
 const StageSchema* findStageSchema(std::string_view kind);
 nlohmann::json schemaToJson(const StageSchema& s);
@@ -228,7 +257,7 @@ namespace bc {
 namespace {
 using nlohmann::json;
 
-StageField number(std::string key, double min, double max, double step, double def, std::string vi, std::string en) {
+StageField number(std::string key, double min, double max, double step, double def, std::string label) {
   StageField f;
   f.key = std::move(key);
   f.type = "number";
@@ -236,53 +265,52 @@ StageField number(std::string key, double min, double max, double step, double d
   f.max = max;
   f.step = step;
   f.def = def;
-  f.labelVi = std::move(vi);
-  f.labelEn = std::move(en);
+  f.label = std::move(label);
   return f;
 }
 
-StageField enumeration(std::string key, std::vector<std::string> options, std::vector<std::string> vi,
-                       std::vector<std::string> en, std::string def, std::string labelVi, std::string labelEn) {
+StageField enumeration(std::string key, std::vector<std::string> options, std::vector<std::string> labels, std::string def,
+                       std::string label) {
   StageField f;
   f.key = std::move(key);
   f.type = "enum";
   f.options = std::move(options);
-  f.optionLabelsVi = std::move(vi);
-  f.optionLabelsEn = std::move(en);
+  f.optionLabels = std::move(labels);
   f.def = std::move(def);
-  f.labelVi = std::move(labelVi);
-  f.labelEn = std::move(labelEn);
+  f.label = std::move(label);
   return f;
 }
 
-StageField simple(std::string key, std::string type, json def, std::string vi, std::string en) {
+StageField simple(std::string key, std::string type, json def, std::string label) {
   StageField f;
   f.key = std::move(key);
   f.type = std::move(type);
   f.def = std::move(def);
-  f.labelVi = std::move(vi);
-  f.labelEn = std::move(en);
+  f.label = std::move(label);
   return f;
 }
 
 std::vector<StageSchema> build() {
-  StageSchema matte{"matte", "Tách nền", "Background removal", {}};
+  StageSchema matte{"matte", "Background removal",
+                    "AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).", "matte", {},
+                    json{{"enabled", true}}, {}};
   matte.fields = {
-      simple("enabled", "bool", false, "Bật", "Enabled"),
-      enumeration("quality", {"quality", "performance"}, {"Chất lượng cao", "Hiệu năng"}, {"High quality", "Performance"},
-                  "quality", "Chất lượng", "Quality"),
-      number("choke", -8, 8, 1, 0, "Co viền (px)", "Choke (px)"),
-      number("feather", 0, 8, 0.5, 1, "Làm mềm viền (px)", "Feather (px)"),
-      number("threshold", 0, 1, 0.01, 0.5, "Ngưỡng", "Threshold"),
+      simple("enabled", "bool", false, "On"),
+      enumeration("quality", {"quality", "performance"}, {"High quality", "Performance"}, "quality", "Quality"),
+      number("choke", -8, 8, 1, 0, "Choke (px)"),
+      number("feather", 0, 8, 0.5, 1, "Feather (px)"),
+      number("threshold", 0, 1, 0.01, 0.5, "Threshold"),
   };
-  StageSchema background{"background", "Nền", "Background", {}};
+  StageSchema background{"background", "Background",
+                         "Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.",
+                         "bg", {"matte"}, json{{"enabled", true}, {"mode", "blur"}}, {}};
   background.fields = {
-      enumeration("mode", {"none", "keyed", "blur", "replace"},
-                  {"Không", "Tách nền (key + fill)", "Làm mờ", "Thay nền"}, {"None", "Keyed (fill + key)", "Blur", "Replace"},
-                  "none", "Chế độ nền", "Background mode"),
-      number("blur", 1, 50, 1, 12, "Độ mờ (px)", "Blur (px)"),
-      simple("color", "color", "#101418", "Màu nền", "Colour"),
-      simple("image", "path", "", "Ảnh nền", "Image"),
+      simple("enabled", "bool", true, "On"),
+      enumeration("mode", {"none", "keyed", "blur", "replace"}, {"None", "Keyed (fill + key)", "Blur", "Replace"}, "none",
+                  "Background mode"),
+      number("blur", 1, 50, 1, 12, "Blur (px)"),
+      simple("color", "color", "#101418", "Colour"),
+      simple("image", "path", "", "Image"),
   };
   return {matte, background};
 }
@@ -333,7 +361,7 @@ const StageSchema* findStageSchema(std::string_view kind) {
 json schemaToJson(const StageSchema& s) {
   json fields = json::array();
   for (auto& f : s.fields) {
-    json j{{"key", f.key}, {"type", f.type}, {"default", f.def}, {"labelVi", f.labelVi}, {"labelEn", f.labelEn}};
+    json j{{"key", f.key}, {"type", f.type}, {"default", f.def}, {"label", f.label}};
     if (f.type == "number") {
       j["min"] = f.min;
       j["max"] = f.max;
@@ -341,12 +369,12 @@ json schemaToJson(const StageSchema& s) {
     }
     if (f.type == "enum") {
       j["options"] = f.options;
-      j["optionLabelsVi"] = f.optionLabelsVi;
-      j["optionLabelsEn"] = f.optionLabelsEn;
+      j["optionLabels"] = f.optionLabels;
     }
     fields.push_back(j);
   }
-  return {{"kind", s.kind}, {"labelVi", s.labelVi}, {"labelEn", s.labelEn}, {"fields", fields}};
+  return {{"kind", s.kind},     {"label", s.label},       {"description", s.description}, {"icon", s.icon},
+          {"requires", s.needs}, {"onAdd", s.onAdd}, {"fields", fields}};
 }
 
 json normalizeStageParams(std::string_view kind, const json& params) {
@@ -406,6 +434,11 @@ and inside the locked branch chain:
     } catch (const std::invalid_argument& e) {
       throw CmdError("invalid", e.what());
     }
+  } else if (cmd == "removeStage") {
+    auto& c = findCam(str(args, "cameraId"));
+    const auto stage = str(args, "stage");
+    if (!c.stages.contains(stage)) throw CmdError("not-found", "effect " + stage + " is not on this camera");
+    c.stages.erase(stage);
 ```
 Note `findCam` is checked first, so an unknown camera answers `not-found` before any param validation.
 
@@ -617,6 +650,7 @@ In `src/engine/camera.cpp`:
 void Camera::loadStageParams() {
   matteParams_ = normalizeStageParams("matte", cfg_.stages.value("matte", nlohmann::json::object()));
   backgroundParams_ = normalizeStageParams("background", cfg_.stages.value("background", nlohmann::json::object()));
+  if (!backgroundParams_.value("enabled", true)) backgroundParams_["mode"] = "none";  // switched off = no background (add-ins, spec §5.4)
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
@@ -2049,22 +2083,24 @@ git add cmake/FindMaxine.cmake src/engine tests CMakeLists.txt
 git commit -m "feat(engine): Maxine AI Green Screen batch backend (NVIDIA-only, compile-gated)"
 ```
 
-### Task 6: UI — camera detail with stage panels, output toggles and removal
+### Task 6: UI — Effects in the Inspector: add-ins, schema-driven settings, Add effect, strip icons
+
+Rewritten 2026-10-08 for M1's native window (spec §5.4, §6.4; mockup tabs "Multiview" and "Add effect" in `docs/design/mockups/index.html`). English only.
 
 **Files:**
-- Create: `ui/src/components/StageForm.tsx`, `ui/src/components/ConfirmDialog.tsx`, `ui/src/screens/CameraDetail.tsx`
-- Modify: `ui/src/i18n.ts` (export `lang`; new keys), `ui/src/api/protocol.ts` (stage types), `ui/src/screens/Multiview.tsx` (open a camera), `ui/src/App.tsx` (selected camera)
-- Test: `ui/src/components/StageForm.test.tsx`, `ui/src/screens/CameraDetail.test.tsx`
+- Create: `ui/src/state/schemas.ts`, `ui/src/inspector/StageForm.tsx`, `ui/src/inspector/Effects.tsx`, `ui/src/dialogs/AddEffectDialog.tsx`
+- Modify: `ui/src/api/protocol.ts` (stage types), `ui/src/inspector/Inspector.tsx` (export `Section`), `ui/src/multiview/Strip.tsx` + `ui/src/multiview/Multiview.tsx` (effect icons), `ui/src/App.tsx` (wire Effects, the dialog and the Camera menu item), `ui/src/app.css` (effect styles)
+- Test: `ui/src/inspector/StageForm.test.tsx`, `ui/src/Effects.test.tsx`
 
 **Interfaces:**
-- Consumes: commands `getStageSchemas`, `setStage`, `updateOutput`, `removeOutput`, `removeCamera` (Task 1, M1 Task 11); state `/cameras/<id>/stages/<kind>/{state,error}` (Task 2); `CameraConfig.stages` in the show JSON (Task 1).
-- Produces: `StageForm({schema, values, onChange})`, `ConfirmDialog({open, title, body, confirmLabel, onConfirm, onClose})`, `CameraDetail({client, cameraId, onBack})`; `Multiview` gains an `onOpen(cameraId)` prop; protocol types `StageField`, `StageSchemaJson`, and `CameraState.stages`.
+- Consumes: commands `getStageSchemas`, `setStage`, `removeStage` (Task 1); state `/cameras/<id>/stages/<kind>/{state,error}` (Task 2); `CameraConfig.stages` in the show JSON (Task 1); M1 Task 13's `Workspace`, `Inspector` (with its `children` slot), `Strip`, `Multiview`, `Modal`, `ConfirmDialog`, `Prop`, `Icon`, `ErrorBlock`, `inputCode`.
+- Produces: `useStageSchemas(client)`; `StageForm({schema, values, onChange})`; `Effects({client, snap, cam, n, schemas, onAdd})`; `AddEffectDialog({client, camera, n, schemas, onClose})`; protocol types `StageField`, `StageSchemaJson`, `StageState`, `CameraState.stages`, `CameraConfig.stages`. M3 adds the Colour effect's Calibrate flow through this section.
 
-Copy (Vietnamese / English): stage states `active` "Đang chạy" / "Running", `bypassed` "Đã bỏ qua" / "Bypassed", `off` "Không dùng" / "Not used"; "Quay lại" / "Back"; "Xử lý" / "Processing"; "Xoá đầu ra" / "Remove output" with body "Xoá đầu ra này? Nguồn nhận sẽ mất hình ngay." / "Remove this output? Its receiver loses picture now."; "Xoá camera" / "Remove camera" with body "Xoá camera này cùng mọi đầu ra của nó?" / "Remove this camera and all its outputs?"; "Bật" / "On"; hint "Chế độ nền chỉ có tác dụng khi bật Tách nền." / "Background modes only work with background removal on."
+Rules: an effect is on a camera when its kind is a key in `camera.stages`; groups appear in schema (pipeline) order; `fields[0]` (`enabled`) is the group's switch, the rest are label-left rows; sliders send one `setStage` per effect every 150 ms; removing an effect asks first; Add effect lists every schema — added ones are disabled and marked ADDED, ones whose `requires` are missing are disabled and say what to add first (spec §5.4: explain, don't hide).
 
 - [ ] **Step 1: Write the failing tests**
 
-`ui/src/components/StageForm.test.tsx`:
+`ui/src/inspector/StageForm.test.tsx`:
 ```tsx
 import { fireEvent, render, screen } from '@testing-library/react';
 
@@ -2073,80 +2109,138 @@ import { StageForm } from './StageForm';
 
 const schema: StageSchemaJson = {
   kind: 'matte',
-  labelVi: 'Tách nền',
-  labelEn: 'Background removal',
+  label: 'Background removal',
+  description: 'AI person cut-out without a green screen.',
+  icon: 'matte',
+  requires: [],
+  onAdd: { enabled: true },
   fields: [
-    { key: 'enabled', type: 'bool', default: false, labelVi: 'Bật', labelEn: 'Enabled' },
-    { key: 'quality', type: 'enum', default: 'quality', labelVi: 'Chất lượng', labelEn: 'Quality', options: ['quality', 'performance'], optionLabelsVi: ['Chất lượng cao', 'Hiệu năng'], optionLabelsEn: ['High quality', 'Performance'] },
-    { key: 'choke', type: 'number', default: 0, labelVi: 'Co viền (px)', labelEn: 'Choke (px)', min: -8, max: 8, step: 1 },
+    { key: 'enabled', type: 'bool', default: false, label: 'On' },
+    { key: 'quality', type: 'enum', default: 'quality', label: 'Quality', options: ['quality', 'performance'], optionLabels: ['High quality', 'Performance'] },
+    { key: 'choke', type: 'number', default: 0, label: 'Choke (px)', min: -8, max: 8, step: 1 },
   ],
 };
 
-test('renders every field with its Vietnamese label', () => {
-  render(<StageForm schema={schema} values={{ enabled: false, quality: 'quality', choke: 0 }} onChange={() => {}} />);
-  expect(screen.getByLabelText('Bật')).toBeInTheDocument();
-  expect(screen.getByText('Chất lượng')).toBeInTheDocument();
-  expect(screen.getByText('Co viền (px)')).toBeInTheDocument();
+test('renders every setting except the on/off switch', () => {
+  render(<StageForm schema={schema} values={{ enabled: true, quality: 'quality', choke: 0 }} onChange={() => {}} />);
+  expect(screen.queryByLabelText('On')).toBeNull();
+  expect(screen.getByLabelText('Quality')).toHaveValue('quality');
+  expect(screen.getByLabelText('Choke (px)')).toHaveValue('0');
 });
 
-test('toggling a switch reports only that key', () => {
+test('a change reports only that key', () => {
   const onChange = vi.fn();
-  render(<StageForm schema={schema} values={{ enabled: false, quality: 'quality', choke: 0 }} onChange={onChange} />);
-  fireEvent.click(screen.getByLabelText('Bật'));
-  expect(onChange).toHaveBeenCalledWith({ enabled: true });
+  render(<StageForm schema={schema} values={{ enabled: true, quality: 'quality', choke: 0 }} onChange={onChange} />);
+  fireEvent.change(screen.getByLabelText('Quality'), { target: { value: 'performance' } });
+  expect(onChange).toHaveBeenCalledWith({ quality: 'performance' });
 });
 ```
 
-`ui/src/screens/CameraDetail.test.tsx`:
+`ui/src/Effects.test.tsx`:
 ```tsx
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-import { EngineClient } from '../api/client';
-import { FakeWs } from '../test/fakeWs';
-import { CameraDetail } from './CameraDetail';
+import { EngineClient } from './api/client';
+import { Workspace } from './App';
+import { FakeWs } from './test/fakeWs';
 
-test('shows stage state, the stage error, and schema panels', async () => {
+const schemas = [
+  {
+    kind: 'matte',
+    label: 'Background removal',
+    description: 'AI person cut-out without a green screen.',
+    icon: 'matte',
+    requires: [],
+    onAdd: { enabled: true },
+    fields: [
+      { key: 'enabled', type: 'bool', default: false, label: 'On' },
+      { key: 'quality', type: 'enum', default: 'quality', label: 'Quality', options: ['quality', 'performance'], optionLabels: ['High quality', 'Performance'] },
+    ],
+  },
+  {
+    kind: 'background',
+    label: 'Background',
+    description: 'Blur, replace or key the background.',
+    icon: 'bg',
+    requires: ['matte'],
+    onAdd: { enabled: true, mode: 'blur' },
+    fields: [
+      { key: 'enabled', type: 'bool', default: true, label: 'On' },
+      { key: 'mode', type: 'enum', default: 'none', label: 'Background mode', options: ['none', 'keyed', 'blur', 'replace'], optionLabels: ['None', 'Keyed (fill + key)', 'Blur', 'Replace'] },
+    ],
+  },
+];
+const show = {
+  schemaVersion: 1,
+  settings: { rate: '60/1', resolution: '1920x1080', holdMs: 5000, slatePath: '' },
+  cameras: [
+    {
+      id: 'a',
+      name: 'MC chính – Cam 2',
+      input: { kind: 'srt', params: { mode: 'listener', port: 9000 } },
+      outputs: [],
+      stages: { matte: { enabled: true, quality: 'quality', choke: 0, feather: 1, threshold: 0.5 } },
+    },
+  ],
+};
+const state = {
+  cameras: {
+    a: {
+      name: 'MC chính – Cam 2',
+      phase: 'live',
+      input: { state: 'live', error: null, health: 'receiving' },
+      stages: { matte: { state: 'bypassed', error: { code: 'matte-unavailable', message: 'needs an NVIDIA RTX GPU' } } },
+    },
+  },
+};
+
+async function setup() {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
   FakeWs.last.open();
-  FakeWs.last.receive({
-    type: 'snapshot',
-    state: {
-      cameras: {
-        a: {
-          name: 'Sân khấu',
-          phase: 'live',
-          input: { state: 'live', error: null },
-          stages: {
-            matte: { state: 'bypassed', error: { code: 'matte-unavailable', message: 'cần GPU NVIDIA RTX' } },
-            background: { state: 'off', error: null },
-          },
-        },
-      },
-    },
-    show: { cameras: [{ id: 'a', name: 'Sân khấu', input: { kind: 'srt', params: {} }, outputs: [], stages: {} }] },
-  });
-  render(<CameraDetail client={c} cameraId="a" onBack={() => {}} />);
+  FakeWs.last.receive({ type: 'snapshot', state, show });
+  render(<Workspace client={c} />);
   const req = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'getStageSchemas');
-  expect(req).toBeDefined();
-  FakeWs.last.receive({
-    id: req.id,
-    ok: true,
-    result: [
-      { kind: 'matte', labelVi: 'Tách nền', labelEn: 'Background removal', fields: [{ key: 'enabled', type: 'bool', default: false, labelVi: 'Bật', labelEn: 'Enabled' }] },
-      { kind: 'background', labelVi: 'Nền', labelEn: 'Background', fields: [] },
-    ],
-  });
-  await waitFor(() => expect(screen.getByText('Tách nền')).toBeInTheDocument());
-  expect(screen.getByText('Đã bỏ qua')).toBeInTheDocument();
-  expect(screen.getByRole('alert')).toHaveTextContent('cần GPU NVIDIA RTX');
+  FakeWs.last.receive({ id: req.id, ok: true, result: schemas });
+  const insp = screen.getByRole('complementary', { name: 'Inspector' });
+  await waitFor(() => expect(within(insp).getByText('BYPASSED')).toBeInTheDocument());
+  return insp;
+}
+
+test('an added effect shows its state, its error and its settings; the strip shows its icon', async () => {
+  const insp = await setup();
+  const group = within(insp).getByRole('group', { name: 'Background removal' });
+  expect(within(group).getByRole('alert')).toHaveTextContent('needs an NVIDIA RTX GPU');
+  expect(within(group).getByLabelText('Quality')).toHaveValue('quality');
+  expect(screen.getByTitle('Background removal: bypassed')).toBeInTheDocument();
+});
+
+test('Add effect lists every effect and adds one with its onAdd params', async () => {
+  const insp = await setup();
+  fireEvent.click(within(insp).getByRole('button', { name: 'Add effect' }));
+  const dlg = screen.getByRole('dialog', { name: 'Add effect to CAM 1' });
+  expect(within(dlg).getByRole('radio', { name: 'Background removal' })).toBeDisabled();
+  expect(within(dlg).getByText('ADDED')).toBeInTheDocument();
+  fireEvent.click(within(dlg).getByRole('radio', { name: 'Background' }));
+  fireEvent.click(within(dlg).getByRole('button', { name: 'Add effect' }));
+  const r = FakeWs.last.lastRequest();
+  expect(r.cmd).toBe('setStage');
+  expect(r.args).toEqual({ cameraId: 'a', stage: 'background', params: { enabled: true, mode: 'blur' } });
+});
+
+test('removing an effect asks first', async () => {
+  const insp = await setup();
+  fireEvent.click(within(insp).getByRole('button', { name: 'Remove Background removal' }));
+  const dlg = screen.getByRole('dialog', { name: 'Remove Background removal?' });
+  fireEvent.click(within(dlg).getByRole('button', { name: 'Remove effect' }));
+  expect(FakeWs.last.lastRequest()).toMatchObject({ cmd: 'removeStage', args: { cameraId: 'a', stage: 'matte' } });
 });
 ```
 
 Run `PATH="/c/Program Files/nodejs:$PATH" npm test` in `ui/` — Expected: FAIL (modules missing).
 
-- [ ] **Step 2: Types and strings**
+- [ ] **Step 2: Types and the schema hook**
 
 `ui/src/api/protocol.ts` — add:
 ```ts
@@ -2154,19 +2248,20 @@ export interface StageField {
   key: string;
   type: 'number' | 'enum' | 'bool' | 'color' | 'path';
   default: unknown;
-  labelVi: string;
-  labelEn: string;
+  label: string;
   min?: number;
   max?: number;
   step?: number;
   options?: string[];
-  optionLabelsVi?: string[];
-  optionLabelsEn?: string[];
+  optionLabels?: string[];
 }
 export interface StageSchemaJson {
   kind: string;
-  labelVi: string;
-  labelEn: string;
+  label: string;
+  description: string;
+  icon: string;
+  requires: string[];
+  onAdd: Record<string, unknown>;
   fields: StageField[];
 }
 export interface StageState {
@@ -2176,134 +2271,124 @@ export interface StageState {
 ```
 and in `CameraState` add `stages?: Record<string, StageState>;`, in `CameraConfig` add `stages?: Record<string, Record<string, unknown>>;`.
 
-`ui/src/i18n.ts` — change `const lang = ...` to `export const lang = ...`; add to `vi` and `en` (same keys, the copy above): `'stage.active'`, `'stage.bypassed'`, `'stage.off'`, `'action.back'`, `'action.removeOutput'`, `'action.removeCamera'`, `'confirm.removeOutput'`, `'confirm.removeCamera'`, `'camera.stages'`, `'output.enabled'`, `'background.needsMatte'`.
-
-- [ ] **Step 3: Implement the components**
-
-`ui/src/components/StageForm.tsx`:
-```tsx
-import { FormControlLabel, MenuItem, Slider, Stack, Switch, TextField, Typography } from '@mui/material';
-
-import type { StageField, StageSchemaJson } from '../api/protocol';
-import { lang } from '../i18n';
-
-const label = (f: { labelVi: string; labelEn: string }) => (lang === 'en' ? f.labelEn : f.labelVi);
-
-// Builds a stage panel from the engine's schema (spec §5.4).
-export function StageForm({ schema, values, onChange }: { schema: StageSchemaJson; values: Record<string, unknown>; onChange: (patch: Record<string, unknown>) => void }) {
-  const value = (f: StageField) => (values[f.key] ?? f.default) as never;
-  return (
-    <Stack spacing={1.5}>
-      {schema.fields.map((f) => {
-        switch (f.type) {
-          case 'bool':
-            return (
-              <FormControlLabel
-                key={f.key}
-                control={<Switch checked={Boolean(value(f))} onChange={(e) => onChange({ [f.key]: e.target.checked })} />}
-                label={label(f)}
-              />
-            );
-          case 'enum':
-            return (
-              <TextField key={f.key} select size="small" label={label(f)} value={value(f)} onChange={(e) => onChange({ [f.key]: e.target.value })}>
-                {(f.options ?? []).map((o, i) => (
-                  <MenuItem key={o} value={o}>
-                    {(lang === 'en' ? f.optionLabelsEn : f.optionLabelsVi)?.[i] ?? o}
-                  </MenuItem>
-                ))}
-              </TextField>
-            );
-          case 'number':
-            return (
-              <div key={f.key}>
-                <Typography variant="body2">{label(f)}</Typography>
-                <Slider
-                  size="small"
-                  min={f.min}
-                  max={f.max}
-                  step={f.step}
-                  value={Number(value(f))}
-                  valueLabelDisplay="auto"
-                  onChange={(_, v) => onChange({ [f.key]: v as number })}
-                />
-              </div>
-            );
-          case 'color':
-            return (
-              <TextField key={f.key} size="small" type="color" label={label(f)} value={value(f)} onChange={(e) => onChange({ [f.key]: e.target.value })} />
-            );
-          case 'path':
-            return (
-              <TextField key={f.key} size="small" label={label(f)} value={value(f)} placeholder="C:\…\nen.png" onChange={(e) => onChange({ [f.key]: e.target.value })} />
-            );
-        }
-      })}
-    </Stack>
-  );
-}
-```
-
-`ui/src/components/ConfirmDialog.tsx`:
-```tsx
-import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material';
-
-import { t } from '../i18n';
-
-// UX contract: destructive actions confirm with a verb button; secondary left, primary right.
-export function ConfirmDialog(props: { open: boolean; title: string; body: string; confirmLabel: string; onConfirm: () => void; onClose: () => void }) {
-  return (
-    <Dialog open={props.open} onClose={props.onClose}>
-      <DialogTitle>{props.title}</DialogTitle>
-      <DialogContent>
-        <Typography>{props.body}</Typography>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={props.onClose}>{t('action.cancel')}</Button>
-        <Button color="error" variant="contained" onClick={props.onConfirm}>
-          {props.confirmLabel}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  );
-}
-```
-
-`ui/src/screens/CameraDetail.tsx`:
-```tsx
-import { Box, Button, Card, CardContent, Chip, Stack, Switch, Typography } from '@mui/material';
-import { useEffect, useRef, useState } from 'react';
+`ui/src/state/schemas.ts`:
+```ts
+import { useEffect, useState } from 'react';
 
 import type { EngineClient } from '../api/client';
 import type { StageSchemaJson } from '../api/protocol';
 import { useEngine } from '../api/useEngine';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { ErrorBlock } from '../components/ErrorBlock';
-import { SignalChip } from '../components/SignalChip';
-import { StageForm } from '../components/StageForm';
-import { lang, t } from '../i18n';
-import { PreviewCanvas } from '../preview/PreviewCanvas';
 
-const stateColor = { active: 'success', bypassed: 'warning', off: 'default' } as const;
-
-export function CameraDetail({ client, cameraId, onBack }: { client: EngineClient; cameraId: string; onBack: () => void }) {
-  const { state, show } = useEngine(client);
+// The engine's stage schemas in pipeline order (spec §5.4); fetched again after every reconnect.
+export function useStageSchemas(client: EngineClient): StageSchemaJson[] {
+  const { status } = useEngine(client);
   const [schemas, setSchemas] = useState<StageSchemaJson[]>([]);
-  const [stageErrors, setStageErrors] = useState<Record<string, string>>({});
-  const [confirm, setConfirm] = useState<{ kind: 'output'; id: string } | { kind: 'camera' } | null>(null);
+  useEffect(() => {
+    if (status !== 'open') return;
+    let live = true;
+    client
+      .request<StageSchemaJson[]>('getStageSchemas')
+      .then((s) => live && setSchemas(s))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [client, status]);
+  return schemas;
+}
+```
+
+- [ ] **Step 3: The settings form, the Effects section and the Add effect dialog**
+
+`ui/src/inspector/StageForm.tsx`:
+```tsx
+import type { StageField, StageSchemaJson } from '../api/protocol';
+import { Prop } from '../components/Prop';
+
+// An effect's settings from the engine's schema (spec §5.4). fields[0] ("enabled") is the
+// group's on/off switch, so it is not a row here.
+export function StageForm({ schema, values, onChange }: { schema: StageSchemaJson; values: Record<string, unknown>; onChange: (patch: Record<string, unknown>) => void }) {
+  const value = (f: StageField) => values[f.key] ?? f.default;
+  return (
+    <>
+      {schema.fields.slice(1).map((f) => (
+        <Prop key={f.key} label={f.label}>
+          {(id) => {
+            switch (f.type) {
+              case 'bool':
+                return (
+                  <label className="sw-wrap">
+                    <input id={id} type="checkbox" role="switch" checked={Boolean(value(f))} onChange={(e) => onChange({ [f.key]: e.target.checked })} />
+                    <span className="sw" />
+                  </label>
+                );
+              case 'enum':
+                return (
+                  <select id={id} className="ctl" value={String(value(f))} onChange={(e) => onChange({ [f.key]: e.target.value })}>
+                    {(f.options ?? []).map((o, i) => (
+                      <option key={o} value={o}>
+                        {f.optionLabels?.[i] ?? o}
+                      </option>
+                    ))}
+                  </select>
+                );
+              case 'number':
+                return (
+                  <div className="slider">
+                    <input id={id} type="range" min={f.min} max={f.max} step={f.step} value={Number(value(f))} onChange={(e) => onChange({ [f.key]: Number(e.target.value) })} />
+                    <span className="sv">{Number(value(f))}</span>
+                  </div>
+                );
+              case 'color':
+                return <input id={id} className="ctl" type="color" value={String(value(f))} onChange={(e) => onChange({ [f.key]: e.target.value })} />;
+              case 'path':
+                return <input id={id} className="ctl mono" value={String(value(f))} placeholder="C:\Shows\background.png" onChange={(e) => onChange({ [f.key]: e.target.value })} />;
+              default:
+                return null;
+            }
+          }}
+        </Prop>
+      ))}
+    </>
+  );
+}
+```
+
+`ui/src/inspector/Effects.tsx`:
+```tsx
+import { Fragment, useRef, useState } from 'react';
+
+import type { EngineClient, EngineSnapshot } from '../api/client';
+import type { CameraConfig, StageSchemaJson } from '../api/protocol';
+import { ErrorBlock } from '../components/ErrorBlock';
+import { Icon, type IconName } from '../components/Icon';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { inputCode } from '../state/labels';
+import { Section } from './Inspector';
+import { StageForm } from './StageForm';
+
+const STATE = { active: ['RUNNING', 'run'], bypassed: ['BYPASSED', 'bad'], off: ['OFF', 'dim'] } as const;
+
+export const isAdded = (cam: CameraConfig, kind: string) => !!cam.stages && kind in cam.stages;
+
+// Effects are per-camera add-ins (spec §5.4), shown in pipeline order.
+export function Effects({ client, snap, cam, n, schemas, onAdd }: {
+  client: EngineClient;
+  snap: EngineSnapshot;
+  cam: CameraConfig;
+  n: number;
+  schemas: StageSchemaJson[];
+  onAdd: () => void;
+}) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [removing, setRemoving] = useState<StageSchemaJson | null>(null);
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pending = useRef<Record<string, Record<string, unknown>>>({});
+  const cs = snap.state.cameras?.[cam.id];
+  const added = schemas.filter((s) => isAdded(cam, s.kind));
+  const labelOf = (kind: string) => schemas.find((s) => s.kind === kind)?.label ?? kind;
 
-  useEffect(() => {
-    client.request<StageSchemaJson[]>('getStageSchemas').then(setSchemas).catch(() => setSchemas([]));
-  }, [client]);
-  useEffect(() => client.setPreviewSubscription([cameraId], 'large'), [client, cameraId]);
-
-  const cam = show?.cameras.find((c) => c.id === cameraId);
-  const cs = state.cameras?.[cameraId];
-  if (!cam) return null;
-
-  // Sliders fire many changes; send one setStage per stage every 150 ms.
+  // Sliders fire many changes: one setStage per effect every 150 ms.
   function change(kind: string, patch: Record<string, unknown>) {
     pending.current[kind] = { ...pending.current[kind], ...patch };
     clearTimeout(timers.current[kind]);
@@ -2311,115 +2396,234 @@ export function CameraDetail({ client, cameraId, onBack }: { client: EngineClien
       const params = pending.current[kind];
       pending.current[kind] = {};
       client
-        .request('setStage', { cameraId, stage: kind, params })
-        .then(() => setStageErrors((e) => ({ ...e, [kind]: '' })))
-        .catch((err: Error) => setStageErrors((e) => ({ ...e, [kind]: err.message })));
+        .request('setStage', { cameraId: cam.id, stage: kind, params })
+        .then(() => setErrors((e) => ({ ...e, [kind]: '' })))
+        .catch((err: Error) => setErrors((e) => ({ ...e, [kind]: err.message })));
     }, 150);
   }
 
-  const matteOn = Boolean(cam.stages?.matte?.enabled);
   return (
-    <Box sx={{ p: 2 }}>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-        <Button onClick={onBack}>{t('action.back')}</Button>
-        <Typography variant="h4" sx={{ flex: 1 }}>
-          {cam.name}
-        </Typography>
-        <SignalChip state={cs?.input?.state} />
-        <Button color="error" onClick={() => setConfirm({ kind: 'camera' })}>
-          {t('action.removeCamera')}
-        </Button>
-      </Stack>
-      {cs?.input?.error && <ErrorBlock message={cs.input.error.message} />}
-      <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { md: '2fr 1fr' } }}>
-        <PreviewCanvas client={client} cameraId={cameraId} size="large" />
-        <Stack spacing={2}>
-          <Typography variant="h6">{t('camera.stages')}</Typography>
-          {schemas.map((s) => {
-            const st = cs?.stages?.[s.kind];
-            return (
-              <Card key={s.kind} variant="outlined">
-                <CardContent>
-                  <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
-                    <Typography variant="subtitle1" sx={{ flex: 1 }}>
-                      {lang === 'en' ? s.labelEn : s.labelVi}
-                    </Typography>
-                    {st && <Chip size="small" color={stateColor[st.state]} label={t(`stage.${st.state}`)} />}
-                  </Stack>
-                  {st?.error && <ErrorBlock message={st.error.message} />}
-                  {stageErrors[s.kind] && <ErrorBlock message={stageErrors[s.kind]} />}
-                  {s.kind === 'background' && !matteOn && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      {t('background.needsMatte')}
-                    </Typography>
-                  )}
-                  <StageForm schema={s} values={cam.stages?.[s.kind] ?? {}} onChange={(p) => change(s.kind, p)} />
-                </CardContent>
-              </Card>
-            );
-          })}
-          <Typography variant="h6">{t('camera.outputs')}</Typography>
-          {cam.outputs.map((o) => (
-            <Stack key={o.id} direction="row" spacing={1} alignItems="center">
-              <Typography sx={{ flex: 1 }}>{o.kind === 'ndi' ? t('output.ndi') : o.kind === 'fullscreen' ? t('output.fullscreen') : o.kind}</Typography>
-              <SignalChip state={cs?.outputs?.[o.id]?.state} />
-              <Switch
-                checked={o.enabled}
-                inputProps={{ 'aria-label': t('output.enabled') }}
-                onChange={(e) => client.request('updateOutput', { cameraId, id: o.id, enabled: e.target.checked }).catch(() => {})}
-              />
-              <Button size="small" color="error" onClick={() => setConfirm({ kind: 'output', id: o.id })}>
-                {t('action.removeOutput')}
-              </Button>
-            </Stack>
-          ))}
-        </Stack>
-      </Box>
-      <ConfirmDialog
-        open={confirm !== null}
-        title={confirm?.kind === 'camera' ? t('action.removeCamera') : t('action.removeOutput')}
-        body={confirm?.kind === 'camera' ? t('confirm.removeCamera') : t('confirm.removeOutput')}
-        confirmLabel={confirm?.kind === 'camera' ? t('action.removeCamera') : t('action.removeOutput')}
-        onClose={() => setConfirm(null)}
-        onConfirm={() => {
-          if (confirm?.kind === 'camera') client.request('removeCamera', { id: cameraId }).then(onBack).catch(() => {});
-          else if (confirm?.kind === 'output') client.request('removeOutput', { cameraId, id: confirm.id }).catch(() => {});
-          setConfirm(null);
-        }}
-      />
-    </Box>
+    <Section
+      title="Effects"
+      right={
+        <button className="tb sm" onClick={onAdd}>
+          <Icon name="plus" size={12} />
+          Add effect
+        </button>
+      }
+    >
+      <div className="chain" aria-label="Processing order">
+        <span>{inputCode(cam.input.kind)} in</span>
+        {added.map((s) => (
+          <Fragment key={s.kind}>
+            <Icon name="arrow" size={10} />
+            <span className="fxn">{s.label}</span>
+          </Fragment>
+        ))}
+        <Icon name="arrow" size={10} />
+        <span>{cam.outputs.length} outputs</span>
+      </div>
+      {added.length === 0 && <p className="note">No effects yet. Add one to process this camera.</p>}
+      {added.map((s) => {
+        const st = cs?.stages?.[s.kind];
+        const values = cam.stages?.[s.kind] ?? {};
+        const on = Boolean(values.enabled ?? s.fields[0]?.default);
+        const [stateLabel, cls] = STATE[st?.state ?? 'off'];
+        const missing = s.requires.filter((k) => !isAdded(cam, k));
+        return (
+          <div className="group" role="group" aria-label={s.label} key={s.kind}>
+            <div className="group-h">
+              <span className="gi">
+                <Icon name={s.icon as IconName} size={14} />
+              </span>
+              <b>{s.label}</b>
+              <span className="right">
+                <span className={`st ${cls}`}>{stateLabel}</span>
+                <label className="sw-wrap">
+                  <input type="checkbox" role="switch" aria-label={`${s.label} on`} checked={on} onChange={(e) => change(s.kind, { enabled: e.target.checked })} />
+                  <span className="sw" />
+                </label>
+                <button className="ibtn" aria-label={`Remove ${s.label}`} onClick={() => setRemoving(s)}>
+                  <Icon name="trash" size={14} />
+                </button>
+              </span>
+            </div>
+            <div className="group-b">
+              {st?.error && <ErrorBlock title={`${s.label} bypassed.`} message={st.error.message} />}
+              {errors[s.kind] && <ErrorBlock message={errors[s.kind]} />}
+              {missing.length > 0 && <p className="note">Needs {missing.map(labelOf).join(', ')}, which is not on this camera.</p>}
+              <StageForm schema={s} values={values} onChange={(p) => change(s.kind, p)} />
+            </div>
+          </div>
+        );
+      })}
+      {added.length > 0 && <p className="note">Effects run in this fixed order.</p>}
+      {removing && (
+        <ConfirmDialog
+          title={`Remove ${removing.label}?`}
+          body={`${removing.label} stops on CAM ${n} now and its settings are dropped.`}
+          confirm="Remove effect"
+          onCancel={() => setRemoving(null)}
+          onConfirm={async () => {
+            await client.request('removeStage', { cameraId: cam.id, stage: removing.kind }).catch(() => {});
+            setRemoving(null);
+          }}
+        />
+      )}
+    </Section>
   );
 }
 ```
 
-- [ ] **Step 4: Open a camera from the multiview**
-
-`ui/src/screens/Multiview.tsx`: add a prop `onOpen?: (cameraId: string) => void` to the component signature, and make the camera name clickable:
+`ui/src/dialogs/AddEffectDialog.tsx`:
 ```tsx
-                  <Typography variant="h6" sx={{ flex: 1, cursor: onOpen ? 'pointer' : 'default' }} onClick={() => onOpen?.(cam.id)}>
-                    {cam.name}
-                  </Typography>
+import { useState } from 'react';
+
+import type { EngineClient } from '../api/client';
+import type { CameraConfig, StageSchemaJson } from '../api/protocol';
+import { ErrorBlock } from '../components/ErrorBlock';
+import { Icon, type IconName } from '../components/Icon';
+import { Modal } from '../components/Modal';
+import { isAdded } from '../inspector/Effects';
+
+// Every registered effect appears here automatically (spec §5.4); a missing dependency is explained, not hidden.
+export function AddEffectDialog({ client, camera, n, schemas, onClose }: { client: EngineClient; camera: CameraConfig; n: number; schemas: StageSchemaJson[]; onClose: () => void }) {
+  const usable = (s: StageSchemaJson) => !isAdded(camera, s.kind) && s.requires.every((k) => isAdded(camera, k));
+  const [pick, setPick] = useState(() => schemas.find(usable)?.kind ?? '');
+  const [error, setError] = useState('');
+  const labelOf = (kind: string) => schemas.find((s) => s.kind === kind)?.label ?? kind;
+
+  async function submit() {
+    const s = schemas.find((x) => x.kind === pick);
+    if (!s) return;
+    try {
+      await client.request('setStage', { cameraId: camera.id, stage: s.kind, params: s.onAdd });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <Modal
+      title={`Add effect to CAM ${n}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!pick} onClick={submit}>
+            <Icon name="plus" size={14} />
+            Add effect
+          </button>
+        </>
+      }
+    >
+      {error && <ErrorBlock message={error} />}
+      <div className="pick" role="radiogroup" aria-label="Effects">
+        {schemas.map((s) => {
+          const done = isAdded(camera, s.kind);
+          const missing = s.requires.filter((k) => !isAdded(camera, k));
+          return (
+            <label key={s.kind} className={`pick-row${pick === s.kind ? ' sel' : ''}${done || missing.length ? ' done' : ''}`}>
+              <input type="radio" name="effect" aria-label={s.label} checked={pick === s.kind} disabled={!usable(s)} onChange={() => setPick(s.kind)} />
+              <span className="ic">
+                <Icon name={s.icon as IconName} size={18} />
+              </span>
+              <div>
+                <b>{s.label}</b>
+                <p>{s.description}</p>
+                {s.requires.length > 0 && (
+                  <span className="req">{missing.length ? `Add ${missing.map(labelOf).join(', ')} first.` : `Needs ${s.requires.map(labelOf).join(', ')}, already on this camera.`}</span>
+                )}
+              </div>
+              {done && <span className="tag2">ADDED</span>}
+            </label>
+          );
+        })}
+      </div>
+      <p className="note">New effects appear here when BreadCamera ships them. Each runs in its fixed place in the chain.</p>
+    </Modal>
+  );
+}
 ```
 
-`ui/src/App.tsx` — in `Connected`, add `const [selected, setSelected] = useState<string | null>(null);` (import `useState`) and replace `<Multiview client={client} />` with:
+- [ ] **Step 4: Wire it into the window**
+
+- `ui/src/inspector/Inspector.tsx`: change `function Section(` to `export function Section(`.
+- `ui/src/multiview/Strip.tsx`: add `schemas: StageSchemaJson[];` to the props (and `import type { StageSchemaJson } from '../api/protocol'` next to the existing types), and insert right before `<span className="flow">`:
 ```tsx
-      {selected ? (
-        <CameraDetail client={client} cameraId={selected} onBack={() => setSelected(null)} />
-      ) : (
-        <Multiview client={client} onOpen={setSelected} />
-      )}
+      {(() => {
+        // Effect icons: every added, switched-on effect; dense strips show only bypassed ones.
+        const icons = schemas
+          .filter((s) => cfg.stages && s.kind in cfg.stages && cfg.stages[s.kind].enabled !== false)
+          .map((s) => ({ s, state: cam?.stages?.[s.kind]?.state ?? 'off' }))
+          .filter(({ state }) => !dense || state === 'bypassed');
+        if (icons.length === 0) return null;
+        return (
+          <span className="fx">
+            {icons.map(({ s, state }) => (
+              <span key={s.kind} className={state === 'bypassed' ? 'bad' : ''} title={`${s.label}: ${state === 'active' ? 'running' : state}`}>
+                <Icon name={s.icon as IconName} size={13} />
+              </span>
+            ))}
+          </span>
+        );
+      })()}
 ```
-(import `CameraDetail`).
+(import `type IconName` from `../components/Icon`).
+- `ui/src/multiview/Multiview.tsx`: add `schemas: StageSchemaJson[];` to the props and pass `schemas={schemas}` to `<Strip … />`.
+- `ui/src/App.tsx` (`Workspace`):
+  - imports: `useStageSchemas` from `./state/schemas`, `Effects` from `./inspector/Effects`, `AddEffectDialog` from `./dialogs/AddEffectDialog`;
+  - `const schemas = useStageSchemas(client);` after `useEngine`;
+  - the dialog state type gains `'addEffect'`;
+  - in `menus.camera`, after Add output…: `{ label: 'Add effect…', disabled: !cam, onSelect: () => setDialog('addEffect') }`;
+  - `<Multiview … schemas={schemas} />`;
+  - `<Inspector …>` gets children: `{cam && <Effects client={client} snap={snap} cam={cam} n={index + 1} schemas={schemas} onAdd={() => setDialog('addEffect')} />}` (and its closing tag `</Inspector>`);
+  - next to the other dialogs: `{dialog === 'addEffect' && cam && <AddEffectDialog client={client} camera={cam} n={index + 1} schemas={schemas} onClose={() => setDialog(null)} />}`.
+- `ui/src/app.css` — append:
+```css
+/* effects (M2) */
+.chain { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; color: var(--bm-text-disabled); }
+.chain span { color: var(--bm-text-muted); padding: 1px 6px; border: 1px solid var(--bm-border); border-radius: 3px; }
+.chain span.fxn { color: var(--bm-text); border-color: var(--bm-border-strong); }
+.group { border: 1px solid var(--bm-border); border-radius: 4px; background: var(--bm-bg); }
+.group-h { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border-bottom: 1px solid var(--bm-border-subtle); }
+.group-h .gi { color: var(--bm-text-muted); display: grid; }
+.group-h b { font-weight: 600; }
+.group-h .right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.group-b { padding: 6px 8px 8px; display: grid; gap: 6px; }
+.group .prop { grid-template-columns: 88px minmax(0, 1fr); }
+.group .ctl { background: var(--bm-surface); }
+.st { font: 500 10px var(--mono); letter-spacing: .08em; padding: 1px 5px; border-radius: 3px; border: 1px solid; white-space: nowrap; }
+.st.run { color: var(--bm-success); border-color: rgba(74, 222, 128, .35); }
+.st.bad { color: var(--bm-danger); border-color: rgba(251, 113, 133, .5); }
+.st.dim { color: var(--bm-text-dim); border-color: var(--bm-border); }
+.slider { display: grid; grid-template-columns: 1fr 52px; gap: 8px; align-items: center; }
+.slider input[type='range'] { width: 100%; accent-color: var(--bm-text-muted); }
+.sv { height: 22px; border: 1px solid var(--bm-border); border-radius: 4px; display: grid; place-items: center end; padding: 0 6px; font: 400 11px var(--mono); }
+.pick { display: grid; gap: 4px; }
+.pick-row { display: grid; grid-template-columns: 16px 24px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--bm-border); border-radius: 4px; background: var(--bm-surface); color: var(--bm-text); }
+.pick-row.sel { border-color: var(--bm-brand); background: var(--bm-brand-wash); }
+.pick-row.done { opacity: .5; }
+.pick-row input { margin: 2px 0 0; accent-color: var(--bm-brand); }
+.pick-row .ic { color: var(--bm-text-muted); }
+.pick-row b { font-weight: 600; display: block; }
+.pick-row p { color: var(--bm-text-muted); margin-top: 1px; }
+.pick-row .req { font: 400 11px var(--mono); color: var(--bm-text-dim); margin-top: 4px; display: block; }
+.tag2 { font: 500 10px var(--mono); letter-spacing: .06em; color: var(--bm-text-dim); border: 1px solid var(--bm-border); border-radius: 3px; padding: 1px 5px; }
+```
 
 - [ ] **Step 5: Run the UI tests and build**
 
-In `ui/`: `PATH="/c/Program Files/nodejs:$PATH" npm test` — expected all pass (M1's 12 + 3 new). `npm run build` — no type errors.
+In `ui/`: `PATH="/c/Program Files/nodejs:$PATH" npm test` — expected all pass (M1's files + 2 new). `npm run build` — no type errors. Compare the window once with the mockup's "Multiview" and "Add effect" tabs (a screenshot in the report).
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add ui/src
-git commit -m "feat(ui): camera detail with schema-driven stage panels, output toggles and removal"
+git commit -m "feat(ui): effects as add-ins in the Inspector, Add effect dialog and strip icons"
 ```
 
 ### Task 7: M2 acceptance — 4× 1080p60 with matte + background inside the budget; follow-ups
