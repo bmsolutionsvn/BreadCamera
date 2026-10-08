@@ -27,6 +27,8 @@ message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")
 add_library(bc_core STATIC
   src/core/rate.cpp
   # Task 2
+  src/core/tick_schedule.cpp
+  src/core/audio_delay.cpp
   # Task 3
   # Task 4
 )
@@ -38,6 +40,10 @@ add_executable(bc_tests
   tests/main.cpp
   tests/support/requires.cpp
   tests/rate_test.cpp
+  tests/tick_schedule_test.cpp
+  tests/frame_sync_test.cpp
+  tests/bounded_queue_test.cpp
+  tests/audio_delay_test.cpp
   # Task 2..14 test files
 )
 target_include_directories(bc_tests PRIVATE tests)
