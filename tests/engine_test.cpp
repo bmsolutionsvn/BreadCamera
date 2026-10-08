@@ -167,9 +167,8 @@ TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a
   Rig r;
   bc::Show show;
   show.settings.slatePath = "C:/definitely/not/here.png";
-  show.cameras.push_back(cam("a", {out("o1")}));
+  show.cameras.push_back(cam("a", {out("o1")}, {{"paused", true}}));  // never any frame
   r.engine.apply(show);
-  r.factory.input("a")->paused = true;  // never any signal
   r.engine.start();
   std::this_thread::sleep_for(300ms);
   auto snap = r.state.snapshot();

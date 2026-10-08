@@ -105,10 +105,7 @@ void Engine::run() {
   if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
 
   TickSchedule sched(settings_.rate);
-  // One full period of settle before tick 0: a camera's input starts with the camera,
-  // so its first frame is in flight before the engine's first tick (no one-frame slate
-  // flash when a show starts, and the first delivered frame is the input's own size).
-  Clock::time_point start = Clock::now() + sched.offset(1);
+  Clock::time_point start = Clock::now();
   uint64_t index = 0;
   uint64_t ticksPerSecond = 60;
   while (running_) {
@@ -117,7 +114,7 @@ void Engine::run() {
       if (rateChanged_) {
         sched = TickSchedule(settings_.rate);
         ticksPerSecond = static_cast<uint64_t>(std::lround(settings_.rate.fps()));
-        start = Clock::now() + sched.offset(1);
+        start = Clock::now();
         index = 0;
         rateChanged_ = false;
       }
