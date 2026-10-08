@@ -108,6 +108,9 @@ add_library(bc_engine STATIC
   src/engine/camera.cpp
   src/engine/engine.cpp
   # Task 10
+  src/engine/preview_encoder.cpp
+  src/engine/preview_hub.cpp
+  src/engine/preview_service.cpp
   # Task 11
 )
 target_include_directories(bc_engine PUBLIC src)
@@ -139,6 +142,8 @@ add_executable(bc_tests
   # Task 2..14 test files
   # Task 9
   tests/engine_test.cpp
+  # Task 10
+  tests/preview_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine doctest::doctest)

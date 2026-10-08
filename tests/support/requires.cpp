@@ -4,6 +4,7 @@
 #include <mutex>
 #include <set>
 
+#include "engine/preview_encoder.h"
 #include "gpu/device.h"
 
 namespace bc::test {
@@ -22,9 +23,15 @@ bool check(Req r, const char*& reason) {
         return true;
       }
     }
-    case Req::H264Encoder:
-      reason = "no H.264 encoder check yet (Task 10)";
-      return true;
+    case Req::H264Encoder: {
+      reason = "no H.264 encoder opens on this machine (h264_nvenc/amf/qsv/mf)";
+      try {
+        bc::PreviewEncoder probe(512, 288, 30);
+        return false;
+      } catch (...) {
+        return true;
+      }
+    }
   }
   return true;
 }
