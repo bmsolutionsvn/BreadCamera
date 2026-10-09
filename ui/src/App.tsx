@@ -12,7 +12,6 @@ import { Multiview, type Layout } from './multiview/Multiview';
 import { StatusBar } from './shell/StatusBar';
 import { TitleBar } from './shell/TitleBar';
 import { Toolbar } from './shell/Toolbar';
-import { postToShell } from './bridge';
 import { nextMarks, type Marks } from './state/marks';
 
 function engineUrl(): string | null {
@@ -29,7 +28,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('auto');
-  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'stopAll'>(null);
+  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'stopAll' | 'quit'>(null);
   const [now, setNow] = useState(() => Date.now());
   const marks = useRef<Record<string, Marks>>({});
 
@@ -66,7 +65,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const holdMs = snap.show?.settings?.holdMs ?? 5000;
   const menus = useMemo(
     () => ({
-      file: [{ label: 'Quit…', onSelect: () => postToShell({ type: 'window', action: 'close' }) }],
+      file: [{ label: 'Quit…', onSelect: () => setDialog('quit') }],
       camera: [
         { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
         { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
@@ -113,7 +112,7 @@ export function Workspace({ client }: { client: EngineClient }) {
           }}
         />
       )}
-      <QuitDialog />
+      <QuitDialog open={dialog === 'quit'} onClose={() => setDialog(null)} />
     </div>
   );
 }

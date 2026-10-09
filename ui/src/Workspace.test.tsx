@@ -108,3 +108,16 @@ test('losing the engine shows the restart block and every pill goes Offline', ()
   expect(screen.getByTitle('NDI output: Offline')).toBeInTheDocument();
   c.close();
 });
+
+test('File menu Quit… confirms and quits instead of hiding to the tray', () => {
+  const postMessage = vi.fn();
+  (window as unknown as { chrome: unknown }).chrome = { webview: { postMessage, addEventListener() {}, removeEventListener() {} } };
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'File' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Quit…' }));
+  const dlg = screen.getByRole('dialog', { name: 'Quit BreadCamera?' });
+  expect(postMessage).not.toHaveBeenCalledWith('{"type":"window","action":"close"}');
+  fireEvent.click(within(dlg).getByRole('button', { name: 'Quit and stop all outputs' }));
+  expect(postMessage).toHaveBeenCalledWith('{"type":"quitConfirmed"}');
+  delete (window as unknown as { chrome?: unknown }).chrome;
+});
