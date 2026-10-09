@@ -142,6 +142,9 @@ void Engine::run() {
         const auto& id = cam->config().id;
         try {
           cam->tick(index, sched, now, slate_);
+          // The error block must clear once the tick is clean again (spec §6.4: an
+          // error is persistent *while true*, never forever).
+          state_.erase("/cameras/" + id + "/tickError");
         } catch (const std::exception& e) {
           state_.set("/cameras/" + id + "/tickError", e.what());
         }

@@ -209,9 +209,10 @@ void startEngineSupervision() {
     // on the engine's single-instance mutex.
     discovery = bc::waitForDiscovery(discoveryFile, std::chrono::seconds(3));
   }
-  g.launcher = std::make_unique<bc::ProcessLauncher>(g.exeDir / L"breadcamera-engine.exe", L"");
-  if (discovery && bc::isEngineProcess(discovery->pid)) g.launcher->adopt(discovery->pid);
-  if (discovery && g.launcher->isRunning()) {
+  // One launcher for the whole probe: liveness comes from the pid-identity check
+  // itself, so there is no throwaway instance that a later edit could launch or kill.
+  const bool engineAlive = discovery && bc::isEngineProcess(discovery->pid);
+  if (engineAlive) {
     g.port = discovery->port;
     g.token = discovery->token;
   } else {

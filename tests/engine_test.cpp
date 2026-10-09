@@ -4,6 +4,7 @@
 #include <thread>
 
 #include "core/state_store.h"
+#include "engine/command_router.h"
 #include "engine/engine.h"
 #include "gpu/device.h"
 #include "support/fake_input.h"
@@ -175,6 +176,28 @@ TEST_CASE("Engine: an input changing size mid-stream still leaves at the show si
   CHECK(seen.back().firstPixel[2] > 100);  // still the picture, never an all-zero frame
 }
 
+TEST_CASE("Engine: tickError is set by a throwing tick and cleared by the next clean tick") {
+  Rig r;
+  bc::Show show = testShow();
+  auto broken = out("o1");
+  broken.width = 32768;  // over the D3D11 texture cap: every tick's variant() throws
+  show.cameras.push_back(cam("a", {broken}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(300ms);
+  auto tickError = [&] {
+    auto snap = r.state.snapshot();
+    auto p = json::json_pointer("/cameras/a/tickError");
+    return snap.contains(p) ? snap.at(p).get<std::string>() : std::string{};
+  };
+  CHECK_FALSE(tickError().empty());  // the engine reports the throwing tick
+  // Heal the same camera: a deliverable output size again, next tick is clean.
+  show.cameras[0].outputs = {out("o1")};
+  r.engine.apply(show);
+  std::this_thread::sleep_for(300ms);
+  CHECK(tickError().empty());  // a clean tick clears it; it must not stick forever
+}
+
 TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a warning") {
   Rig r;
   bc::Show show = testShow();
@@ -243,4 +266,19 @@ TEST_CASE("Engine: input health is published") {
   std::this_thread::sleep_for(1200ms);
   CHECK(health() == "degraded");  // the pause was a stutter less than 10 s ago
   CHECK(r.state.snapshot()["engine"]["resolution"] == "64x36");
+}
+
+TEST_CASE("Factory: a non-string NDI name is rejected with the router's message") {
+  Rig r;
+  bc::DefaultAdapterFactory factory(*r.gpu, r.pool);
+  bc::CameraConfig c;
+  c.id = "a";
+  c.name = "Cam a";
+  bc::OutputConfig o;
+  o.id = "ndi1";
+  o.kind = "ndi";
+  o.params["name"] = 7;  // hand-edited show file: name is not text
+  // Both validation sites must reject the same value with the same words.
+  CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "NDI name must be text", std::invalid_argument);
 }

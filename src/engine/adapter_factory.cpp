@@ -18,6 +18,10 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
 
 std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cfg, const CameraConfig& cam) {
   if (cfg.kind == "ndi") {
+    // Same rule as CommandRouter::validateOutput: a hand-edited show file with a
+    // non-string name is rejected here too instead of silently using the default.
+    if (cfg.params.contains("name") && !cfg.params["name"].is_string())
+      throw std::invalid_argument("NDI name must be text");
 #if BC_WITH_NDI
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
     if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("NDI name must be 1 to 200 characters");
