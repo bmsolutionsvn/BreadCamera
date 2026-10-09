@@ -173,3 +173,7 @@ target_link_libraries(bc_shell PUBLIC bc_core)
 
 add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
 target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
+
+add_custom_command(TARGET BreadCamera POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/ui/dist -DDST=$<TARGET_FILE_DIR:BreadCamera>/ui
+          -P ${CMAKE_SOURCE_DIR}/cmake/CopyUi.cmake)
