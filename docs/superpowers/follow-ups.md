@@ -57,6 +57,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The UI ships beside the shell exe (`ui/` folder) instead of embedded in it (`CMakeLists.txt`, `cmake/CopyUi.cmake`).
 
 ## Test gaps (deferred)
+- Socket tests use fixed ports inside 44620–48715, which WSL mirrored networking (`%USERPROFILE%\.wslconfig`, `networkingMode=mirrored`) reserves on the build PC: `ControlServer: refuses a wrong token…`, `ControlServer: hostile messages…`, `FfmpegInput: an SRT listener…`, `FfmpegInput: stop() returns promptly…` and the M1 acceptance cases fail to bind there. The aider night checks exclude them; fix by binding port 0 (OS-chosen) in the tests, or move WSL's range.
 - Task 2: minor (deferred): `tests/bounded_queue_test.cpp:35` — asserts on the wall clock (plan-verbatim; wide 1000 ms bound).
 - Task 2: observation for the whole-branch review: Task 2 left `setPolicy`, `reopen`, `toString(FeedPhase)`, `TickSchedule::rate()`, `AudioDelay::sampleRate()/channels()` unasserted (they compile).
 - Task 6: minor (deferred): `tests/ffmpeg_input_test.cpp` — `RecordingSink` declared after `FfmpegInput`, so a mid-test REQUIRE failure can destroy the sink while the input thread calls it.
