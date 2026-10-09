@@ -154,12 +154,22 @@ add_executable(bc_tests
   tests/control_server_test.cpp
   # Task 11A
   tests/input_health_test.cpp
+  # Task 12
+  tests/supervisor_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
-target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine doctest::doctest)
+target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
 bc_copy_runtime(bc_tests)
 
 # ---- engine executable (Task 11) ----
 add_executable(breadcamera-engine src/engine/engine_main.cpp)
 target_link_libraries(breadcamera-engine PRIVATE bc_engine shell32 ole32)
 bc_copy_runtime(breadcamera-engine)
+
+# ---- shell ----
+add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.cpp)
+target_include_directories(bc_shell PUBLIC src)
+target_link_libraries(bc_shell PUBLIC bc_core)
+
+add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
+target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
