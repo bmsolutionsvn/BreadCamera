@@ -9,28 +9,27 @@ WebView2/React UI). The design is
 
 The main (interactive) Claude session **plans; it does not implement**. It writes
 specs and plans, reviews finished work, merges branches, and answers questions. It
-does not write product code, tests or build scripts. Implementation goes to Hermes
+does not write product code, tests or build scripts. Implementation goes to aider
 (below). An agent dispatched to implement a plan is exempt.
 
-## Handing plans to Hermes (same flow as TYCyber, owner 2026-10-08)
+## Handing plans to aider (owner 2026-10-10; replaces Hermes, which cost too many tokens)
 
-- Every finished plan is queued as one task on Hermes's kanban board: board
-  `default`, assignee `default`, workspace `dir:F:\Coding\BreadMedia\BreadCamera`,
-  skills `superpowers-sdd-via-hermes` and `subagent-plan-execution`, created with
-  `--created-by claude-planner --initial-status blocked`, then
-  `hermes kanban schedule <id> "Night window: resumes at 23:00"`.
-- Tasks run **only between 23:00 and 07:00**; the night cron jobs release and stop
-  them. Never dispatch outside that window.
-- One complete brief per task; to change a queued task, archive it and create a new
-  one with the full brief and its links.
-- Plans of 4 tasks or fewer run **native** (one implementer, then one whole-branch
-  review and one fix wave). Plans of 5+ use **batched reviews** (a reviewer per batch
-  of up to 3 tasks, then the whole-branch review).
-- The milestones are a chain (each builds on the last): `--parent` on the previous
-  milestone's task, each branch cut from its parent's branch, all in the main
-  checkout.
-- Workers never merge and never push. The planner verifies and merges each branch
-  into `main`.
+- Skill `handing-plans-to-aider`, model `openai/mimo-v2.6-flash`. The Windows
+  scheduled task `aider-night-breadcamera` runs `aider_night.py` daily at 23:00 with
+  `--until 06:45` on the queue `.superpowers/aider/queue.json` (gitignored, with the
+  project brief `.superpowers/aider/brief.md` and `night.log`).
+- Runs happen **only between 23:00 and 07:00**. Never start a run outside that window.
+- The queue holds one entry per milestone, in chain order, each branch cut from its
+  parent's branch (`bcam-m2` from `bcam-m1`, …), all in the main checkout. One entry
+  runs per night; an entry whose ledger shows `## DONE` waits for the planner.
+- Acceptance and verification-only tasks are left out of the queue's task ranges; the
+  planner runs them.
+- The planner reviews each finished entry (a reviewer per batch of up to 3 tasks, then
+  the whole-branch review), fixes findings with `aider_task.py --extra`, merges into
+  `main`, then sets `"reviewed": true` so the next entry runs.
+- Night checks leave out tests that can't pass on this PC: acceptance cases, and the 4
+  socket tests whose ports (44620–48715) WSL mirrored networking reserves.
+- aider never commits, merges or pushes; `aider_run.py` commits each green task.
 
 ## Build machine facts
 
