@@ -103,3 +103,30 @@ TEST_CASE("readDiscovery: parses the engine file and rejects junk") {
   CHECK_FALSE(bc::readDiscovery(f));
   CHECK_FALSE(bc::readDiscovery(dir.path / "missing.json"));
 }
+
+TEST_CASE("isEngineProcess: refuses a live process that is not the engine") {
+  bc::ProcessLauncher l("C:\\Windows\\System32\\PING.EXE", L"-n 30 127.0.0.1");
+  l.launch();
+  REQUIRE(l.isRunning());
+  // engine.json survives an unclean exit, so the pid it names can already have
+  // reused: adopting it would end with TerminateProcess on that process.
+  CHECK_FALSE(bc::isEngineProcess(l.pid()));
+  CHECK_FALSE(bc::isEngineProcess(GetCurrentProcessId()));
+  CHECK_FALSE(bc::isEngineProcess(0));
+  l.kill();
+}
+
+TEST_CASE("waitForDiscovery: waits for a file that appears and gives up on one that does not") {
+  bc::test::TempDir dir;
+  const auto f = dir.path / "engine.json";
+  std::thread writer([&] {
+    std::this_thread::sleep_for(150ms);
+    std::ofstream(f) << R"({"pid":7,"port":47810,"token":"0123456789abcdef"})";
+  });
+  auto d = bc::waitForDiscovery(f, std::chrono::seconds(2));
+  writer.join();
+  REQUIRE(d);
+  CHECK(d->pid == 7);
+  CHECK(d->token == "0123456789abcdef");
+  CHECK_FALSE(bc::waitForDiscovery(dir.path / "never.json", std::chrono::milliseconds(300)));
+}

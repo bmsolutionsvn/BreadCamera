@@ -1,6 +1,8 @@
 #include "shell/process_launcher.h"
 
+#include <cwctype>
 #include <fstream>
+#include <thread>
 
 #include <nlohmann/json.hpp>
 
@@ -15,6 +17,41 @@ std::optional<Discovery> readDiscovery(const std::filesystem::path& file) {
     return d;
   } catch (...) {
     return std::nullopt;
+  }
+}
+
+std::optional<std::wstring> processImageBaseName(DWORD pid) {
+  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!h) return std::nullopt;
+  wchar_t buf[MAX_PATH];
+  DWORD size = MAX_PATH;
+  const BOOL ok = QueryFullProcessImageNameW(h, 0, buf, &size);
+  CloseHandle(h);
+  if (!ok) return std::nullopt;
+  std::wstring name = std::filesystem::path(buf).filename().wstring();
+  for (auto& c : name) c = static_cast<wchar_t>(towlower(c));
+  return name;
+}
+
+bool isEngineProcess(DWORD pid) {
+  auto name = processImageBaseName(pid);
+  return name && *name == L"breadcamera-engine.exe";
+}
+
+bool engineInstanceRunning() {
+  HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\BreadCameraEngine");
+  if (!m) return false;
+  CloseHandle(m);
+  return true;
+}
+
+std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
+                                          std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    if (auto d = readDiscovery(file)) return d;
+    if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -15,6 +16,17 @@ struct Discovery {
 };
 // %LOCALAPPDATA%\BreadCamera\engine.json written by the engine (Task 11).
 std::optional<Discovery> readDiscovery(const std::filesystem::path& file);
+
+// The image basename of a live process, lower-cased; nullopt when the pid cannot be opened.
+std::optional<std::wstring> processImageBaseName(DWORD pid);
+// True only for a live process whose image is breadcamera-engine.exe: engine.json
+// survives an unclean exit, so the pid it names may already have been reused.
+bool isEngineProcess(DWORD pid);
+// True when some process holds the engine's single-instance mutex.
+bool engineInstanceRunning();
+// Waits for a discovery file another process is still writing; nullopt at the timeout.
+std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
+                                          std::chrono::milliseconds timeout);
 
 class ProcessLauncher final : public EngineLauncher {
  public:

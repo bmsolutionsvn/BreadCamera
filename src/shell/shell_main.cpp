@@ -201,9 +201,16 @@ void startWebView() {
 }
 
 void startEngineSupervision() {
-  const auto discovery = bc::readDiscovery(localAppData() / L"engine.json");
+  const auto discoveryFile = localAppData() / L"engine.json";
+  auto discovery = bc::readDiscovery(discoveryFile);
+  if (!discovery && bc::engineInstanceRunning()) {
+    // An engine started moments before this shell has not written its discovery
+    // file yet; wait for it instead of launching a second engine that would die
+    // on the engine's single-instance mutex.
+    discovery = bc::waitForDiscovery(discoveryFile, std::chrono::seconds(3));
+  }
   g.launcher = std::make_unique<bc::ProcessLauncher>(g.exeDir / L"breadcamera-engine.exe", L"");
-  if (discovery) g.launcher->adopt(discovery->pid);
+  if (discovery && bc::isEngineProcess(discovery->pid)) g.launcher->adopt(discovery->pid);
   if (discovery && g.launcher->isRunning()) {
     g.port = discovery->port;
     g.token = discovery->token;
@@ -213,7 +220,8 @@ void startEngineSupervision() {
   g.launcher = std::make_unique<bc::ProcessLauncher>(
       g.exeDir / L"breadcamera-engine.exe",
       L"--port " + std::to_wstring(g.port) + L" --token " + bc::toWide(g.token));
-  if (discovery && discovery->token == g.token) g.launcher->adopt(discovery->pid);
+  if (discovery && discovery->token == g.token && bc::isEngineProcess(discovery->pid))
+    g.launcher->adopt(discovery->pid);
   g.supervisor = std::make_unique<bc::Supervisor>(*g.launcher);
 
   g.ws.setUrl("ws://127.0.0.1:" + std::to_string(g.port) + "/?token=" + g.token);
