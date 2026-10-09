@@ -156,10 +156,14 @@ add_executable(bc_tests
   tests/input_health_test.cpp
   # Task 12
   tests/supervisor_test.cpp
+  # Task 14
+  tests/e2e_m1_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
 bc_copy_runtime(bc_tests)
+# The M1 acceptance test launches the engine exe from the test binary's folder.
+add_dependencies(bc_tests breadcamera-engine)
 
 # ---- engine executable (Task 11) ----
 add_executable(breadcamera-engine src/engine/engine_main.cpp)
