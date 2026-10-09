@@ -4,7 +4,10 @@
 #include <ixwebsocket/IXWebSocket.h>
 
 #include <atomic>
+#include <functional>
+#include <stdexcept>
 #include <thread>
+#include <vector>
 
 #include "core/show_store.h"
 #include "core/state_store.h"
@@ -50,6 +53,22 @@ std::filesystem::path exeDir() {
   GetModuleFileNameW(nullptr, buf, MAX_PATH);
   return std::filesystem::path(buf).parent_path();
 }
+
+// RAII teardown for the M1 acceptance cases (review batch 6, finding 1): a REQUIRE-thrown
+// abort must still run the case's tail cleanup — otherwise a joinable poller destroyed while
+// unwinding std::terminates the whole bc_tests binary and an engine process is orphaned.
+// Declare it AFTER the resources it tears down (so its destructor runs while they are still
+// alive); steps run once, in registration order. The cases' former tail-cleanup statements
+// are folded into the steps, so the normal path behaves as before.
+struct CaseGuard {
+  void defer(std::function<void()> step) { steps_.push_back(std::move(step)); }
+  ~CaseGuard() {
+    for (auto& s : steps_) s();
+  }
+
+ private:
+  std::vector<std::function<void()>> steps_;
+};
 }  // namespace
 
 TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one camera" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
@@ -81,6 +100,11 @@ TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one
   for (int i = 0; i < 4; ++i) {
     pushers.push_back(std::make_unique<bc::test::TsPusher>(clip, "srt://127.0.0.1:" + std::to_string(47911 + i) + "?mode=caller", true));
   }
+  CaseGuard guard;  // an abort anywhere below (REQUIRE(allLive())) still stops the pushers and the engine
+  guard.defer([&] {
+    for (auto& p : pushers) p->stop();
+  });
+  guard.defer([&] { engine.stop(); });
 
   // Warm up: every camera live.
   auto warm = Clock::now() + 20s;
@@ -130,10 +154,7 @@ TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one
   const auto back = Clock::now() + 15s;
   while (phase(state, "cam0") != "live" && Clock::now() < back) std::this_thread::sleep_for(100ms);
   CHECK(phase(state, "cam0") == "live");
-
-  for (auto& p : pushers) p->stop();
-  engine.stop();
-}
+}  // pushers and engine stopped by the guard above
 
 TEST_CASE("M1 acceptance: a killed engine is back with its show in under 3 s") {
   bc::test::TempDir dir;
@@ -161,6 +182,16 @@ TEST_CASE("M1 acceptance: a killed engine is back with its show in under 3 s") {
       std::this_thread::sleep_for(100ms);
     }
   });
+  // Guard after the resources it tears down: an abort below (REQUIRE(first)/REQUIRE(again))
+  // still stops the poller, the supervisor and the engine process — never a joinable thread
+  // destroyed while unwinding, never an orphaned engine.
+  CaseGuard guard;
+  guard.defer([&] { sup.stopSupervising(); });
+  guard.defer([&] {
+    run = false;
+    if (poller.joinable()) poller.join();
+  });
+  guard.defer([&] { launcher.kill(); });
 
   ix::initNetSystem();
   auto askShow = [&]() -> std::optional<json> {  // connects, asks getShow, returns the result or nothing
@@ -209,9 +240,67 @@ TEST_CASE("M1 acceptance: a killed engine is back with its show in under 3 s") {
   REQUIRE(again);
   CHECK(took < 3000ms);
   CHECK((*again)["cameras"][0]["id"] == "keepme01");
+}  // poller, supervisor and engine process stopped by the guard above
 
-  sup.stopSupervising();
-  run = false;
-  poller.join();
-  launcher.kill();
+TEST_CASE("M1 case guard tears down every resource exactly once when a case aborts") {
+  // Seam for the two acceptance cases above (review batch 6, finding 1): a REQUIRE-thrown
+  // abort must still stop the poller thread, the supervisor and the launcher (case 2), and
+  // the pushers and the engine (case 1) — a joinable thread destroyed while unwinding would
+  // std::terminate the whole suite. Force an early exit through the guard and assert every
+  // teardown step ran, exactly once.
+  struct CountingLauncher : bc::EngineLauncher {
+    std::atomic<int> launches{0};
+    std::atomic<int> kills{0};
+    std::atomic<bool> running{false};
+    bool isRunning() override { return running; }
+    void launch() override {
+      ++launches;
+      running = true;
+    }
+    void kill() override {
+      ++kills;
+      running = false;
+    }
+  } launcher;
+  bc::Supervisor sup(launcher);
+  std::atomic<bool> run{true};
+  std::thread poller([&] {
+    while (run) {
+      sup.poll(Clock::now());
+      std::this_thread::sleep_for(10ms);
+    }
+  });
+  int pushersStopped = 0;
+  int engineStopped = 0;
+
+  bool aborted = false;
+  try {
+    {  // the case body: the guard is declared after the resources it must tear down
+      CaseGuard guard;
+      guard.defer([&] { sup.stopSupervising(); });
+      guard.defer([&] {
+        run = false;
+        if (poller.joinable()) poller.join();
+      });
+      guard.defer([&] { launcher.kill(); });
+      guard.defer([&] { ++pushersStopped; });  // stands in for: for (auto& p : pushers) p->stop();
+      guard.defer([&] { ++engineStopped; });   // stands in for: engine.stop();
+      throw std::runtime_error("simulated REQUIRE failure");  // the early exit through the guard
+    }
+  } catch (const std::runtime_error&) {
+    aborted = true;
+  }
+  CHECK(aborted);
+  CHECK(launcher.kills == 1);        // kill() ran, exactly once
+  CHECK(pushersStopped == 1);        // pusher teardown ran, exactly once
+  CHECK(engineStopped == 1);         // engine teardown ran, exactly once
+  const int launchesAfter = sup.launches();
+  sup.poll(Clock::now() + 1h);       // stopSupervising ran: a late poll must launch nothing
+  CHECK(sup.launches() == launchesAfter);
+  const bool joinedByGuard = !poller.joinable();
+  if (poller.joinable()) {           // never leave a joinable thread behind, even on failure
+    run = false;
+    poller.join();
+  }
+  CHECK(joinedByGuard);
 }

@@ -10,6 +10,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 
 ## Known ceilings (ponytail)
 - Readback maps synchronously under the context lock (`src/gpu/converter.cpp`, `Converter::readback`); double-buffer staging if the tick budget gets tight.
+- Task 14 fix: the 4x 1080p60 M1 acceptance case fails reproducibly on the readback hotspot — `Converter::readback`/`toBgra8` (synchronous `CopyResource` + blocking `Map(READ)` + 8.3 MB memcpy under the context lock, `src/engine/camera.cpp:140`, per distinct size per camera per tick) costs ~98% of the tick (~24 fps instead of 60); `NdiOutput::needsCpu()` is true (`src/io/ndi_output.h:15`) and spec §9 names NDI as M1's output; A/B with `cpu:false` outputs passes (1201 frames/20 s, 0 overruns) (`tests/e2e_m1_test.cpp`). Reported, not fixed — planner decides.
 - Bilinear-only downscale for previews (`src/gpu/shaders/linear_to_bgra8.hlsl`).
 - No audio clock-drift resampling; overflow trims (`src/core/audio_delay.h`).
 - The audio resampler is built from the first frame only (`src/io/ffmpeg_input.cpp`, `emitAudio`).
@@ -68,6 +69,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 9: minor (deferred): `FakeInput` now pushes its first frame before `onState(Live, …)` (baseline signalled Live first); no test asserts `/input/state` for fake inputs.
 - Task 12 fix: no positive unit case for isEngineProcess (a real engine pid → true); only the smoke run covers it (`tests/supervisor_test.cpp`).
 - Task 12 fix: if REQUIRE(l.isRunning()) fails in the isEngineProcess test, l.kill() is skipped and a 30 s PING lingers (`tests/supervisor_test.cpp`).
+- Task 14 fix: `tests/engine_test.cpp:82` `maxGap < 50ms` measured exactly 50 ms right after the 4x case in-suite (3/3 pass in isolation; did not recur in the next two full runs) — boundary flake, deferred.
 
 ## Elsewhere
 - The UI uses `@bmsolutionsvn/design`'s tokens (`bm.css`) but not its MUI theme or `BmAppShell`: the native pro-tool window is BreadCamera's own (spec §6.4, `ui/src/app.css`).
