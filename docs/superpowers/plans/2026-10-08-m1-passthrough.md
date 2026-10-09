@@ -8345,6 +8345,113 @@ git add src/shell tests CMakeLists.txt
 git commit -m "feat(shell): WebView2 shell with tray, engine adoption and restart supervisor"
 ```
 
+- [ ] **Step 9: Amended 2026-10-09 (batch-5 review) — adopt only a process that really is the engine, and wait for a discovery file still being written**
+
+Two defects the batch-5 review found in the code above, both reachable:
+
+1. `startEngineSupervision` adopts whatever pid `engine.json` names. The file is removed only on a **clean** engine exit, so after a crash or a forced kill that pid can already have been reused by an unrelated same-user process; `OpenProcess` then succeeds, heartbeats fail, and the supervisor's `kill()` calls `TerminateProcess` on an innocent process once the 8 s grace + 3 s timeout have passed. Spec §2 says "if **that engine process** is alive it adopts it" — the identity check is the missing half.
+2. The discovery file is read exactly once. If an engine is alive but its file is not there yet (the engine was started moments before this shell, or the file is torn), the shell takes a fresh token and launches a second engine, which exits on the engine's single-instance mutex (`Local\BreadCameraEngine`, exit 3); the supervisor then relaunches it for ever (5 per 60 s, then one every 10 s) while the shell can never connect to the engine that is actually running.
+
+**Change 1 — declarations**, in `src/shell/process_launcher.h` directly after the `readDiscovery` declaration, and add `#include <chrono>` to that header:
+```cpp
+// The image basename of a live process, lower-cased; nullopt when the pid cannot be opened.
+std::optional<std::wstring> processImageBaseName(DWORD pid);
+// True only for a live process whose image is breadcamera-engine.exe: engine.json
+// survives an unclean exit, so the pid it names may already have been reused.
+bool isEngineProcess(DWORD pid);
+// True when some process holds the engine's single-instance mutex.
+bool engineInstanceRunning();
+// Waits for a discovery file another process is still writing; nullopt at the timeout.
+std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
+                                          std::chrono::milliseconds timeout);
+```
+**Change 2 — definitions**, in `src/shell/process_launcher.cpp` directly after `readDiscovery`, and add `#include <thread>` and `#include <cwctype>` there:
+```cpp
+std::optional<std::wstring> processImageBaseName(DWORD pid) {
+  HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  if (!h) return std::nullopt;
+  wchar_t buf[MAX_PATH];
+  DWORD size = MAX_PATH;
+  const BOOL ok = QueryFullProcessImageNameW(h, 0, buf, &size);
+  CloseHandle(h);
+  if (!ok) return std::nullopt;
+  std::wstring name = std::filesystem::path(buf).filename().wstring();
+  for (auto& c : name) c = static_cast<wchar_t>(towlower(c));
+  return name;
+}
+
+bool isEngineProcess(DWORD pid) {
+  auto name = processImageBaseName(pid);
+  return name && *name == L"breadcamera-engine.exe";
+}
+
+bool engineInstanceRunning() {
+  HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\BreadCameraEngine");
+  if (!m) return false;
+  CloseHandle(m);
+  return true;
+}
+
+std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
+                                          std::chrono::milliseconds timeout) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  for (;;) {
+    if (auto d = readDiscovery(file)) return d;
+    if (std::chrono::steady_clock::now() >= deadline) return std::nullopt;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+}
+```
+**Change 3 — the head of `startEngineSupervision`** in `src/shell/shell_main.cpp` becomes this (the rest of the function stays byte-identical to the code above; `discovery` loses its `const`):
+```cpp
+void startEngineSupervision() {
+  const auto discoveryFile = localAppData() / L"engine.json";
+  auto discovery = bc::readDiscovery(discoveryFile);
+  if (!discovery && bc::engineInstanceRunning()) {
+    // An engine started moments before this shell has not written its discovery
+    // file yet; wait for it instead of launching a second engine that would die
+    // on the engine's single-instance mutex.
+    discovery = bc::waitForDiscovery(discoveryFile, std::chrono::seconds(3));
+  }
+  g.launcher = std::make_unique<bc::ProcessLauncher>(g.exeDir / L"breadcamera-engine.exe", L"");
+  if (discovery && bc::isEngineProcess(discovery->pid)) g.launcher->adopt(discovery->pid);
+```
+and the later re-adopt line becomes
+```cpp
+  if (discovery && discovery->token == g.token && bc::isEngineProcess(discovery->pid))
+    g.launcher->adopt(discovery->pid);
+```
+**Change 4 — two more test cases**, appended to `tests/supervisor_test.cpp`:
+```cpp
+TEST_CASE("isEngineProcess: refuses a live process that is not the engine") {
+  bc::ProcessLauncher l("C:\\Windows\\System32\\PING.EXE", L"-n 30 127.0.0.1");
+  l.launch();
+  REQUIRE(l.isRunning());
+  // engine.json survives an unclean exit, so the pid it names can already have
+  // reused: adopting it would end with TerminateProcess on that process.
+  CHECK_FALSE(bc::isEngineProcess(l.pid()));
+  CHECK_FALSE(bc::isEngineProcess(GetCurrentProcessId()));
+  CHECK_FALSE(bc::isEngineProcess(0));
+  l.kill();
+}
+
+TEST_CASE("waitForDiscovery: waits for a file that appears and gives up on one that does not") {
+  bc::test::TempDir dir;
+  const auto f = dir.path / "engine.json";
+  std::thread writer([&] {
+    std::this_thread::sleep_for(150ms);
+    std::ofstream(f) << R"({"pid":7,"port":47810,"token":"0123456789abcdef"})";
+  });
+  auto d = bc::waitForDiscovery(f, std::chrono::seconds(2));
+  writer.join();
+  REQUIRE(d);
+  CHECK(d->pid == 7);
+  CHECK(d->token == "0123456789abcdef");
+  CHECK_FALSE(bc::waitForDiscovery(dir.path / "never.json", std::chrono::milliseconds(300)));
+}
+```
+The RED for this step is the compile failure on the four new declarations; the GREEN is 8 cases under the filter `Supervisor*,ProcessLauncher*,readDiscovery*,isEngineProcess*,waitForDiscovery*`. Steps 1-8 stand byte-identical apart from the lines Change 3 replaces.
+
 ### Task 13: UI — native window shell: title bar, toolbar, Multiview, Inspector, status bar
 
 Rewritten 2026-10-08 after the UI mockup review. The reference is `docs/design/mockups/index.html` (approved) and `docs/design/multiview.md`; spec §6.4 is binding. English only. Effects, calibration and Settings arrive in M2, M3 and M5; this task builds the window they plug into.
@@ -10589,6 +10696,53 @@ Start `build\release\BreadCamera.exe`, wait 5 s, then take a screenshot of the w
 git add ui/package.json ui/package-lock.json ui/.npmrc ui/tsconfig.json ui/vite.config.ts ui/index.html ui/src cmake/CopyUi.cmake CMakeLists.txt
 git commit -m "feat(ui): native window shell with Multiview, Inspector, status bar and dialogs"
 ```
+
+- [ ] **Step 14: Amended 2026-10-09 (batch-5 review) — File → Quit… must confirm and quit, not hide**
+
+The File menu's `Quit…` posted `{type:'window',action:'close'}`, which the shell turns into **hide to tray**: the operator reads "Quit", nothing quits, and the outputs keep running — the false belief spec §2's explicit-quit rule exists to prevent (and the tray's identically labelled `Quit…` does confirm and quit). The ellipsis also promises the dialog the brief's own convention requires.
+
+**Change 1 — `ui/src/dialogs/QuitDialog.tsx`** becomes (the tray's `confirmQuit` path is unchanged in behaviour):
+```tsx
+import { useEffect, useState } from 'react';
+
+import { onShellMessage, postToShell } from '../bridge';
+import { ConfirmDialog } from './ConfirmDialog';
+
+// The tray's Quit… asks the page; the operator confirms with a verb (spec §2).
+// `open`/`onClose` let the File menu's Quit… use the same confirmation, so no
+// menu item ever claims to quit while the window merely hides.
+export function QuitDialog({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
+  const [asked, setAsked] = useState(false);
+  useEffect(() => onShellMessage((m) => m.type === 'confirmQuit' && setAsked(true)), []);
+  const show = open || asked;
+  if (!show) return null;
+  const close = () => {
+    setAsked(false);
+    onClose?.();
+  };
+  return (
+    <ConfirmDialog
+      title="Quit BreadCamera?"
+      body="Every output stops now and cameras on air lose picture. The engine shuts down."
+      confirm="Quit and stop all outputs"
+      onCancel={close}
+      onConfirm={() => {
+        postToShell({ type: 'quitConfirmed' });
+        close();
+      }}
+    />
+  );
+}
+```
+**Change 2 — `ui/src/App.tsx`**: the `dialog` state union gains `'quit'`; the File menu becomes
+```tsx
+      file: [{ label: 'Quit…', onSelect: () => setDialog('quit') }],
+```
+(the `postToShell` import becomes unused and must be removed — `noUnusedLocals` is on), and the render keeps `QuitDialog` mounted so the tray path still works:
+```tsx
+      <QuitDialog open={dialog === 'quit'} onClose={() => setDialog(null)} />
+```
+**Change 3 — one more case in `ui/src/Workspace.test.tsx`** (RED first: it fails against the current File menu, which posts `window/close` instead of opening the dialog). Follow the existing bridge-stub pattern of the `window buttons post to the shell` case: open the **File** menu, click `Quit…`, assert the `Quit BreadCamera?` dialog appears (it must NOT have hidden the window by posting `window/close`), click the `Quit and stop all outputs` button, and assert the stubbed `postMessage` was called with the string `{"type":"quitConfirmed"}`. No existing assertion may be weakened; the caption Close button still posts `window/close` and must keep doing so.
 
 ### Task 14: M1 acceptance — 4× 1080p60 passthrough, hold/slate under load, crash restart, follow-ups
 
