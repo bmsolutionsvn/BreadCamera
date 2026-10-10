@@ -4,6 +4,7 @@
 
 #include "core/secrets.h"
 #include "core/show.h"
+#include "core/stage_params.h"
 #include "core/utf8.h"
 
 namespace {
@@ -127,4 +128,22 @@ TEST_CASE("Show: Unicode names survive the file unchanged") {
   CHECK(back.cameras[0].name == "Sân khấu trái – Cam 2 📷");
   CHECK(bc::toUtf8(bc::toWide(back.cameras[0].name)) == back.cameras[0].name);
   CHECK(bc::utf8Length("Sân khấu") == 8);
+}
+
+TEST_CASE("Show: stages round-trip and are validated on load") {
+  bc::Show s;
+  bc::CameraConfig cam;
+  cam.id = "cam1";
+  cam.name = "Cam";
+  cam.stages = {{"matte", bc::normalizeStageParams("matte", {{"enabled", true}})}};
+  s.cameras.push_back(cam);
+  auto j = bc::showToJson(s, bc::SecretMode::Plain);
+  CHECK(bc::showFromJson(j) == s);
+  j["cameras"][0]["stages"]["matte"]["choke"] = 99;
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+  j["cameras"][0]["stages"] = {{"teleport", nlohmann::json::object()}};
+  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+  auto old = bc::showToJson(s, bc::SecretMode::Plain);
+  old["cameras"][0].erase("stages");  // an M1 show file
+  CHECK(bc::showFromJson(old).cameras[0].stages == nlohmann::json::object());
 }

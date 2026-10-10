@@ -1,0 +1,144 @@
+#include "core/stage_params.h"
+
+#include <algorithm>
+#include <regex>
+#include <stdexcept>
+
+namespace bc {
+namespace {
+using nlohmann::json;
+
+StageField number(std::string key, double min, double max, double step, double def, std::string label) {
+  StageField f;
+  f.key = std::move(key);
+  f.type = "number";
+  f.min = min;
+  f.max = max;
+  f.step = step;
+  f.def = def;
+  f.label = std::move(label);
+  return f;
+}
+
+StageField enumeration(std::string key, std::vector<std::string> options, std::vector<std::string> labels, std::string def,
+                       std::string label) {
+  StageField f;
+  f.key = std::move(key);
+  f.type = "enum";
+  f.options = std::move(options);
+  f.optionLabels = std::move(labels);
+  f.def = std::move(def);
+  f.label = std::move(label);
+  return f;
+}
+
+StageField simple(std::string key, std::string type, json def, std::string label) {
+  StageField f;
+  f.key = std::move(key);
+  f.type = std::move(type);
+  f.def = std::move(def);
+  f.label = std::move(label);
+  return f;
+}
+
+std::vector<StageSchema> build() {
+  StageSchema matte{"matte", "Background removal",
+                    "AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).", "matte", {},
+                    json{{"enabled", true}}, {}};
+  matte.fields = {
+      simple("enabled", "bool", false, "On"),
+      enumeration("quality", {"quality", "performance"}, {"High quality", "Performance"}, "quality", "Quality"),
+      number("choke", -8, 8, 1, 0, "Choke (px)"),
+      number("feather", 0, 8, 0.5, 1, "Feather (px)"),
+      number("threshold", 0, 1, 0.01, 0.5, "Threshold"),
+  };
+  StageSchema background{"background", "Background",
+                         "Blur the background, replace it with an image or colour, or send fill + key so the switcher keys the person.",
+                         "bg", {"matte"}, json{{"enabled", true}, {"mode", "blur"}}, {}};
+  background.fields = {
+      simple("enabled", "bool", true, "On"),
+      enumeration("mode", {"none", "keyed", "blur", "replace"}, {"None", "Keyed (fill + key)", "Blur", "Replace"}, "none",
+                  "Background mode"),
+      number("blur", 1, 50, 1, 12, "Blur (px)"),
+      simple("color", "color", "#101418", "Colour"),
+      simple("image", "path", "", "Image"),
+  };
+  return {matte, background};
+}
+
+json checkField(const StageField& f, const json& v) {
+  const std::string where = "'" + f.key + "'";
+  if (f.type == "bool") {
+    if (!v.is_boolean()) throw std::invalid_argument(where + " must be true or false");
+    return v;
+  }
+  if (f.type == "number") {
+    if (!v.is_number()) throw std::invalid_argument(where + " must be a number");
+    const double d = v.get<double>();
+    if (d < f.min || d > f.max) {
+      throw std::invalid_argument(where + " must be between " + json(f.min).dump() + " and " + json(f.max).dump());
+    }
+    return v;
+  }
+  if (f.type == "enum") {
+    if (!v.is_string() || std::find(f.options.begin(), f.options.end(), v.get<std::string>()) == f.options.end()) {
+      throw std::invalid_argument(where + " has an unknown value");
+    }
+    return v;
+  }
+  if (f.type == "color") {
+    static const std::regex hex("^#[0-9a-fA-F]{6}$");
+    if (!v.is_string() || !std::regex_match(v.get<std::string>(), hex)) throw std::invalid_argument(where + " must look like #rrggbb");
+    return v;
+  }
+  if (f.type == "path") {
+    if (!v.is_string() || v.get<std::string>().size() > 1024) throw std::invalid_argument(where + " must be a path of at most 1024 characters");
+    return v;
+  }
+  throw std::invalid_argument("unknown field type " + f.type);
+}
+}  // namespace
+
+const std::vector<StageSchema>& stageSchemas() {
+  static const std::vector<StageSchema> all = build();
+  return all;
+}
+
+const StageSchema* findStageSchema(std::string_view kind) {
+  for (auto& s : stageSchemas()) if (s.kind == kind) return &s;
+  return nullptr;
+}
+
+json schemaToJson(const StageSchema& s) {
+  json fields = json::array();
+  for (auto& f : s.fields) {
+    json j{{"key", f.key}, {"type", f.type}, {"default", f.def}, {"label", f.label}};
+    if (f.type == "number") {
+      j["min"] = f.min;
+      j["max"] = f.max;
+      j["step"] = f.step;
+    }
+    if (f.type == "enum") {
+      j["options"] = f.options;
+      j["optionLabels"] = f.optionLabels;
+    }
+    fields.push_back(j);
+  }
+  return {{"kind", s.kind},     {"label", s.label},       {"description", s.description}, {"icon", s.icon},
+          {"requires", s.needs}, {"onAdd", s.onAdd}, {"fields", fields}};
+}
+
+json normalizeStageParams(std::string_view kind, const json& params) {
+  const auto* s = findStageSchema(kind);
+  if (!s) throw std::invalid_argument("unknown stage '" + std::string(kind) + "'");
+  if (!params.is_object()) throw std::invalid_argument("stage params must be an object");
+  for (auto& [key, value] : params.items()) {
+    if (std::none_of(s->fields.begin(), s->fields.end(), [&](const StageField& f) { return f.key == key; })) {
+      throw std::invalid_argument("unknown setting '" + key + "' for stage " + s->kind);
+    }
+  }
+  json out = json::object();
+  for (auto& f : s->fields) out[f.key] = params.contains(f.key) ? checkField(f, params[f.key]) : f.def;
+  return out;
+}
+}  // namespace bc

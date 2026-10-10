@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "core/stage_params.h"
 #include "core/utf8.h"
 #include "io/srt_params.h"
 
@@ -158,6 +159,12 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     return json::object();
   }
 
+  if (cmd == "getStageSchemas") {
+    json out = json::array();
+    for (auto& s : stageSchemas()) out.push_back(schemaToJson(s));
+    return out;
+  }
+
   std::lock_guard l(m_);
   if (cmd == "getShow") return showToJson(show_, SecretMode::Redact);
 
@@ -213,6 +220,22 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     const auto before = c.outputs.size();
     std::erase_if(c.outputs, [&](const OutputConfig& o) { return o.id == outId; });
     if (c.outputs.size() == before) throw CmdError("not-found", "no output " + outId);
+  } else if (cmd == "setStage") {
+    auto& c = findCam(str(args, "cameraId"));
+    const auto stage = str(args, "stage");
+    const auto& params = obj(args, "params");
+    json merged = c.stages.value(stage, json::object());
+    for (auto& [k, v] : params.items()) merged[k] = v;
+    try {
+      c.stages[stage] = normalizeStageParams(stage, merged);
+    } catch (const std::invalid_argument& e) {
+      throw CmdError("invalid", e.what());
+    }
+  } else if (cmd == "removeStage") {
+    auto& c = findCam(str(args, "cameraId"));
+    const auto stage = str(args, "stage");
+    if (!c.stages.contains(stage)) throw CmdError("not-found", "effect " + stage + " is not on this camera");
+    c.stages.erase(stage);
   } else if (cmd == "stopAllOutputs") {
     for (auto& c : next.cameras)
       for (auto& o : c.outputs) o.enabled = false;
