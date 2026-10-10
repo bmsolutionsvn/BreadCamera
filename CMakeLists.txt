@@ -66,12 +66,17 @@ bc_shader(fit_linear cs_5_0)
 # Task 7
 bc_shader(fullscreen_vs vs_5_0)
 bc_shader(fullscreen_ps ps_5_0)
+# Task 3
+foreach(s alpha_threshold alpha_morph alpha_blur bg_downsample bg_blur bg_composite)
+  bc_shader(${s} cs_5_0)
+endforeach()
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
   src/gpu/image_io.cpp
+  src/gpu/compositor.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
@@ -141,6 +146,8 @@ add_executable(bc_tests
   tests/stage_params_test.cpp
   # M2 Task 2
   tests/stage_guard_test.cpp
+  # Task 3
+  tests/compositor_test.cpp
   # Task 5
   tests/gpu_test.cpp
   # Task 6
