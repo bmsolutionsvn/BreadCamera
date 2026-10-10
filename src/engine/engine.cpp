@@ -138,10 +138,20 @@ void Engine::run() {
     std::vector<std::pair<std::string, TextureRef>> frames;
     {
       std::lock_guard l(mutex_);
+      // Half 1: every camera picks and converts.
+      for (auto& cam : cameras_) {
+        try {
+          cam->beginTick(now, slate_);
+        } catch (const std::exception& e) {
+          state_.set("/cameras/" + cam->config().id + "/tickError", e.what());
+        }
+      }
+      // (M2 Task 4: one batched matte call goes here.)
+      // Half 2: stages, readback, fan-out.
       for (auto& cam : cameras_) {
         const auto& id = cam->config().id;
         try {
-          cam->tick(index, sched, now, slate_);
+          cam->endTick(index, sched, now, nullptr);
           // The error block must clear once the tick is clean again (spec §6.4: an
           // error is persistent *while true*, never forever).
           state_.erase("/cameras/" + id + "/tickError");

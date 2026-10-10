@@ -35,6 +35,8 @@ add_library(bc_core STATIC
   src/core/show_store.cpp
   # Task 1
   src/core/stage_params.cpp
+  # M2 Task 2
+  src/core/stage_guard.cpp
   # Task 4
   src/core/signal_state.cpp
   src/core/state_store.cpp
@@ -137,6 +139,8 @@ add_executable(bc_tests
   tests/state_store_test.cpp
   # Task 1
   tests/stage_params_test.cpp
+  # M2 Task 2
+  tests/stage_guard_test.cpp
   # Task 5
   tests/gpu_test.cpp
   # Task 6
