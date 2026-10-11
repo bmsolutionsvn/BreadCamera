@@ -72,7 +72,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The UI ships beside the shell exe (`ui/` folder) instead of embedded in it (`CMakeLists.txt`, `cmake/CopyUi.cmake`).
 
 ## Test gaps (deferred)
-- Socket tests use fixed ports inside 44620–48715, which WSL mirrored networking (`%USERPROFILE%\.wslconfig`, `networkingMode=mirrored`) reserves on the build PC: `ControlServer: refuses a wrong token…`, `ControlServer: hostile messages…`, `FfmpegInput: an SRT listener…`, `FfmpegInput: stop() returns promptly…` and the M1 acceptance cases fail to bind there. The aider night checks exclude them; fix by binding port 0 (OS-chosen) in the tests, or move WSL's range.
+- Socket tests use fixed ports inside 44620–48715, which WSL mirrored networking (`%USERPROFILE%\.wslconfig`, `networkingMode=mirrored`) reserves on the build PC: `ControlServer: refuses a wrong token…`, `ControlServer: hostile messages…`, `FfmpegInput: an SRT listener…`, `FfmpegInput: stop() returns promptly…` and the M1 acceptance cases fail to bind there. The aider night checks exclude them; fix by binding port 0 (OS-chosen) in the tests, or move WSL's range. The M2 acceptance (`tests/e2e_m2_test.cpp`) sidesteps the range: listeners on 49100–49103 (the plan's 47931–47934 return WSAEADDRINUSE on this PC).
 - Task 2: minor (deferred): `tests/bounded_queue_test.cpp:35` — asserts on the wall clock (plan-verbatim; wide 1000 ms bound).
 - Task 2: observation for the whole-branch review: Task 2 left `setPolicy`, `reopen`, `toString(FeedPhase)`, `TickSchedule::rate()`, `AudioDelay::sampleRate()/channels()` unasserted (they compile).
 - Task 6: minor (deferred): `tests/ffmpeg_input_test.cpp` — `RecordingSink` declared after `FfmpegInput`, so a mid-test REQUIRE failure can destroy the sink while the input thread calls it.
@@ -100,3 +100,12 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The title bar loses the top-edge resize handle (the side and bottom edges and Snap still resize) (`src/shell/shell_main.cpp`, `WM_NCCALCSIZE`).
 - Task 5: minor (deferred): `tests/gpu_test.cpp:73` — doctest `MESSAGE` prints `AMD Radeon RX 66001` (needs `DOCTEST_CONFIG_TREAT_CHAR_STAR_AS_STRING` in `tests/main.cpp`, outside Task 5's file set).
 - Task 13 (unverified claim, verified 2026-10-10): the npm install reported 6 vulnerabilities (2 critical) in the ui/ dev chain — `npm audit --prefix ui` returns exactly **6 vulnerabilities (3 moderate, 1 high, 2 critical)**, all in the vitest/vite/esbuild/tinypool/vite-node dev chain; `npm audit fix --force` would install vitest@5.0.3 (a breaking change), so it stays deferred (`ui/package-lock.json`).
+
+## M2
+- Maxine AI Green Screen backend is **untested on hardware**; its only test (`tests/maxine_matte_test.cpp`) skips without an RTX GPU + `VFXSDK_ROOT` (`src/engine/maxine_matte.cpp`).
+- Maxine frames are staged through CPU memory (~1–2 ms per camera); use NvCVImage D3D11 interop if the budget needs it (`src/engine/maxine_matte.cpp`).
+- One matte quality per batch: the first camera's setting wins (`src/engine/maxine_matte.cpp`, `process`).
+- Background stage budget is a fixed quarter tick per camera (`src/engine/camera.cpp`, `endTick`).
+- The M2 acceptance measures pipeline cost with a test matte; the real inference cost needs an RTX run (`tests/e2e_m2_test.cpp`).
+- M2 acceptance on the build PC (RX 6600): the zero-overrun bound **fails** — +742…+757 skips in 20 s across four runs (tick body 32.7 ms EWMA vs the 16.7 ms budget); every other check passes (latency 19.5/26.7/33.4/44.1 ms ≤ 50 in the final run, all runs ≤ 48, matte + background `active` on all four cameras, keyed corner/centre alpha 0/255 — 15 of 16 assertions). Temporary instrumentation split the tick: matte batch ~0.001 ms (TestMatte), refine ≤ 0.24 ms, background ≤ 0.03 ms per camera, blocking CPU readback 5.5–12.7 ms per camera (≈ the whole tick) — the same `Converter::readback` hotspot as the M1 entry under Known ceilings. Bounds left strict; the acceptance verdict is the owner's (`tests/e2e_m2_test.cpp`).
+- M2 run observation: `CameraStats::fps` reads 164 during sustained overruns — `freshThisSecond_` accumulates until the `index % ticksPerSecond == 0` publish fires, and tick-index skipping delays that publish past one second (`src/engine/engine.cpp`, `run`).

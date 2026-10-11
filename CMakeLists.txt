@@ -195,6 +195,8 @@ add_executable(bc_tests
   tests/engine_matte_test.cpp
   # M2 Task 5
   tests/maxine_matte_test.cpp
+  # M2 Task 7
+  tests/e2e_m2_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
