@@ -32,6 +32,15 @@ bool check(Req r, const char*& reason) {
         return true;
       }
     }
+    case Req::Maxine: {
+      reason = "needs BC_WITH_MAXINE (NVIDIA Video Effects SDK) and an NVIDIA GPU";
+      if (BC_WITH_MAXINE == 0) return true;
+      try {
+        return !bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware)->isNvidia();
+      } catch (...) {
+        return true;
+      }
+    }
   }
   return true;
 }

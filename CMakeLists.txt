@@ -23,6 +23,14 @@ if(BC_WITH_NDI AND NOT NDI_FOUND)
 endif()
 message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")
 
+find_package(Maxine)
+option(BC_WITH_MAXINE "Build the Maxine matte backend" ${Maxine_FOUND})
+if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
+  message(WARNING "BC_WITH_MAXINE=ON but the NVIDIA Video Effects SDK was not found; turning it off")
+  set(BC_WITH_MAXINE OFF)
+endif()
+message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
+
 # ---- core (no GPU) ----
 add_library(bc_core STATIC
   src/core/rate.cpp
@@ -132,6 +140,14 @@ target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
 target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
 
+if(BC_WITH_MAXINE)
+  target_sources(bc_engine PRIVATE src/engine/maxine_matte.cpp ${MAXINE_VFX_PROXY} ${MAXINE_IMAGE_PROXY})
+  target_include_directories(bc_engine PUBLIC ${MAXINE_INCLUDE_DIR} ${MAXINE_GREENSCREEN_INCLUDE_DIR})
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=1 BC_MAXINE_ROOT="${MAXINE_ROOT}")
+else()
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=0)
+endif()
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
@@ -177,6 +193,8 @@ add_executable(bc_tests
   tests/e2e_m1_test.cpp
   # M2 Task 4
   tests/engine_matte_test.cpp
+  # M2 Task 5
+  tests/maxine_matte_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

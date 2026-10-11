@@ -7,6 +7,9 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - NDI output — only tested if the NDI SDK was installed on the build PC; see the M1 report (`src/io/ndi_output.cpp`).
 - Task 6: minor (deferred): `tests/ffmpeg_input_test.cpp:206` — new decode-failure test forces `allowHwDecode=false`, so the d3d11va-stall variant is proven by construction only.
 - Task 11A fix: minor (deferred): the new code-point test drives `validateOutput` only — no runtime test drives `adapter_factory::makeOutput` with a multi-byte NDI name (the `#if BC_WITH_NDI` line compiles but is unexercised); disclosed in the fix report.
+- Maxine (M2 Task 5): the backend and the SDK proxy sources compile only with the SDK present — expect `/permissive- /W4` conformance hard errors from the proxies on the first RTX build (`CMakeLists.txt`, the `BC_WITH_MAXINE` block); silence per-source if needed.
+- Maxine (M2 Task 5): runtime needs the SDK `bin` on `PATH` — the SDK proxies `LoadLibrary` the vendor DLLs from the normal search path; `cmake/FindMaxine.cmake` only adds includes.
+- Maxine (M2 Task 5): `NvVFX_SetImage` copy-vs-retain semantics and `NvCVImage_Transfer` completion semantics were pinned against the online SDK docs only — re-confirm on the installed headers at the first RTX compile (the fix takes the conservative reading: persistent view images + an explicit stream sync after every transfer).
 
 ## Known ceilings (ponytail)
 - Readback maps synchronously under the context lock (`src/gpu/converter.cpp`, `Converter::readback`); double-buffer staging if the tick budget gets tight.
@@ -55,6 +58,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 4: per-tick JSON lookups (`backgroundFrom`/`refineFrom`/matte quality) and per-tick batch allocations should be precomputed in `loadStageParams` (`src/engine/camera.cpp`, `endTick` / `engine.cpp` matte loop).
 - Task 4: the slate loader has the same narrow-string path bug the background loader was fixed for — `loadImageBgra(settings_.slatePath)` builds the path from a UTF-8 `std::string` (ANSI code page on Windows) (`src/engine/engine.cpp:42`); fix like `camera.cpp` with `bc::toWide`.
 - Task 4 housekeeping: five empty root-level `*.hlsl` duplicates from `d69c4fc` (`alpha_blur.hlsl`, `alpha_morph.hlsl`, `bg_blur.hlsl`, `bg_composite.hlsl`, `bg_downsample.hlsl`) should be deleted in a separate housekeeping commit.
+- Maxine (M2 Task 5): the green-screen model batch is pinned to 8 (`NVVFX_MODEL_BATCH`, `src/engine/maxine_matte.cpp`) — more than 8 simultaneous matte cameras exceeds it; the grow-only capacity rebuild would need a batching split.
+- Maxine (M2 Task 5): quality-flip hysteresis in `MaxineMatte::process` (`src/engine/maxine_matte.cpp`) — a leading-camera change flips `q` and triggers a full rebuild (model reload under the engine mutex); debounce or pin quality per show.
 
 ## Spec deviations (authorised in M1)
 - NDI alpha uses BGRA instead of UYVA (`src/io/ndi_output.cpp`).
@@ -77,6 +82,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 12 fix: if REQUIRE(l.isRunning()) fails in the isEngineProcess test, l.kill() is skipped and a 30 s PING lingers (`tests/supervisor_test.cpp`).
 - Task 14 fix: `tests/engine_test.cpp:82` `maxGap < 50ms` measured exactly 50 ms right after the 4x case in-suite (3/3 pass in isolation; did not recur in the next two full runs) — boundary flake, deferred.
 - Task 4: minor (deferred): unlocked `r.matte->batchSizes` reads in one matte test (`tests/engine_matte_test.cpp`, the blur/replace case) — snapshot under `r.matte->m` like the overrun case does.
+- Maxine (M2 Task 5): `tests/maxine_matte_test.cpp` only asserts matte dimensions — add a content check (non-trivial alpha) and a >4-camera growth case when an RTX machine is available.
 - Task 4: pre-existing flake — `tests/engine_test.cpp:251` half-rate audio carry (`1600 == 3200`, 1 of 3 runs), unrelated to Task 4.
 - Task 14 review: `tests/e2e_m1_test.cpp` — `exeDir()` neither checks `GetModuleFileNameW`'s return length nor `MAX_PATH` truncation (test-only; the folder is controlled).
 - Task 14 review: `tests/e2e_m1_test.cpp` — the `askShow()` busy-retry loops have empty bodies; a short sleep between attempts would be clearer (style).
