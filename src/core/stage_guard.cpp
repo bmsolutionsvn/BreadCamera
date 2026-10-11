@@ -28,4 +28,6 @@ void StageGuard::succeeded(std::chrono::nanoseconds took, std::chrono::nanosecon
 }
 
 void StageGuard::failed(std::string message, Clock::time_point now) { bypass({"stage-failed", std::move(message)}, now); }
+
+void StageGuard::failed(ErrorInfo e, Clock::time_point now) { bypass(std::move(e), now); }
 }  // namespace bc

@@ -125,6 +125,8 @@ add_library(bc_engine STATIC
   # Task 11
   src/engine/command_router.cpp
   src/engine/control_server.cpp
+  # M2 Task 4
+  src/engine/matte.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
@@ -173,6 +175,8 @@ add_executable(bc_tests
   tests/supervisor_test.cpp
   # Task 14
   tests/e2e_m1_test.cpp
+  # M2 Task 4
+  tests/engine_matte_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

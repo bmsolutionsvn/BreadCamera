@@ -13,6 +13,8 @@
 #include "core/state_store.h"
 #include "engine/adapter_factory.h"
 #include "engine/camera.h"
+#include "engine/matte.h"
+#include "gpu/compositor.h"
 #include "gpu/converter.h"
 
 namespace bc {
@@ -26,13 +28,15 @@ struct EngineStats {
 class Engine {
  public:
   using FrameTap = std::function<void(uint64_t tick, const std::vector<std::pair<std::string, TextureRef>>& frames)>;
-  Engine(Converter& conv, StateStore& state, AdapterFactory& factory);
+  Engine(Converter& conv, Compositor& comp, StateStore& state, AdapterFactory& factory);
   ~Engine();
   void apply(const Show& show);
   void start();
   void stop();
   EngineStats stats() const;
   void setFrameTap(FrameTap tap) { tap_ = std::move(tap); }
+  // The matte service; call before start(). A null backend with a reason bypasses every matte.
+  void setMatteBackend(std::unique_ptr<MatteBackend> backend, std::string unavailableReason);
 
  private:
   void run();
@@ -40,8 +44,11 @@ class Engine {
   SyncPolicy policy() const { return {std::chrono::milliseconds(250), std::chrono::milliseconds(settings_.holdMs)}; }
 
   Converter& conv_;
+  Compositor& comp_;
   StateStore& state_;
   AdapterFactory& factory_;
+  std::unique_ptr<MatteBackend> matte_;
+  std::string matteUnavailable_;
   mutable std::mutex mutex_;
   ShowSettings settings_;
   bool settingsApplied_ = false;

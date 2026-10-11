@@ -12,6 +12,7 @@
 #include "core/show_store.h"
 #include "core/state_store.h"
 #include "engine/engine.h"
+#include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "shell/process_launcher.h"
 #include "shell/supervisor.h"
@@ -79,9 +80,10 @@ TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
+  bc::Compositor comp(*gpu, pool);
   bc::StateStore state;
   HybridFactory factory(*gpu, pool, conv);
-  bc::Engine engine(conv, state, factory);
+  bc::Engine engine(conv, comp, state, factory);
 
   bc::Show show;
   show.settings.holdMs = 2000;

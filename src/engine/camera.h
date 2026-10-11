@@ -16,6 +16,7 @@
 #include "core/state_store.h"
 #include "core/tick_schedule.h"
 #include "engine/adapter_factory.h"
+#include "gpu/compositor.h"
 #include "gpu/converter.h"
 
 namespace bc {
@@ -31,7 +32,8 @@ struct CameraStats {
 // engine's tick thread; the InputSink callbacks run on the input thread.
 class Camera final : public InputSink {
  public:
-  Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, StateStore& state, SyncPolicy policy);
+  Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, Compositor& comp, StateStore& state,
+         SyncPolicy policy);
   ~Camera() override;
   const CameraConfig& config() const { return cfg_; }
   void start();
@@ -46,6 +48,8 @@ class Camera final : public InputSink {
   }
   // First half (tick thread): newest frame → linear texture, or the slate. Never null.
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slate);
+  // This tick's linear frame, between the halves.
+  TextureRef tickFrame() const { return tickFrame_; }
   // True when this camera's matte is enabled and its guard lets it run this tick.
   bool wantsMatte(std::chrono::steady_clock::time_point now) const;
   const nlohmann::json& matteParams() const { return matteParams_; }
@@ -82,6 +86,7 @@ class Camera final : public InputSink {
   CameraConfig cfg_;
   AdapterFactory& factory_;
   Converter& conv_;
+  Compositor& comp_;
   StateStore& state_;
   FrameSync<Pending> sync_;
   AudioDelay audio_{48000, 2};
@@ -103,6 +108,9 @@ class Camera final : public InputSink {
   nlohmann::json backgroundParams_;
   StageGuard matteGuard_;
   StageGuard backgroundGuard_;
+  TextureRef bgImage_;               // linear RGBA16F replace background, or null
+  std::string bgImagePath_;          // the loaded image's path, to skip reloading
+  std::optional<ErrorInfo> bgImageError_;
   TextureRef tickFrame_;  // this tick's linear frame, between the halves
   std::optional<std::chrono::steady_clock::time_point> tickArrival_;
   FeedPhase tickPhase_ = FeedPhase::NoSignal;

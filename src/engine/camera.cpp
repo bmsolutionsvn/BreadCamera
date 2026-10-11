@@ -1,13 +1,18 @@
 #include "engine/camera.h"
 
 #include <cmath>
+#include <filesystem>
 #include <map>
+
+#include "core/utf8.h"
+#include "gpu/image_io.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
-Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, StateStore& state, SyncPolicy policy)
-    : cfg_(std::move(cfg)), factory_(factory), conv_(conv), state_(state), sync_(policy) {
+Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, Compositor& comp, StateStore& state,
+               SyncPolicy policy)
+    : cfg_(std::move(cfg)), factory_(factory), conv_(conv), comp_(comp), state_(state), sync_(policy) {
   loadStageParams();
 }
 
@@ -17,6 +22,26 @@ void Camera::loadStageParams() {
   matteParams_ = normalizeStageParams("matte", cfg_.stages.value("matte", nlohmann::json::object()));
   backgroundParams_ = normalizeStageParams("background", cfg_.stages.value("background", nlohmann::json::object()));
   if (!backgroundParams_.value("enabled", true)) backgroundParams_["mode"] = "none";
+  const std::string mode = backgroundParams_.value("mode", std::string("none"));
+  const std::string img = backgroundParams_.value("image", std::string());
+  if (mode != "replace" || img.empty()) {
+    bgImage_.reset();
+    bgImagePath_.clear();
+    bgImageError_.reset();
+  } else if (img != bgImagePath_) {
+    bgImageError_.reset();
+    try {
+      auto pic = loadImageBgra(std::filesystem::path(bc::toWide(img)));
+      auto up = conv_.uploadBgra8(pic.bgra.data(), pic.width, pic.height, pic.width * 4);
+      bgImage_ = conv_.toLinear(*up, PixelLayout::BGRA8, true);
+      bgImagePath_ = img;  // only on success, so a failed load retries on the next reconfigure
+    } catch (const std::exception& e) {
+      bgImage_.reset();
+      bgImagePath_.clear();
+      bgImageError_ =
+          ErrorInfo{"background-image", std::string("cannot load the background image; using the colour: ") + e.what()};
+    }
+  }
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
@@ -145,10 +170,31 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
 }
 
 void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha) {
-  (void)now;
-  (void)rawAlpha;  // Task 4 runs the stages here
   TextureRef frame = tickFrame_;
-  const bool hasAlpha = false;
+  bool hasAlpha = false;
+  TextureRef alpha;
+  if (rawAlpha) {
+    try {
+      alpha = comp_.refine(*rawAlpha, frame->width, frame->height, refineFrom(matteParams_));
+    } catch (const std::exception& e) {
+      matteGuard_.failed(e.what(), now);
+    }
+  }
+  auto bg = backgroundFrom(backgroundParams_);
+  if (bg.mode != BackgroundMode::None && alpha && backgroundGuard_.shouldRun(now)) {
+    const auto t0 = Clock::now();
+    try {
+      bg.image = bgImage_;
+      frame = comp_.apply(frame, alpha, bg);
+      hasAlpha = bg.mode == BackgroundMode::Keyed;
+      // ponytail: a fixed quarter-tick budget per camera; share by camera count if 8+ cameras run.
+      backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+    } catch (const std::exception& e) {
+      backgroundGuard_.failed(e.what(), now);
+      frame = tickFrame_;
+      hasAlpha = false;
+    }
+  }
   lastFrame_ = frame;
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
@@ -216,8 +262,8 @@ void Camera::publishStatus() {
   state_.set(path("/stages/matte/state"), matteGuard_.stateName(matteOn));
   state_.set(path("/stages/matte/error"), errorToJson(matteOn ? matteGuard_.error() : std::optional<ErrorInfo>{}));
   state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));
-  state_.set(path("/stages/background/error"),
-             errorToJson(bgOn ? backgroundGuard_.error() : std::optional<ErrorInfo>{}));
+  auto bgErr = backgroundGuard_.error() ? backgroundGuard_.error() : bgImageError_;
+  state_.set(path("/stages/background/error"), errorToJson(bgOn ? bgErr : std::nullopt));
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

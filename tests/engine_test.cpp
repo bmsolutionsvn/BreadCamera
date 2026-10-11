@@ -6,6 +6,7 @@
 #include "core/state_store.h"
 #include "engine/command_router.h"
 #include "engine/engine.h"
+#include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "support/fake_input.h"
 
@@ -18,9 +19,10 @@ struct Rig {
   std::unique_ptr<bc::GpuDevice> gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   bc::TexturePool pool{*gpu};
   bc::Converter conv{*gpu, pool};
+  bc::Compositor comp{*gpu, pool};
   bc::StateStore state;
   bc::test::FakeFactory factory{conv};
-  bc::Engine engine{conv, state, factory};
+  bc::Engine engine{conv, comp, state, factory};
   ~Rig() { engine.stop(); }
 };
 

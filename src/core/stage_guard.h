@@ -21,6 +21,7 @@ class StageGuard {
   bool shouldRun(Clock::time_point now) const { return !bypassed_ || now >= retryAt_; }
   void succeeded(std::chrono::nanoseconds took, std::chrono::nanoseconds budget, Clock::time_point now);
   void failed(std::string message, Clock::time_point now);
+  void failed(ErrorInfo e, Clock::time_point now);
   bool bypassed() const { return bypassed_; }
   const std::optional<ErrorInfo>& error() const { return error_; }
   std::string stateName(bool enabled) const { return !enabled ? "off" : bypassed_ ? "bypassed" : "active"; }

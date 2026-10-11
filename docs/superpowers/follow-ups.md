@@ -50,6 +50,11 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 12 (observation, not graded): showWindow() issues SW_SHOW then an unguarded SW_RESTORE, so tray "Open BreadCamera" de-maximises a maximised window (`src/shell/shell_main.cpp`).
 - Task 12 (observation, not graded): quitAll()'s direct launcher->isRunning()/kill() calls sit outside the supervisor mutex — sound only because stopSupervising() precedes them; an unwritten invariant (`src/shell/shell_main.cpp`).
 - Task 12 (observation, inherent): TOCTOU between isEngineProcess and adopt's OpenProcess; the opened handle pins the process object, so TerminateProcess still cannot hit anything else.
+- Task 4: the background-image decode + upload runs inside `loadStageParams`, i.e. under the engine mutex, so every camera stalls while a big image decodes (`src/engine/camera.cpp:21-45`).
+- Task 4: `Compositor::refine` runs whenever an alpha exists even when the background mode is `none` — wasted GPU work (`src/engine/camera.cpp`, `endTick`).
+- Task 4: per-tick JSON lookups (`backgroundFrom`/`refineFrom`/matte quality) and per-tick batch allocations should be precomputed in `loadStageParams` (`src/engine/camera.cpp`, `endTick` / `engine.cpp` matte loop).
+- Task 4: the slate loader has the same narrow-string path bug the background loader was fixed for — `loadImageBgra(settings_.slatePath)` builds the path from a UTF-8 `std::string` (ANSI code page on Windows) (`src/engine/engine.cpp:42`); fix like `camera.cpp` with `bc::toWide`.
+- Task 4 housekeeping: five empty root-level `*.hlsl` duplicates from `d69c4fc` (`alpha_blur.hlsl`, `alpha_morph.hlsl`, `bg_blur.hlsl`, `bg_composite.hlsl`, `bg_downsample.hlsl`) should be deleted in a separate housekeeping commit.
 
 ## Spec deviations (authorised in M1)
 - NDI alpha uses BGRA instead of UYVA (`src/io/ndi_output.cpp`).
@@ -71,6 +76,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 12 fix: no positive unit case for isEngineProcess (a real engine pid → true); only the smoke run covers it (`tests/supervisor_test.cpp`).
 - Task 12 fix: if REQUIRE(l.isRunning()) fails in the isEngineProcess test, l.kill() is skipped and a 30 s PING lingers (`tests/supervisor_test.cpp`).
 - Task 14 fix: `tests/engine_test.cpp:82` `maxGap < 50ms` measured exactly 50 ms right after the 4x case in-suite (3/3 pass in isolation; did not recur in the next two full runs) — boundary flake, deferred.
+- Task 4: minor (deferred): unlocked `r.matte->batchSizes` reads in one matte test (`tests/engine_matte_test.cpp`, the blur/replace case) — snapshot under `r.matte->m` like the overrun case does.
+- Task 4: pre-existing flake — `tests/engine_test.cpp:251` half-rate audio carry (`1600 == 3200`, 1 of 3 runs), unrelated to Task 4.
 - Task 14 review: `tests/e2e_m1_test.cpp` — `exeDir()` neither checks `GetModuleFileNameW`'s return length nor `MAX_PATH` truncation (test-only; the folder is controlled).
 - Task 14 review: `tests/e2e_m1_test.cpp` — the `askShow()` busy-retry loops have empty bodies; a short sleep between attempts would be clearer (style).
 - Task 14 fix review: `tests/e2e_m1_test.cpp` — the CaseGuard is declared after `engine.start()`/the pusher loop, leaving a narrow non-REQUIRE exception window before the guard exists; `~CaseGuard` is implicitly noexcept (its steps are verified-idempotent and non-throwing); and the seam test cannot pin the guard's declaration-order property (verified by review instead).

@@ -10,13 +10,20 @@
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
-Engine::Engine(Converter& conv, StateStore& state, AdapterFactory& factory)
-    : conv_(conv), state_(state), factory_(factory) {
+Engine::Engine(Converter& conv, Compositor& comp, StateStore& state, AdapterFactory& factory)
+    : conv_(conv), comp_(comp), state_(state), factory_(factory) {
   std::lock_guard l(mutex_);
   loadSlate();
   state_.set("/engine/rate", settings_.rate.str());
   state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));
   state_.set("/engine/overruns", 0);
+}
+
+void Engine::setMatteBackend(std::unique_ptr<MatteBackend> backend, std::string unavailableReason) {
+  std::lock_guard l(mutex_);
+  matte_ = std::move(backend);
+  matteUnavailable_ = std::move(unavailableReason);
+  state_.set("/engine/matteBackend", matte_ ? matte_->name() : std::string());
 }
 
 Engine::~Engine() {
@@ -72,7 +79,7 @@ void Engine::apply(const Show& show) {
         cameras_.push_back(std::move(it->second));
         existing.erase(it);
       } else {
-        auto cam = std::make_unique<Camera>(cfg, factory_, conv_, state_, policy());
+        auto cam = std::make_unique<Camera>(cfg, factory_, conv_, comp_, state_, policy());
         cam->setFormat(settings_.width, settings_.height);
         cam->start();
         cameras_.push_back(std::move(cam));
@@ -81,6 +88,7 @@ void Engine::apply(const Show& show) {
     for (auto& [id, cam] : existing) {
       state_.erase("/cameras/" + id);
       lastPhase_.erase(id);
+      if (matte_) matte_->forget(id);
       removed.push_back(std::move(cam));
     }
   }
@@ -146,12 +154,44 @@ void Engine::run() {
           state_.set("/cameras/" + cam->config().id + "/tickError", e.what());
         }
       }
-      // (M2 Task 4: one batched matte call goes here.)
+      // One batched matte call for every camera that wants one this tick (spec §3.4).
+      std::vector<MatteJob> jobs;
+      std::vector<Camera*> jobCams;
+      for (auto& cam : cameras_) {
+        if (!cam->wantsMatte(now)) continue;
+        const bool perf = cam->matteParams().value("quality", std::string("quality")) == "performance";
+        jobs.push_back({cam->config().id, cam->tickFrame(),
+                        perf ? MatteQuality::Performance : MatteQuality::Quality, nullptr});
+        jobCams.push_back(cam.get());
+      }
+      std::map<Camera*, TextureRef> alphas;
+      if (!jobs.empty() && !matte_) {
+        for (auto* c : jobCams) c->matteGuard().failed(ErrorInfo{"matte-unavailable", matteUnavailable_}, now);
+      } else if (!jobs.empty()) {
+        std::vector<MatteJob*> ptrs;
+        for (auto& j : jobs) ptrs.push_back(&j);
+        const auto t0 = Clock::now();
+        try {
+          matte_->process(ptrs);
+          const auto took = Clock::now() - t0;
+          const auto budget = std::chrono::duration_cast<std::chrono::nanoseconds>(sched.rate().period() * 6 / 10);
+          for (size_t i = 0; i < jobs.size(); ++i) {
+            if (!jobs[i].alpha) {
+              jobCams[i]->matteGuard().failed("the matte backend returned no matte", now);
+              continue;
+            }
+            jobCams[i]->matteGuard().succeeded(took, budget, now);
+            if (!jobCams[i]->matteGuard().bypassed()) alphas[jobCams[i]] = jobs[i].alpha;
+          }
+        } catch (const std::exception& e) {
+          for (auto* c : jobCams) c->matteGuard().failed(e.what(), now);
+        }
+      }
       // Half 2: stages, readback, fan-out.
       for (auto& cam : cameras_) {
         const auto& id = cam->config().id;
         try {
-          cam->endTick(index, sched, now, nullptr);
+          cam->endTick(index, sched, now, alphas.count(cam.get()) ? alphas[cam.get()] : nullptr);
           // The error block must clear once the tick is clean again (spec §6.4: an
           // error is persistent *while true*, never forever).
           state_.erase("/cameras/" + id + "/tickError");
