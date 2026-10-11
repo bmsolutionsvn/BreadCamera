@@ -9,7 +9,7 @@ WebView2/React UI). The design is
 
 The main (interactive) Claude session **plans; it does not implement**. It writes
 specs and plans, reviews finished work, merges branches, and answers questions. It
-does not write product code, tests or build scripts. Implementation goes to aider
+does not write product code, tests or build scripts. Implementation goes to OpenCode
 (below). An agent dispatched to implement a plan is exempt.
 
 ## Handing plans to OpenCode (owner 2026-10-11; aider and Hermes are retired for BreadCamera)
