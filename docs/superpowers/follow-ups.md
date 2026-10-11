@@ -60,6 +60,11 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 4 housekeeping: five empty root-level `*.hlsl` duplicates from `d69c4fc` (`alpha_blur.hlsl`, `alpha_morph.hlsl`, `bg_blur.hlsl`, `bg_composite.hlsl`, `bg_downsample.hlsl`) should be deleted in a separate housekeeping commit.
 - Maxine (M2 Task 5): the green-screen model batch is pinned to 8 (`NVVFX_MODEL_BATCH`, `src/engine/maxine_matte.cpp`) — more than 8 simultaneous matte cameras exceeds it; the grow-only capacity rebuild would need a batching split.
 - Maxine (M2 Task 5): quality-flip hysteresis in `MaxineMatte::process` (`src/engine/maxine_matte.cpp`) — a leading-camera change flips `q` and triggers a full rebuild (model reload under the engine mutex); debounce or pin quality per show.
+- M2 Task 6 review: a failed `getStageSchemas` load is swallowed in `useStageSchemas` (`ui/src/state/schemas.ts`) — an empty schema list renders "No effects yet" in the Effects section even when the camera has stages; surface a schemas-unavailable state.
+- M2 Task 6 review: `as IconName` casts (`ui/src/inspector/Effects.tsx`, `ui/src/dialogs/AddEffectDialog.tsx`, `ui/src/multiview/Strip.tsx`) hide unknown wire icon names as a blank svg; add a membership fallback in `Icon`.
+- M2 Task 6 review: `labelOf` is duplicated in `Effects.tsx` and `AddEffectDialog.tsx` — move it to `ui/src/state/labels.ts`.
+- M2 Task 6 review: `useStageSchemas` opens a second `useEngine` subscription (`ui/src/state/schemas.ts`) — pass the engine status down from Workspace instead.
+- M2 Task 6 review: strip icon vs the effect switch disagree when `stages[kind].enabled` is absent (hand-edited show only) — `Strip.tsx:44` treats absent as on (`!== false`), the switch falls back to `fields[0].default` (`Effects.tsx`).
 
 ## Spec deviations (authorised in M1)
 - NDI alpha uses BGRA instead of UYVA (`src/io/ndi_output.cpp`).

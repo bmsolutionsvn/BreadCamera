@@ -1,13 +1,14 @@
-import type { CameraConfig, CameraState } from '../api/protocol';
-import { Icon } from '../components/Icon';
+import type { CameraConfig, CameraState, StageSchemaJson } from '../api/protocol';
+import { Icon, type IconName } from '../components/Icon';
 import { inputCode, inputName, outputCode, outputName, signalLabel } from '../state/labels';
 import { clock, holdLeft, type Marks } from '../state/marks';
 
 // The one-row state strip (docs/design/multiview.md): input chip · CAM n · name · → · outputs · mark.
-export function Strip({ n, cfg, cam, marks, holdMs, now, dense, offline }: {
+export function Strip({ n, cfg, cam, schemas, marks, holdMs, now, dense, offline }: {
   n: number;
   cfg: CameraConfig;
   cam: CameraState | undefined;
+  schemas: StageSchemaJson[];
   marks: Marks | undefined;
   holdMs: number;
   now: number;
@@ -37,6 +38,23 @@ export function Strip({ n, cfg, cam, marks, holdMs, now, dense, offline }: {
       <span className="cam-name" title={cfg.name}>
         {cfg.name}
       </span>
+      {(() => {
+        // Effect icons: every added, switched-on effect; dense strips show only bypassed ones.
+        const icons = schemas
+          .filter((s) => cfg.stages && s.kind in cfg.stages && cfg.stages[s.kind].enabled !== false)
+          .map((s) => ({ s, state: cam?.stages?.[s.kind]?.state ?? 'off' }))
+          .filter(({ state }) => !dense || state === 'bypassed');
+        if (icons.length === 0) return null;
+        return (
+          <span className="fx">
+            {icons.map(({ s, state }) => (
+              <span key={s.kind} className={state === 'bypassed' ? 'bad' : ''} title={`${s.label}: ${state === 'active' ? 'running' : state}`}>
+                <Icon name={s.icon as IconName} size={13} />
+              </span>
+            ))}
+          </span>
+        );
+      })()}
       <span className="flow">
         <Icon name="arrow" size={12} />
       </span>

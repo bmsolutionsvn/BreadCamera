@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import type { EngineClient } from '../api/client';
-import type { CameraConfig, StateTree } from '../api/protocol';
+import type { CameraConfig, StageSchemaJson, StateTree } from '../api/protocol';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Icon } from '../components/Icon';
 import { PreviewCanvas } from '../preview/PreviewCanvas';
@@ -20,10 +20,11 @@ const STRIP = 29;
 const GAP = 3;
 
 // Tiles keep 16:9 and the whole wall fits the area (docs/design/multiview.md §6).
-export function Multiview({ client, cameras, state, marks, holdMs, now, selected, onSelect, layout, onLayout, offline }: {
+export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, layout, onLayout, offline }: {
   client: EngineClient;
   cameras: CameraConfig[];
   state: StateTree;
+  schemas: StageSchemaJson[];
   marks: Record<string, Marks>;
   holdMs: number;
   now: number;
@@ -122,7 +123,7 @@ export function Multiview({ client, cameras, state, marks, holdMs, now, selected
                   <div className="pic">
                     <PreviewCanvas client={client} cameraId={cfg.id} />
                   </div>
-                  <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
+                  <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} schemas={schemas} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
                 </div>
               ))}
             </div>

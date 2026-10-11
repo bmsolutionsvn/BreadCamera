@@ -8,7 +8,7 @@ import { Prop } from '../components/Prop';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { inputCode, outputCode, outputName, signalLabel } from '../state/labels';
 
-function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
+export function Section({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
     <details className="sec" open>
       <summary>

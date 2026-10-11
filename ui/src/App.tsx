@@ -4,15 +4,18 @@ import { EngineClient } from './api/client';
 import { useEngine } from './api/useEngine';
 import { ErrorBlock } from './components/ErrorBlock';
 import { AddCameraDialog } from './dialogs/AddCameraDialog';
+import { AddEffectDialog } from './dialogs/AddEffectDialog';
 import { AddOutputDialog } from './dialogs/AddOutputDialog';
 import { ConfirmDialog } from './dialogs/ConfirmDialog';
 import { QuitDialog } from './dialogs/QuitDialog';
+import { Effects } from './inspector/Effects';
 import { Inspector } from './inspector/Inspector';
 import { Multiview, type Layout } from './multiview/Multiview';
 import { StatusBar } from './shell/StatusBar';
 import { TitleBar } from './shell/TitleBar';
 import { Toolbar } from './shell/Toolbar';
 import { nextMarks, type Marks } from './state/marks';
+import { useStageSchemas } from './state/schemas';
 
 function engineUrl(): string | null {
   const p = new URLSearchParams(location.hash.slice(1));
@@ -24,11 +27,12 @@ function engineUrl(): string | null {
 // Everything below the engine connection; tests render this with a fake client.
 export function Workspace({ client }: { client: EngineClient }) {
   const snap = useEngine(client);
+  const schemas = useStageSchemas(client);
   const cameras = snap.show?.cameras ?? [];
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('auto');
-  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'stopAll' | 'quit'>(null);
+  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit'>(null);
   const [now, setNow] = useState(() => Date.now());
   const marks = useRef<Record<string, Marks>>({});
 
@@ -69,6 +73,7 @@ export function Workspace({ client }: { client: EngineClient }) {
       camera: [
         { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
         { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
+        { label: 'Add effect…', disabled: !cam, onSelect: () => setDialog('addEffect') },
       ],
       view: (['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => ({ label: `Layout ${l === 'auto' ? 'Auto' : l.replace('x', '×')}`, onSelect: () => setLayout(l) })),
       help: [{ label: 'BreadCamera 0.1', disabled: true, onSelect: () => {} }],
@@ -85,6 +90,7 @@ export function Workspace({ client }: { client: EngineClient }) {
           client={client}
           cameras={cameras}
           state={snap.state}
+          schemas={schemas}
           marks={marks.current}
           holdMs={holdMs}
           now={now}
@@ -95,11 +101,14 @@ export function Workspace({ client }: { client: EngineClient }) {
           offline={offline}
         />
         <div className="splitter" />
-        <Inspector client={client} snap={snap} cam={cam} n={index + 1} onAddOutput={() => setDialog('addOutput')} onRemoved={() => setSelected(null)} />
+        <Inspector client={client} snap={snap} cam={cam} n={index + 1} onAddOutput={() => setDialog('addOutput')} onRemoved={() => setSelected(null)}>
+          {cam && <Effects key={cam.id} client={client} snap={snap} cam={cam} n={index + 1} schemas={schemas} onAdd={() => setDialog('addEffect')} />}
+        </Inspector>
       </div>
       <StatusBar snap={snap} />
       {dialog === 'addCamera' && <AddCameraDialog client={client} onClose={() => setDialog(null)} />}
       {dialog === 'addOutput' && cam && <AddOutputDialog client={client} camera={cam} n={index + 1} onClose={() => setDialog(null)} />}
+      {dialog === 'addEffect' && cam && <AddEffectDialog client={client} camera={cam} n={index + 1} schemas={schemas} onClose={() => setDialog(null)} />}
       {dialog === 'stopAll' && (
         <ConfirmDialog
           title="Stop all outputs?"
