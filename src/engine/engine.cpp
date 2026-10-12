@@ -3,15 +3,17 @@
 #include <windows.h>
 #include <timeapi.h>
 
+#include <algorithm>
 #include <cmath>
+#include <stdexcept>
 #include "core/tick_schedule.h"
 #include "gpu/image_io.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
-Engine::Engine(Converter& conv, Compositor& comp, StateStore& state, AdapterFactory& factory)
-    : conv_(conv), comp_(comp), state_(state), factory_(factory) {
+Engine::Engine(GpuTools tools, StateStore& state, AdapterFactory& factory)
+    : tools_(tools), state_(state), factory_(factory) {
   std::lock_guard l(mutex_);
   loadSlate();
   state_.set("/engine/rate", settings_.rate.str());
@@ -40,15 +42,15 @@ void Engine::loadSlate() {
   if (!settings_.slatePath.empty()) {
     try {
       auto img = loadImageBgra(settings_.slatePath);
-      auto up = conv_.uploadBgra8(img.bgra.data(), img.width, img.height, img.width * 4);
-      slate_ = conv_.fit(*conv_.toLinear(*up, PixelLayout::BGRA8, true), settings_.width, settings_.height);
+      auto up = tools_.conv.uploadBgra8(img.bgra.data(), img.width, img.height, img.width * 4);
+      slate_ = tools_.conv.fit(*tools_.conv.toLinear(*up, PixelLayout::BGRA8, true), settings_.width, settings_.height);
       return;
     } catch (const std::exception& e) {
       state_.set("/engine/warnings/slate", std::string("slate image could not be loaded: ") + e.what() +
                                                "; using the built-in slate");
     }
   }
-  slate_ = conv_.solid(settings_.width, settings_.height, {0.05f, 0.05f, 0.06f, 1.0f});
+  slate_ = tools_.conv.solid(settings_.width, settings_.height, {0.05f, 0.05f, 0.06f, 1.0f});
 }
 
 void Engine::apply(const Show& show) {
@@ -79,7 +81,7 @@ void Engine::apply(const Show& show) {
         cameras_.push_back(std::move(it->second));
         existing.erase(it);
       } else {
-        auto cam = std::make_unique<Camera>(cfg, factory_, conv_, comp_, state_, policy());
+        auto cam = std::make_unique<Camera>(cfg, factory_, tools_, state_, policy());
         cam->setFormat(settings_.width, settings_.height);
         cam->start();
         cameras_.push_back(std::move(cam));
@@ -111,6 +113,29 @@ EngineStats Engine::stats() const {
   s.overruns = overruns_;
   for (auto& c : cameras_) s.cameras[c->config().id] = c->stats();
   return s;
+}
+
+std::map<std::string, std::vector<CpuImage>> Engine::capture(const std::vector<std::string>& ids, int frames, int every,
+                                                             uint32_t w, uint32_t h, std::chrono::milliseconds timeout) {
+  auto job = std::make_shared<CaptureJob>();
+  job->ids = ids;
+  job->frames = frames;
+  job->every = every;
+  job->w = w;
+  job->h = h;
+  std::unique_lock l(mutex_);
+  for (auto& id : ids) {
+    if (std::none_of(cameras_.begin(), cameras_.end(), [&](auto& c) { return c->config().id == id; })) {
+      throw std::invalid_argument("no camera " + id);
+    }
+  }
+  if (capture_) throw std::runtime_error("another capture is running");
+  capture_ = job;
+  const bool finished = captureCv_.wait_for(l, timeout, [&] { return job->done; });
+  capture_.reset();
+  if (!finished) throw std::runtime_error("capture timed out");
+  if (!job->error.empty()) throw std::invalid_argument(job->error);
+  return std::move(job->got);
 }
 
 void Engine::run() {
@@ -152,6 +177,27 @@ void Engine::run() {
           cam->beginTick(now, slate_);
         } catch (const std::exception& e) {
           state_.set("/cameras/" + cam->config().id + "/tickError", e.what());
+        }
+      }
+      if (capture_ && !capture_->done && index % static_cast<uint64_t>(capture_->every) == 0) {
+        auto& job = *capture_;
+        for (auto& cam : cameras_) {
+          const auto& id = cam->config().id;
+          if (std::find(job.ids.begin(), job.ids.end(), id) == job.ids.end()) continue;
+          if (cam->tickPhase() != FeedPhase::Live) {
+            job.error = "camera \"" + cam->config().name + "\" (" + id + ") has no picture";
+            break;
+          }
+          auto& v = job.got[id];
+          if (static_cast<int>(v.size()) < job.frames) {
+            v.push_back(tools_.conv.readback(*tools_.conv.toBgra8(*cam->tickRaw(), job.w, job.h)));
+          }
+        }
+        bool all = job.error.empty();
+        for (auto& id : job.ids) all = all && static_cast<int>(job.got[id].size()) >= job.frames;
+        if (all || !job.error.empty()) {
+          job.done = true;
+          captureCv_.notify_all();
         }
       }
       // One batched matte call for every camera that wants one this tick (spec §3.4).

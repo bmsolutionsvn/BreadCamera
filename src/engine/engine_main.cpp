@@ -16,8 +16,10 @@
 #include "engine/command_router.h"
 #include "engine/control_server.h"
 #include "engine/engine.h"
+#include "engine/gpu_tools.h"
 #include "engine/matte.h"
 #include "engine/preview_service.h"
+#include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
@@ -85,6 +87,7 @@ int wmain(int argc, wchar_t** argv) {
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
+  bc::ColorGrader grader(*gpu, pool);
   bc::StateStore state;
   bc::DefaultAdapterFactory factory(*gpu, pool);
   bc::ShowStore store(showDir);
@@ -92,7 +95,7 @@ int wmain(int argc, wchar_t** argv) {
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
 
-  bc::Engine engine(conv, comp, state, factory);
+  bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);
   engine.apply(loaded.show);

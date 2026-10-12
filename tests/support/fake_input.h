@@ -25,6 +25,7 @@ class FakeInput final : public bc::Input {
   ~FakeInput() override { stop(); }
   std::atomic<bool> paused{false};
   std::atomic<uint32_t> width{0}, height{0};
+  bool gradient = false;
 
   void start(bc::InputSink& sink) override {
     running_ = true;
@@ -53,7 +54,16 @@ class FakeInput final : public bc::Input {
   void push(bc::InputSink& sink, int64_t n) {
     const uint32_t w = width, h = height;
     std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
-    for (size_t i = 0; i < px.size(); i += 4) std::copy(color_.begin(), color_.end(), px.begin() + i);
+    for (uint32_t x = 0; x < w; ++x) {
+      const float k = gradient ? 0.3f + 0.7f * static_cast<float>(x) / static_cast<float>(w) : 1.0f;
+      for (uint32_t y = 0; y < h; ++y) {
+        uint8_t* p = &px[(static_cast<size_t>(y) * w + x) * 4];
+        p[0] = static_cast<uint8_t>(color_[0] * k);
+        p[1] = static_cast<uint8_t>(color_[1] * k);
+        p[2] = static_cast<uint8_t>(color_[2] * k);
+        p[3] = color_[3];
+      }
+    }
     bc::VideoFrameIn f{conv_.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, n * 1'000'000 / fps_};
     sink.onVideo(std::move(f));
     sink.onAudio(bc::AudioBlock{48000, 2, std::vector<float>(48000 / fps_ * 2, 0.1f)});
@@ -67,7 +77,8 @@ class FakeInput final : public bc::Input {
 };
 
 // Input kind "fake": params {tag, fps, width, height, bgra:[b,g,r,a], paused (bool, default
-// false; a paused input pushes no frame at all, not even its first)}.
+// false; a paused input pushes no frame at all, not even its first), gradient (bool, default
+// false; pixel value = colour x (0.3 + 0.7 x / width), so regions are not flat)}.
 // Output kind "fake": params {cpu (bool, default true), delayMs}. Anything else throws.
 class FakeFactory final : public bc::AdapterFactory {
  public:
@@ -79,6 +90,7 @@ class FakeFactory final : public bc::AdapterFactory {
     auto in = std::make_unique<FakeInput>(conv_, p.value("fps", 30), p.value("width", 64u), p.value("height", 36u),
                                           std::array<uint8_t, 4>{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2]), uint8_t(c[3])},
                                           p.value("paused", false));
+    in->gradient = p.value("gradient", false);
     std::lock_guard l(m);
     inputs[p.value("tag", std::string("in"))] = in.get();
     return in;

@@ -5,6 +5,8 @@
 #include "core/stage_params.h"
 #include "core/state_store.h"
 #include "engine/engine.h"
+#include "engine/gpu_tools.h"
+#include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "support/fake_input.h"
@@ -19,9 +21,10 @@ struct Rig {
   bc::TexturePool pool{*gpu};
   bc::Converter conv{*gpu, pool};
   bc::Compositor comp{*gpu, pool};
+  bc::ColorGrader grader{*gpu, pool};
   bc::StateStore state;
   bc::test::FakeFactory factory{conv};
-  bc::Engine engine{conv, comp, state, factory};
+  bc::Engine engine{bc::GpuTools{conv, comp, grader}, state, factory};
   bc::test::TestMatte* matte = nullptr;
   explicit Rig(bool withMatte = true) {
     if (withMatte) {

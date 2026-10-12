@@ -215,6 +215,8 @@ add_executable(bc_tests
   tests/calibration_test.cpp
   # M3 Task 3
   tests/color_grader_test.cpp
+  # M3 Task 4
+  tests/engine_color_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

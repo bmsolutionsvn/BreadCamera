@@ -4,21 +4,42 @@
 #include <filesystem>
 #include <map>
 
+#include "core/lut.h"
 #include "core/utf8.h"
+#include "gpu/color_grader.h"
 #include "gpu/image_io.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
-Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, Compositor& comp, StateStore& state,
-               SyncPolicy policy)
-    : cfg_(std::move(cfg)), factory_(factory), conv_(conv), comp_(comp), state_(state), sync_(policy) {
+Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
+    : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy) {
   loadStageParams();
 }
 
 Camera::~Camera() { stop(); }
 
 void Camera::loadStageParams() {
+  colorParams_ = normalizeStageParams("color", cfg_.stages.value("color", nlohmann::json::object()));
+  auto lutKeep = grade_.lut;
+  grade_ = gradeFrom(colorParams_);
+  const std::string lut = colorParams_.value("lut", std::string());
+  if (lut.empty()) {
+    lutPath_.clear();
+    lutError_.reset();
+    lutKeep.reset();
+  } else if (lut != lutPath_) {
+    lutPath_ = lut;
+    lutError_.reset();
+    lutKeep.reset();
+    try {
+      lutKeep = tools_.grader.upload(readCube(std::filesystem::path(bc::toWide(lut))));
+    } catch (const std::exception& e) {
+      lutError_ = ErrorInfo{"color-lut", std::string("the colour LUT cannot be read; the camera runs without the correction: ") + e.what()};
+    }
+  }
+  grade_.lut = lutKeep;
+  gradeDirty_ = true;
   matteParams_ = normalizeStageParams("matte", cfg_.stages.value("matte", nlohmann::json::object()));
   backgroundParams_ = normalizeStageParams("background", cfg_.stages.value("background", nlohmann::json::object()));
   if (!backgroundParams_.value("enabled", true)) backgroundParams_["mode"] = "none";
@@ -32,8 +53,8 @@ void Camera::loadStageParams() {
     bgImageError_.reset();
     try {
       auto pic = loadImageBgra(std::filesystem::path(bc::toWide(img)));
-      auto up = conv_.uploadBgra8(pic.bgra.data(), pic.width, pic.height, pic.width * 4);
-      bgImage_ = conv_.toLinear(*up, PixelLayout::BGRA8, true);
+      auto up = tools_.conv.uploadBgra8(pic.bgra.data(), pic.width, pic.height, pic.width * 4);
+      bgImage_ = tools_.conv.toLinear(*up, PixelLayout::BGRA8, true);
       bgImagePath_ = img;  // only on success, so a failed load retries on the next reconfigure
     } catch (const std::exception& e) {
       bgImage_.reset();
@@ -108,6 +129,7 @@ void Camera::reconfigure(const CameraConfig& next) {
   if (!(next.stages == oldStages)) {
     matteGuard_ = StageGuard{};
     backgroundGuard_ = StageGuard{};
+    colorGuard_ = StageGuard{};
   }
   loadStageParams();
   if (inputChanged) {
@@ -158,14 +180,31 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
   if (pick.frame) {
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
-      auto lin = conv_.toLinear(*f.tex, f.layout, f.fullRange);
-      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : conv_.fit(*lin, width_, height_);
+      auto lin = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
+      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : tools_.conv.fit(*lin, width_, height_);
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
-  tickFrame_ = lastConverted_ ? lastConverted_ : slate;
+  tickRaw_ = lastConverted_ ? lastConverted_ : slate;
+  tickFrame_ = tickRaw_;
+  const bool colorOn = colorParams_.value("enabled", false);
+  if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
+    if (!pick.fresh && !gradeDirty_ && lastGraded_) {
+      tickFrame_ = lastGraded_;
+    } else {
+      const auto t0 = Clock::now();
+      try {
+        lastGraded_ = tools_.grader.apply(tickRaw_, grade_);
+        gradeDirty_ = false;
+        tickFrame_ = lastGraded_;
+        colorGuard_.succeeded(Clock::now() - t0, std::chrono::milliseconds(4), now);
+      } catch (const std::exception& e) {
+        colorGuard_.failed(e.what(), now);
+      }
+    }
+  }
   return tickFrame_;
 }
 
@@ -175,7 +214,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
   TextureRef alpha;
   if (rawAlpha) {
     try {
-      alpha = comp_.refine(*rawAlpha, frame->width, frame->height, refineFrom(matteParams_));
+      alpha = tools_.comp.refine(*rawAlpha, frame->width, frame->height, refineFrom(matteParams_));
     } catch (const std::exception& e) {
       matteGuard_.failed(e.what(), now);
     }
@@ -185,7 +224,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     const auto t0 = Clock::now();
     try {
       bg.image = bgImage_;
-      frame = comp_.apply(frame, alpha, bg);
+      frame = tools_.comp.apply(frame, alpha, bg);
       hasAlpha = bg.mode == BackgroundMode::Keyed;
       // ponytail: a fixed quarter-tick budget per camera; share by camera count if 8+ cameras run.
       backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
@@ -209,8 +248,8 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
     const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
     auto& v = variants[{w, h}];
-    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : conv_.fit(*frame, w, h);
-    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(conv_.readback(*conv_.toBgra8(*v.tex, w, h)));
+    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : tools_.conv.fit(*frame, w, h);
+    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(tools_.conv.readback(*tools_.conv.toBgra8(*v.tex, w, h)));
     return v;
   };
   for (auto& s : outputs_) {
@@ -257,8 +296,12 @@ void Camera::publishStatus() {
     stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
   }
   state_.set(path("/phase"), toString(phase));
+  const bool colorOn = colorParams_.value("enabled", false);
   const bool matteOn = matteParams_.value("enabled", false);
   const bool bgOn = backgroundParams_.value("mode", std::string("none")) != "none";
+  state_.set(path("/stages/color/state"), colorGuard_.stateName(colorOn));
+  auto colorErr = colorGuard_.error() ? colorGuard_.error() : lutError_;
+  state_.set(path("/stages/color/error"), errorToJson(colorOn ? colorErr : std::nullopt));
   state_.set(path("/stages/matte/state"), matteGuard_.stateName(matteOn));
   state_.set(path("/stages/matte/error"), errorToJson(matteOn ? matteGuard_.error() : std::optional<ErrorInfo>{}));
   state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));

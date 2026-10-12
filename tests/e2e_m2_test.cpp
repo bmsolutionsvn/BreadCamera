@@ -5,6 +5,8 @@
 #include "core/stage_params.h"
 #include "core/state_store.h"
 #include "engine/engine.h"
+#include "engine/gpu_tools.h"
+#include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "support/fake_input.h"
@@ -37,9 +39,10 @@ TEST_CASE("M2 acceptance: 4x 1080p60 with matte refine and background stages, no
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
+  bc::ColorGrader grader(*gpu, pool);
   bc::StateStore state;
   HybridFactory factory(*gpu, pool, conv);
-  bc::Engine engine(conv, comp, state, factory);
+  bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
   engine.setMatteBackend(std::make_unique<bc::test::TestMatte>(*gpu, pool), "");
 
   const char* modes[] = {"blur", "blur", "keyed", "replace"};

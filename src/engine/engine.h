@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
@@ -13,6 +14,7 @@
 #include "core/state_store.h"
 #include "engine/adapter_factory.h"
 #include "engine/camera.h"
+#include "engine/gpu_tools.h"
 #include "engine/matte.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
@@ -28,7 +30,7 @@ struct EngineStats {
 class Engine {
  public:
   using FrameTap = std::function<void(uint64_t tick, const std::vector<std::pair<std::string, TextureRef>>& frames)>;
-  Engine(Converter& conv, Compositor& comp, StateStore& state, AdapterFactory& factory);
+  Engine(GpuTools tools, StateStore& state, AdapterFactory& factory);
   ~Engine();
   void apply(const Show& show);
   void start();
@@ -37,19 +39,34 @@ class Engine {
   void setFrameTap(FrameTap tap) { tap_ = std::move(tap); }
   // The matte service; call before start(). A null backend with a reason bypasses every matte.
   void setMatteBackend(std::unique_ptr<MatteBackend> backend, std::string unavailableReason);
+  // Captures each camera's frame *before* any stage runs (spec: "from the frame before any
+  // stage"), for the colour-match calibration service. Never call from the tick thread.
+  std::map<std::string, std::vector<CpuImage>> capture(const std::vector<std::string>& cameraIds, int frames = 30,
+                                                       int everyTicks = 2, uint32_t w = 256, uint32_t h = 144,
+                                                       std::chrono::milliseconds timeout = std::chrono::milliseconds(3000));
 
  private:
+  struct CaptureJob {
+    std::vector<std::string> ids;
+    int frames, every;
+    uint32_t w, h;
+    std::map<std::string, std::vector<CpuImage>> got;
+    std::string error;
+    bool done = false;
+  };
+
   void run();
   void loadSlate();
   SyncPolicy policy() const { return {std::chrono::milliseconds(250), std::chrono::milliseconds(settings_.holdMs)}; }
 
-  Converter& conv_;
-  Compositor& comp_;
+  GpuTools tools_;
   StateStore& state_;
   AdapterFactory& factory_;
   std::unique_ptr<MatteBackend> matte_;
   std::string matteUnavailable_;
   mutable std::mutex mutex_;
+  std::shared_ptr<CaptureJob> capture_;  // guarded by mutex_
+  std::condition_variable captureCv_;
   ShowSettings settings_;
   bool settingsApplied_ = false;
   bool rateChanged_ = true;

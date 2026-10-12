@@ -16,6 +16,7 @@
 #include "core/state_store.h"
 #include "core/tick_schedule.h"
 #include "engine/adapter_factory.h"
+#include "engine/gpu_tools.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 
@@ -32,8 +33,7 @@ struct CameraStats {
 // engine's tick thread; the InputSink callbacks run on the input thread.
 class Camera final : public InputSink {
  public:
-  Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, Compositor& comp, StateStore& state,
-         SyncPolicy policy);
+  Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy);
   ~Camera() override;
   const CameraConfig& config() const { return cfg_; }
   void start();
@@ -50,6 +50,8 @@ class Camera final : public InputSink {
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slate);
   // This tick's linear frame, between the halves.
   TextureRef tickFrame() const { return tickFrame_; }
+  // This tick's frame before any stage (the slate when there is no picture).
+  TextureRef tickRaw() const { return tickRaw_; }
   // True when this camera's matte is enabled and its guard lets it run this tick.
   bool wantsMatte(std::chrono::steady_clock::time_point now) const;
   const nlohmann::json& matteParams() const { return matteParams_; }
@@ -59,6 +61,8 @@ class Camera final : public InputSink {
                const TextureRef& rawAlpha);
   StageGuard& matteGuard() { return matteGuard_; }
   StageGuard& backgroundGuard() { return backgroundGuard_; }
+  StageGuard& colorGuard() { return colorGuard_; }
+  FeedPhase tickPhase() const { return tickPhase_; }
   TextureRef lastFrame() const { return lastFrame_; }
   void publishStatus();
   CameraStats stats() const;
@@ -85,8 +89,7 @@ class Camera final : public InputSink {
 
   CameraConfig cfg_;
   AdapterFactory& factory_;
-  Converter& conv_;
-  Compositor& comp_;
+  GpuTools tools_;
   StateStore& state_;
   FrameSync<Pending> sync_;
   AudioDelay audio_{48000, 2};
@@ -106,12 +109,20 @@ class Camera final : public InputSink {
   FeedPhase phase_ = FeedPhase::NoSignal;
   nlohmann::json matteParams_;
   nlohmann::json backgroundParams_;
+  nlohmann::json colorParams_;
+  ColorGrade grade_;
+  std::string lutPath_;
+  std::optional<ErrorInfo> lutError_;
   StageGuard matteGuard_;
   StageGuard backgroundGuard_;
+  StageGuard colorGuard_;
   TextureRef bgImage_;               // linear RGBA16F replace background, or null
   std::string bgImagePath_;          // the loaded image's path, to skip reloading
   std::optional<ErrorInfo> bgImageError_;
   TextureRef tickFrame_;  // this tick's linear frame, between the halves
+  TextureRef tickRaw_;    // this tick's frame before any stage
+  TextureRef lastGraded_;
+  bool gradeDirty_ = true;
   std::optional<std::chrono::steady_clock::time_point> tickArrival_;
   FeedPhase tickPhase_ = FeedPhase::NoSignal;
 };

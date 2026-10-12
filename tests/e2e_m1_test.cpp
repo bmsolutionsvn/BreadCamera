@@ -12,6 +12,8 @@
 #include "core/show_store.h"
 #include "core/state_store.h"
 #include "engine/engine.h"
+#include "engine/gpu_tools.h"
+#include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "shell/process_launcher.h"
@@ -81,9 +83,10 @@ TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one
   bc::TexturePool pool(*gpu);
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
+  bc::ColorGrader grader(*gpu, pool);
   bc::StateStore state;
   HybridFactory factory(*gpu, pool, conv);
-  bc::Engine engine(conv, comp, state, factory);
+  bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
 
   bc::Show show;
   show.settings.holdMs = 2000;
