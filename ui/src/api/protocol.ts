@@ -15,7 +15,32 @@ export interface CameraState {
   phase?: Phase;
   input?: { state: SignalState; error: ErrorInfo | null; health?: InputHealth };
   outputs?: Record<string, OutputState>;
+  stages?: Record<string, StageState>;
   tickError?: string;
+}
+export interface StageState {
+  state: 'off' | 'active' | 'bypassed';
+  error: ErrorInfo | null;
+}
+export interface StageField {
+  key: string;
+  type: 'number' | 'enum' | 'bool' | 'color' | 'path';
+  default: unknown;
+  label: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  optionLabels?: string[];
+}
+export interface StageSchemaJson {
+  kind: string;
+  label: string;
+  description: string;
+  icon: string;
+  requires: string[];
+  onAdd: Record<string, unknown>;
+  fields: StageField[];
 }
 export interface StateTree {
   engine?: {
@@ -46,6 +71,7 @@ export interface CameraConfig {
   name: string;
   input: { kind: string; params: Record<string, unknown> };
   outputs: OutputConfig[];
+  stages?: Record<string, Record<string, unknown>>;
 }
 export interface ShowJson {
   schemaVersion?: number;

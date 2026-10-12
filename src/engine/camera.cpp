@@ -1,15 +1,52 @@
 #include "engine/camera.h"
 
 #include <cmath>
+#include <filesystem>
 #include <map>
+
+#include "core/utf8.h"
+#include "gpu/image_io.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
-Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, StateStore& state, SyncPolicy policy)
-    : cfg_(std::move(cfg)), factory_(factory), conv_(conv), state_(state), sync_(policy) {}
+Camera::Camera(CameraConfig cfg, AdapterFactory& factory, Converter& conv, Compositor& comp, StateStore& state,
+               SyncPolicy policy)
+    : cfg_(std::move(cfg)), factory_(factory), conv_(conv), comp_(comp), state_(state), sync_(policy) {
+  loadStageParams();
+}
 
 Camera::~Camera() { stop(); }
+
+void Camera::loadStageParams() {
+  matteParams_ = normalizeStageParams("matte", cfg_.stages.value("matte", nlohmann::json::object()));
+  backgroundParams_ = normalizeStageParams("background", cfg_.stages.value("background", nlohmann::json::object()));
+  if (!backgroundParams_.value("enabled", true)) backgroundParams_["mode"] = "none";
+  const std::string mode = backgroundParams_.value("mode", std::string("none"));
+  const std::string img = backgroundParams_.value("image", std::string());
+  if (mode != "replace" || img.empty()) {
+    bgImage_.reset();
+    bgImagePath_.clear();
+    bgImageError_.reset();
+  } else if (img != bgImagePath_) {
+    bgImageError_.reset();
+    try {
+      auto pic = loadImageBgra(std::filesystem::path(bc::toWide(img)));
+      auto up = conv_.uploadBgra8(pic.bgra.data(), pic.width, pic.height, pic.width * 4);
+      bgImage_ = conv_.toLinear(*up, PixelLayout::BGRA8, true);
+      bgImagePath_ = img;  // only on success, so a failed load retries on the next reconfigure
+    } catch (const std::exception& e) {
+      bgImage_.reset();
+      bgImagePath_.clear();
+      bgImageError_ =
+          ErrorInfo{"background-image", std::string("cannot load the background image; using the colour: ") + e.what()};
+    }
+  }
+}
+
+bool Camera::wantsMatte(Clock::time_point now) const {
+  return matteParams_.value("enabled", false) && matteGuard_.shouldRun(now);
+}
 
 void Camera::startInput() {
   inputState_ = SignalState::Connecting;
@@ -62,11 +99,17 @@ void Camera::stop() {
 
 void Camera::reconfigure(const CameraConfig& next) {
   if (next.name != cfg_.name) state_.set(path("/name"), next.name);
+  const nlohmann::json oldStages = cfg_.stages;
   const bool inputChanged = !(next.input == cfg_.input);
   std::map<std::string, OutputSlot> old;
   for (auto& s : outputs_) old.emplace(s.cfg.id, std::move(s));
   outputs_.clear();
   cfg_ = next;
+  if (!(next.stages == oldStages)) {
+    matteGuard_ = StageGuard{};
+    backgroundGuard_ = StageGuard{};
+  }
+  loadStageParams();
   if (inputChanged) {
     if (input_) input_->stop();
     input_.reset();
@@ -108,20 +151,50 @@ void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
   state_.set(path("/input/error"), errorToJson(e));
 }
 
-void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& slate) {
+TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
   auto pick = sync_.pick(now);
-  std::optional<Clock::time_point> arrival;
+  tickArrival_.reset();
+  tickPhase_ = pick.phase;
   if (pick.frame) {
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
       auto lin = conv_.toLinear(*f.tex, f.layout, f.fullRange);
       lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : conv_.fit(*lin, width_, height_);
-      if (pick.fresh) arrival = pick.frame->arrival;
+      if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
-  TextureRef frame = lastConverted_ ? lastConverted_ : slate;
+  tickFrame_ = lastConverted_ ? lastConverted_ : slate;
+  return tickFrame_;
+}
+
+void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha) {
+  TextureRef frame = tickFrame_;
+  bool hasAlpha = false;
+  TextureRef alpha;
+  if (rawAlpha) {
+    try {
+      alpha = comp_.refine(*rawAlpha, frame->width, frame->height, refineFrom(matteParams_));
+    } catch (const std::exception& e) {
+      matteGuard_.failed(e.what(), now);
+    }
+  }
+  auto bg = backgroundFrom(backgroundParams_);
+  if (bg.mode != BackgroundMode::None && alpha && backgroundGuard_.shouldRun(now)) {
+    const auto t0 = Clock::now();
+    try {
+      bg.image = bgImage_;
+      frame = comp_.apply(frame, alpha, bg);
+      hasAlpha = bg.mode == BackgroundMode::Keyed;
+      // ponytail: a fixed quarter-tick budget per camera; share by camera count if 8+ cameras run.
+      backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+    } catch (const std::exception& e) {
+      backgroundGuard_.failed(e.what(), now);
+      frame = tickFrame_;
+      hasAlpha = false;
+    }
+  }
   lastFrame_ = frame;
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
@@ -144,7 +217,7 @@ void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point n
     if (!s.out) continue;
     if (!s.cfg.halfRate) {
       auto& v = variant(s.cfg, s.out->needsCpu());
-      s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, false});
+      s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, hasAlpha});
       continue;
     }
     // Half rate: even ticks only, carrying the odd tick's audio so nothing is lost.
@@ -157,16 +230,16 @@ void Camera::tick(uint64_t index, const TickSchedule& sched, Clock::time_point n
     both->insert(both->end(), audio->begin(), audio->end());
     auto& v = variant(s.cfg, s.out->needsCpu());
     const Rate half{sched.rate().num, sched.rate().den * 2};
-    s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, false});
+    s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);
-  phase_ = pick.phase;
-  if (arrival) {
+  phase_ = tickPhase_;
+  if (tickArrival_) {
     ++freshThisSecond_;
-    if (lastFresh_ && *arrival - *lastFresh_ > std::chrono::milliseconds(100)) lastStutter_ = Clock::now();
-    lastFresh_ = *arrival;
-    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - *arrival).count();
+    if (lastFresh_ && *tickArrival_ - *lastFresh_ > std::chrono::milliseconds(100)) lastStutter_ = Clock::now();
+    lastFresh_ = *tickArrival_;
+    const double ms = std::chrono::duration<double, std::milli>(Clock::now() - *tickArrival_).count();
     latencyEwmaMs_ = latencyEwmaMs_ == 0 ? ms : latencyEwmaMs_ * 0.9 + ms * 0.1;
   }
 }
@@ -184,6 +257,13 @@ void Camera::publishStatus() {
     stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
   }
   state_.set(path("/phase"), toString(phase));
+  const bool matteOn = matteParams_.value("enabled", false);
+  const bool bgOn = backgroundParams_.value("mode", std::string("none")) != "none";
+  state_.set(path("/stages/matte/state"), matteGuard_.stateName(matteOn));
+  state_.set(path("/stages/matte/error"), errorToJson(matteOn ? matteGuard_.error() : std::optional<ErrorInfo>{}));
+  state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));
+  auto bgErr = backgroundGuard_.error() ? backgroundGuard_.error() : bgImageError_;
+  state_.set(path("/stages/background/error"), errorToJson(bgOn ? bgErr : std::nullopt));
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

@@ -23,6 +23,14 @@ if(BC_WITH_NDI AND NOT NDI_FOUND)
 endif()
 message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")
 
+find_package(Maxine)
+option(BC_WITH_MAXINE "Build the Maxine matte backend" ${Maxine_FOUND})
+if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
+  message(WARNING "BC_WITH_MAXINE=ON but the NVIDIA Video Effects SDK was not found; turning it off")
+  set(BC_WITH_MAXINE OFF)
+endif()
+message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
+
 # ---- core (no GPU) ----
 add_library(bc_core STATIC
   src/core/rate.cpp
@@ -33,6 +41,10 @@ add_library(bc_core STATIC
   src/core/secrets.cpp
   src/core/show.cpp
   src/core/show_store.cpp
+  # Task 1
+  src/core/stage_params.cpp
+  # M2 Task 2
+  src/core/stage_guard.cpp
   # Task 4
   src/core/signal_state.cpp
   src/core/state_store.cpp
@@ -62,12 +74,17 @@ bc_shader(fit_linear cs_5_0)
 # Task 7
 bc_shader(fullscreen_vs vs_5_0)
 bc_shader(fullscreen_ps ps_5_0)
+# Task 3
+foreach(s alpha_threshold alpha_morph alpha_blur bg_downsample bg_blur bg_composite)
+  bc_shader(${s} cs_5_0)
+endforeach()
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
   src/gpu/image_io.cpp
+  src/gpu/compositor.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
@@ -116,10 +133,20 @@ add_library(bc_engine STATIC
   # Task 11
   src/engine/command_router.cpp
   src/engine/control_server.cpp
+  # M2 Task 4
+  src/engine/matte.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
 target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
+
+if(BC_WITH_MAXINE)
+  target_sources(bc_engine PRIVATE src/engine/maxine_matte.cpp ${MAXINE_VFX_PROXY} ${MAXINE_IMAGE_PROXY})
+  target_include_directories(bc_engine PUBLIC ${MAXINE_INCLUDE_DIR} ${MAXINE_GREENSCREEN_INCLUDE_DIR})
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=1 BC_MAXINE_ROOT="${MAXINE_ROOT}")
+else()
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=0)
+endif()
 
 # ---- tests ----
 add_executable(bc_tests
@@ -133,6 +160,12 @@ add_executable(bc_tests
   tests/show_test.cpp
   tests/show_store_test.cpp
   tests/state_store_test.cpp
+  # Task 1
+  tests/stage_params_test.cpp
+  # M2 Task 2
+  tests/stage_guard_test.cpp
+  # Task 3
+  tests/compositor_test.cpp
   # Task 5
   tests/gpu_test.cpp
   # Task 6
@@ -158,6 +191,12 @@ add_executable(bc_tests
   tests/supervisor_test.cpp
   # Task 14
   tests/e2e_m1_test.cpp
+  # M2 Task 4
+  tests/engine_matte_test.cpp
+  # M2 Task 5
+  tests/maxine_matte_test.cpp
+  # M2 Task 7
+  tests/e2e_m2_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

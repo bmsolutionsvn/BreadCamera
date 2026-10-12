@@ -200,3 +200,29 @@ TEST_CASE("CommandRouter: the NDI name limit counts code points, not bytes") {
   o.params["name"] = tooLong;
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be 1 to 200 characters", std::invalid_argument);
 }
+
+TEST_CASE("CommandRouter: setStage merges, normalizes and validates") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  REQUIRE(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"enabled", true}}}}}})["ok"] == true);
+  REQUIRE(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"choke", 2}}}}}})["ok"] == true);
+  auto m = r.show().cameras[0].stages["matte"];
+  CHECK(m["enabled"] == true);  // kept from the first call
+  CHECK(m["choke"] == 2);
+  auto bad = call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"choke", 50}}}}}});
+  CHECK(bad["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", "nope"}, {"stage", "matte"}, {"params", json::object()}}}})["error"]["code"] == "not-found");
+  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 2);
+}
+
+TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  REQUIRE(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}, {"params", {{"enabled", true}, {"mode", "blur"}}}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages.contains("background"));
+  REQUIRE(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["ok"] == true);
+  CHECK_FALSE(r.show().cameras[0].stages.contains("background"));
+  CHECK(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["error"]["code"] == "not-found");
+}

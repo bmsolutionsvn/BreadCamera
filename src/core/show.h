@@ -35,6 +35,7 @@ struct CameraConfig {
   std::string name;
   InputConfig input;
   std::vector<OutputConfig> outputs;
+  nlohmann::json stages = nlohmann::json::object();
   bool operator==(const CameraConfig&) const = default;
 };
 

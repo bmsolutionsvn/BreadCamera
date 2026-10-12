@@ -5,6 +5,7 @@
 #include <set>
 
 #include "core/secrets.h"
+#include "core/stage_params.h"
 
 namespace bc {
 namespace {
@@ -106,7 +107,8 @@ json cameraToJson(const CameraConfig& c, SecretMode mode) {
   return {{"id", c.id},
           {"name", c.name},
           {"input", {{"kind", c.input.kind}, {"params", secretsOut(c.input.params, mode)}}},
-          {"outputs", outs}};
+          {"outputs", outs},
+          {"stages", c.stages}};
 }
 
 CameraConfig cameraFromJson(const json& j) {
@@ -124,6 +126,15 @@ CameraConfig cameraFromJson(const json& j) {
       auto out = outputFromJson(o);
       if (!ids.insert(out.id).second) throw ShowError("duplicate output id " + out.id);
       c.outputs.push_back(std::move(out));
+    }
+    const auto stages = j.value("stages", json::object());
+    if (!stages.is_object()) throw ShowError("stages must be an object");
+    for (auto& [kind, params] : stages.items()) {
+      try {
+        c.stages[kind] = normalizeStageParams(kind, params);
+      } catch (const std::invalid_argument& e) {
+        throw ShowError("camera " + c.id + ": " + e.what());
+      }
     }
     return c;
   } catch (const nlohmann::json::exception& e) {
