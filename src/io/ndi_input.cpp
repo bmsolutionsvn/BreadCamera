@@ -29,10 +29,13 @@ void NdiInput::run() {
   NDIlib_find_create_t fc{};
   fc.show_local_sources = true;
   NDIlib_find_instance_t find = NDIlib_find_create_v2(&fc);
+  if (!find) {
+    sink_->onState(SignalState::Offline, ErrorInfo{"ndi-failed", "cannot start NDI discovery"});
+    return;
+  }
   NDIlib_recv_instance_t recv = nullptr;
-  bool live = false, rateReported = false;
+  bool live = false, rateReported = false, flipReported = false;  // ponytail: flipped frames are reported once and skipped
   auto lastVideo = Clock::now();
-  std::vector<uint8_t> packed;
   while (!stopping_) {
     if (!recv) {
       NDIlib_find_wait_for_sources(find, 200);
@@ -61,9 +64,20 @@ void NdiInput::run() {
         f.fullRange = true;
         f.ptsUs = v.timestamp == NDIlib_recv_timestamp_undefined ? 0 : v.timestamp / 10;
         f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+        if (v.line_stride_in_bytes < 0) {  // bottom-up source; we did not ask for the _flipped format
+          if (!flipReported) {
+            flipReported = true;
+            sink_->onState(live ? SignalState::Live : SignalState::Connecting,
+                           ErrorInfo{"ndi-format", "flipped NDI video frames are not supported"});
+          }
+          NDIlib_recv_free_video_v2(recv, &v);
+          break;
+        }
         {
+          // NDI: stride 0 means tightly packed (sizeof(one pixel) * xres).
+          const UINT pitch = v.line_stride_in_bytes > 0 ? static_cast<UINT>(v.line_stride_in_bytes) : w * 4;
           auto lock = gpu_.lock();
-          gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.p_data, static_cast<UINT>(v.line_stride_in_bytes), 0);
+          gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.p_data, pitch, 0);
         }
         NDIlib_recv_free_video_v2(recv, &v);
         lastVideo = Clock::now();

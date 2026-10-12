@@ -2,6 +2,11 @@
 
 Deliberate shortcuts and open items. One line each, with where it lives.
 
+## M4a
+- M4a Task 2 review: flipped NDI video (negative `line_stride_in_bytes`) is skipped once with `{code:"ndi-format"}` — we request `NDIlib_recv_color_format_BGRX_BGRA`, not the `_flipped` variant; if a flipped source appears, request `_flipped` or flip on the GPU (`src/io/ndi_input.cpp`).
+- M4a Task 2 review: `tests/ndi_input_test.cpp` uses fixed sleeps (4 s / 3 s / 5 s); poll a condition instead if the build box is loaded.
+- M4a Task 3 (OMT output, libomt) is superseded by `docs/superpowers/plans/2026-10-13-m4c-omt-hx-output.md` (omthx, plain OMT + OMT-HX) — not implemented here.
+
 ## Untested on hardware
 - `h264_nvenc` preview path — never opened on the AMD build PC (`src/engine/preview_encoder.cpp`).
 - NDI output — only tested if the NDI SDK was installed on the build PC; see the M1 report (`src/io/ndi_output.cpp`).
