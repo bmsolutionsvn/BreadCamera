@@ -82,7 +82,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && calib.state) {
+      if (e.key === 'Escape' && calib.state && !dialog) {
         calib.cancel();
         return;
       }
@@ -98,7 +98,7 @@ export function Workspace({ client }: { client: EngineClient }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [calib.state, calib.cancel, calib.start, cam]);
+  }, [calib.state, calib.cancel, calib.start, cam, dialog]);
 
   const calibIndex = cameras.findIndex((c) => c.id === calib.state?.cameraId);
   const calibCam = calibIndex >= 0 ? cameras[calibIndex] : undefined;

@@ -64,7 +64,11 @@ TEST_CASE("M3 acceptance: printed card and tablet calibration through the GPU" B
   engine.apply(show);
   std::this_thread::sleep_for(800ms);
 
-  auto seen = [&](const std::string& id) { return bc::sampleChart({*factory.output("o-" + id)->lastImage()}, kQuad); };
+  auto seen = [&](const std::string& id) {
+    auto img = factory.output("o-" + id)->lastImage();
+    REQUIRE(img);
+    return bc::sampleChart({*img}, kQuad);
+  };
   const double cardAfter = bc::meanDeltaE(seen("card"), bc::colorCheckerReference());
   const double tabletAfter = bc::meanDeltaE(seen("t1"), seen("t2"));
   MESSAGE("card: solver " << card.deltaEBefore << " -> " << card.deltaE << ", through the GPU " << cardAfter);
