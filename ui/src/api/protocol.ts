@@ -32,6 +32,7 @@ export interface StageField {
   step?: number;
   options?: string[];
   optionLabels?: string[];
+  hidden?: boolean;
 }
 export interface StageSchemaJson {
   kind: string;

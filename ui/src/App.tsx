@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { EngineClient } from './api/client';
 import { useEngine } from './api/useEngine';
+import { CalibrationView } from './calibration/CalibrationView';
+import { useCalibration } from './calibration/useCalibration';
 import { ErrorBlock } from './components/ErrorBlock';
 import { AddCameraDialog } from './dialogs/AddCameraDialog';
 import { AddEffectDialog } from './dialogs/AddEffectDialog';
@@ -35,6 +37,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit'>(null);
   const [now, setNow] = useState(() => Date.now());
   const marks = useRef<Record<string, Marks>>({});
+  const calib = useCalibration(client);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -49,15 +52,11 @@ export function Workspace({ client }: { client: EngineClient }) {
     for (const c of cameras) marks.current[c.id] = nextMarks(marks.current[c.id], snap.state.cameras?.[c.id], t);
   }, [snap.state, cameras]);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        setDialog('addCamera');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    if (calib.state) setSelected(calib.state.cameraId);
+  }, [calib.state?.cameraId]);
+  useEffect(() => {
+    if (calib.state && !cameras.some((c) => c.id === calib.state!.cameraId)) calib.cancel();
+  }, [cameras, calib.state?.cameraId]);
 
   function select(id: string) {
     setSelected(id);
@@ -74,35 +73,62 @@ export function Workspace({ client }: { client: EngineClient }) {
         { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
         { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
         { label: 'Add effect…', disabled: !cam, onSelect: () => setDialog('addEffect') },
+        { label: 'Calibrate colour…', shortcut: 'Ctrl+K', disabled: !cam || !cam.stages || !('color' in cam.stages), onSelect: () => cam && calib.start(cam.id) },
       ],
       view: (['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => ({ label: `Layout ${l === 'auto' ? 'Auto' : l.replace('x', '×')}`, onSelect: () => setLayout(l) })),
       help: [{ label: 'BreadCamera 0.1', disabled: true, onSelect: () => {} }],
     }),
-    [cam],
+    [cam, calib.start],
   );
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && calib.state) {
+        calib.cancel();
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setDialog('addCamera');
+        return;
+      }
+      if (e.ctrlKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        if (cam?.stages && 'color' in cam.stages) calib.start(cam.id);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [calib.state, calib.cancel, calib.start, cam]);
+
+  const calibIndex = cameras.findIndex((c) => c.id === calib.state?.cameraId);
+  const calibCam = calibIndex >= 0 ? cameras[calibIndex] : undefined;
 
   return (
     <div className="win">
       <TitleBar menus={menus} />
       <Toolbar onAddCamera={() => setDialog('addCamera')} onStopAll={() => setDialog('stopAll')} />
       <div className="body">
-        <Multiview
-          client={client}
-          cameras={cameras}
-          state={snap.state}
-          schemas={schemas}
-          marks={marks.current}
-          holdMs={holdMs}
-          now={now}
-          selected={selected}
-          onSelect={select}
-          layout={layout}
-          onLayout={setLayout}
-          offline={offline}
-        />
+        {calib.state && calibCam ? (
+          <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} />
+        ) : (
+          <Multiview
+            client={client}
+            cameras={cameras}
+            state={snap.state}
+            schemas={schemas}
+            marks={marks.current}
+            holdMs={holdMs}
+            now={now}
+            selected={selected}
+            onSelect={select}
+            layout={layout}
+            onLayout={setLayout}
+            offline={offline}
+          />
+        )}
         <div className="splitter" />
         <Inspector client={client} snap={snap} cam={cam} n={index + 1} onAddOutput={() => setDialog('addOutput')} onRemoved={() => setSelected(null)}>
-          {cam && <Effects key={cam.id} client={client} snap={snap} cam={cam} n={index + 1} schemas={schemas} onAdd={() => setDialog('addEffect')} />}
+          {cam && <Effects key={cam.id} client={client} snap={snap} cam={cam} n={index + 1} schemas={schemas} onAdd={() => setDialog('addEffect')} calib={calib} />}
         </Inspector>
       </div>
       <StatusBar snap={snap} />

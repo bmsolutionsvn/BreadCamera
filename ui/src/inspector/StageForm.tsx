@@ -7,7 +7,7 @@ export function StageForm({ schema, values, onChange }: { schema: StageSchemaJso
   const value = (f: StageField) => values[f.key] ?? f.default;
   return (
     <>
-      {schema.fields.slice(1).map((f) => (
+      {schema.fields.slice(1).filter((f) => !f.hidden).map((f) => (
         <Prop key={f.key} label={f.label}>
           {(id) => {
             switch (f.type) {

@@ -216,3 +216,22 @@ select.ctl { appearance: auto; }
 .pick-row p { color: var(--bm-text-muted); margin-top: 1px; }
 .pick-row .req { font: 400 11px var(--mono); color: var(--bm-text-dim); margin-top: 4px; display: block; }
 .tag2 { font: 500 10px var(--mono); letter-spacing: .06em; color: var(--bm-text-dim); border: 1px solid var(--bm-border); border-radius: 3px; padding: 1px 5px; }
+
+/* calibration (M3) */
+.solo-bar { height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--bm-brand-wash); color: var(--bm-text-muted); border-bottom: 1px solid var(--bm-border-subtle); }
+.solo-bar svg { color: var(--bm-brand); }
+.solo-bar b { color: var(--bm-text); font-weight: 600; }
+.solo-bar .right { margin-left: auto; color: var(--bm-text-dim); }
+.cal-view { flex: 1; display: grid; place-items: center; padding: 10px; min-height: 0; }
+.cal-pic { position: relative; height: 100%; max-width: 100%; touch-action: none; }
+.chart-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.chart-overlay polygon { fill: none; stroke: var(--bm-brand); stroke-width: 0.002; vector-effect: non-scaling-stroke; }
+.chart-overlay .sample { fill: none; stroke: var(--bm-text); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.corner { position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--bm-bg); border: 2px solid var(--bm-brand); cursor: grab; }
+.corner:active { cursor: grabbing; }
+.ok-line, .warn-line, .bad-line { display: inline-flex; align-items: center; gap: 5px; }
+.ok-line { color: var(--bm-success); }
+.warn-line { color: var(--bm-warning); }
+.bad-line { color: var(--bm-danger); }
+.row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.link { color: var(--bm-text-muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--bm-border-strong); justify-self: start; }

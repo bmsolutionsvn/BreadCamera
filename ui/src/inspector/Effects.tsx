@@ -2,6 +2,8 @@ import { Fragment, useRef, useState } from 'react';
 
 import type { EngineClient, EngineSnapshot } from '../api/client';
 import type { CameraConfig, StageSchemaJson } from '../api/protocol';
+import type { Calibration } from '../calibration/useCalibration';
+import { ColourPanel } from '../calibration/ColourPanel';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Icon, type IconName } from '../components/Icon';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -14,13 +16,14 @@ const STATE = { active: ['RUNNING', 'run'], bypassed: ['BYPASSED', 'bad'], off: 
 export const isAdded = (cam: CameraConfig, kind: string) => !!cam.stages && kind in cam.stages;
 
 // Effects are per-camera add-ins (spec §5.4), shown in pipeline order.
-export function Effects({ client, snap, cam, n, schemas, onAdd }: {
+export function Effects({ client, snap, cam, n, schemas, onAdd, calib }: {
   client: EngineClient;
   snap: EngineSnapshot;
   cam: CameraConfig;
   n: number;
   schemas: StageSchemaJson[];
   onAdd: () => void;
+  calib: Calibration;
 }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [removing, setRemoving] = useState<StageSchemaJson | null>(null);
@@ -101,6 +104,7 @@ export function Effects({ client, snap, cam, n, schemas, onAdd }: {
               {st?.error && <ErrorBlock title={`${s.label} bypassed.`} message={st.error.message} />}
               {errors[s.kind] && <ErrorBlock message={errors[s.kind]} />}
               {missing.length > 0 && <p className="note">Needs {missing.map(labelOf).join(', ')}, which is not on this camera.</p>}
+              {s.kind === 'color' && <ColourPanel client={client} cam={cam} n={n} calib={calib} />}
               <StageForm schema={s} values={values} onChange={(p) => change(s.kind, p)} />
             </div>
           </div>
