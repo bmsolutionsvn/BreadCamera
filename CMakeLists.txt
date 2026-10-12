@@ -129,7 +129,8 @@ target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
 target_link_libraries(bc_io PUBLIC user32)
 
 if(BC_WITH_NDI)
-  target_sources(bc_io PRIVATE src/io/ndi_output.cpp)
+  # M4a Task 2
+  target_sources(bc_io PRIVATE src/io/ndi_output.cpp src/io/ndi_discovery.cpp src/io/ndi_input.cpp)
   target_link_libraries(bc_io PUBLIC NDI::NDI)
   target_compile_definitions(bc_io PUBLIC BC_WITH_NDI=1)
 else()
@@ -211,6 +212,8 @@ add_executable(bc_tests
   tests/fullscreen_output_test.cpp
   # Task 8
   tests/ndi_output_test.cpp
+  # M4a Task 2
+  tests/ndi_input_test.cpp
   # Task 2..14 test files
   # Task 9
   tests/engine_test.cpp
