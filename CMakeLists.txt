@@ -157,6 +157,8 @@ add_library(bc_engine STATIC
   src/engine/matte.cpp
   # M3 Task 5
   src/engine/chart_detector.cpp
+  # M3 Task 6
+  src/engine/color_calibration_service.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
@@ -236,6 +238,8 @@ add_executable(bc_tests
   tests/engine_color_test.cpp
   # M3 Task 5
   tests/chart_detector_test.cpp
+  # M3 Task 6
+  tests/color_calibration_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

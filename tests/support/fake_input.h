@@ -9,6 +9,7 @@
 
 #include "engine/adapter_factory.h"
 #include "gpu/converter.h"
+#include "support/chart_image.h"
 #include "support/fake_output.h"
 
 namespace bc::test {
@@ -26,6 +27,7 @@ class FakeInput final : public bc::Input {
   std::atomic<bool> paused{false};
   std::atomic<uint32_t> width{0}, height{0};
   bool gradient = false;
+  std::vector<uint8_t> image;  // when non-empty (w*h*4), uploaded instead of the solid/gradient fill
 
   void start(bc::InputSink& sink) override {
     running_ = true;
@@ -54,14 +56,18 @@ class FakeInput final : public bc::Input {
   void push(bc::InputSink& sink, int64_t n) {
     const uint32_t w = width, h = height;
     std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
-    for (uint32_t x = 0; x < w; ++x) {
-      const float k = gradient ? 0.3f + 0.7f * static_cast<float>(x) / static_cast<float>(w) : 1.0f;
-      for (uint32_t y = 0; y < h; ++y) {
-        uint8_t* p = &px[(static_cast<size_t>(y) * w + x) * 4];
-        p[0] = static_cast<uint8_t>(color_[0] * k);
-        p[1] = static_cast<uint8_t>(color_[1] * k);
-        p[2] = static_cast<uint8_t>(color_[2] * k);
-        p[3] = color_[3];
+    if (image.size() == px.size()) {
+      px = image;
+    } else {
+      for (uint32_t x = 0; x < w; ++x) {
+        const float k = gradient ? 0.3f + 0.7f * static_cast<float>(x) / static_cast<float>(w) : 1.0f;
+        for (uint32_t y = 0; y < h; ++y) {
+          uint8_t* p = &px[(static_cast<size_t>(y) * w + x) * 4];
+          p[0] = static_cast<uint8_t>(color_[0] * k);
+          p[1] = static_cast<uint8_t>(color_[1] * k);
+          p[2] = static_cast<uint8_t>(color_[2] * k);
+          p[3] = color_[3];
+        }
       }
     }
     bc::VideoFrameIn f{conv_.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, n * 1'000'000 / fps_};
@@ -91,6 +97,11 @@ class FakeFactory final : public bc::AdapterFactory {
                                           std::array<uint8_t, 4>{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2]), uint8_t(c[3])},
                                           p.value("paused", false));
     in->gradient = p.value("gradient", false);
+    if (p.value("chart", false)) {
+      auto cast = p.value("cast", std::vector<float>{1, 1, 1});
+      const bc::ChartQuad q{{{{0.25, 0.22}, {0.75, 0.22}, {0.75, 0.78}, {0.25, 0.78}}}};
+      in->image = bc::test::renderChart(in->width, in->height, q, bc::colorCheckerSrgb(), {cast[0], cast[1], cast[2]}).bgra;
+    }
     std::lock_guard l(m);
     inputs[p.value("tag", std::string("in"))] = in.get();
     return in;

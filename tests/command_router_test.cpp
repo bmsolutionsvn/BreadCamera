@@ -17,6 +17,14 @@ struct FakeFx : bc::CommandRouter::Effects {
   void subscribePreview(const bc::ClientId&, std::vector<std::string>, bc::PreviewSize) override {}
   void requestKeyframe(const std::string&, bc::PreviewSize) override {}
   json listMonitors() override { return json::array({{{"index", 0}}}); }
+  std::string lastChart;
+  std::vector<std::string> forgotten;
+  json findChart(const std::string&) override { return {{"available", false}, {"found", false}}; }
+  json calibrateColor(const std::string&, const std::string& chart, const bc::ChartQuad&) override {
+    lastChart = chart;
+    return {{"lutPath", "C:/luts/x.cube"}, {"deltaEBefore", 7.4}, {"deltaE", 1.1}, {"rating", "good"}, {"reference", false}};
+  }
+  void forgetColor(const std::string& id) override { forgotten.push_back(id); }
   void shutdown() override { quit = true; }
 };
 
@@ -128,6 +136,9 @@ struct RecFx : bc::CommandRouter::Effects {
     keySizes.push_back(s);
   }
   json listMonitors() override { return json::array(); }
+  json findChart(const std::string&) override { return json::object(); }
+  json calibrateColor(const std::string&, const std::string&, const bc::ChartQuad&) override { return json::object(); }
+  void forgetColor(const std::string&) override {}
   void shutdown() override {}
 };
 }  // namespace
@@ -225,4 +236,29 @@ TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {
   REQUIRE(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["ok"] == true);
   CHECK_FALSE(r.show().cameras[0].stages.contains("background"));
   CHECK(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["error"]["code"] == "not-found");
+}
+
+TEST_CASE("CommandRouter: calibrateColor stores the result; undo, clear and removal") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  const json corners = json::array({json::array({0.25, 0.22}), json::array({0.75, 0.22}), json::array({0.75, 0.78}), json::array({0.25, 0.78})});
+  auto res = call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "card"}, {"corners", corners}}}});
+  REQUIRE(res["ok"] == true);
+  CHECK(res["result"]["rating"] == "good");
+  auto c = r.show().cameras[0].stages["color"];
+  CHECK(c["enabled"] == true);
+  CHECK(c["lut"] == "C:/luts/x.cube");
+  CHECK(c["deltaE"] == 1.1);
+  CHECK(c["calibratedAt"].get<double>() > 1.7e9);
+  CHECK(call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "poster"}, {"corners", corners}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "calibrateColor"}, {"args", {{"cameraId", cam}, {"chart", "card"}, {"corners", json::array()}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "undoColor"}, {"args", {{"cameraId", cam}}}})["error"]["code"] == "invalid");  // previousLut was empty
+  REQUIRE(call(r, {{"cmd", "clearColor"}, {"args", {{"cameraId", cam}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages["color"]["lut"] == "");
+  CHECK(r.show().cameras[0].stages["color"]["previousLut"] == "C:/luts/x.cube");
+  REQUIRE(call(r, {{"cmd", "undoColor"}, {"args", {{"cameraId", cam}}}})["ok"] == true);
+  CHECK(r.show().cameras[0].stages["color"]["lut"] == "C:/luts/x.cube");
+  call(r, {{"cmd", "removeCamera"}, {"args", {{"id", cam}}}});
+  CHECK(fx.forgotten.size() == 2);  // clearColor and removeCamera
 }

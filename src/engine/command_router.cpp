@@ -3,8 +3,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <ctime>
 #include <stdexcept>
 
+#include "core/chart.h"
 #include "core/stage_params.h"
 #include "core/utf8.h"
 #include "io/srt_params.h"
@@ -30,6 +32,20 @@ std::string name(const json& args) {
   auto n = str(args, "name");
   if (n.empty() || utf8Length(n) > 80) throw CmdError("invalid", "name must be 1 to 80 characters");
   return n;
+}
+
+ChartQuad quadFrom(const json& args) {
+  const auto& c = args.contains("corners") ? args["corners"] : json();
+  if (!c.is_array() || c.size() != 4) throw CmdError("invalid", "corners must be four [x, y] points");
+  ChartQuad q;
+  for (size_t i = 0; i < 4; ++i) {
+    if (!c[i].is_array() || c[i].size() != 2 || !c[i][0].is_number() || !c[i][1].is_number()) {
+      throw CmdError("invalid", "corners must be four [x, y] points");
+    }
+    q.c[i] = {c[i][0].get<double>(), c[i][1].get<double>()};
+  }
+  if (!validQuad(q)) throw CmdError("invalid", "place the four corners on the chart");
+  return q;
 }
 
 // Replaces {"set":true} with the stored secret and {"set":false} with "".
@@ -165,6 +181,50 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     return out;
   }
 
+  if (cmd == "findChart" || cmd == "calibrateColor") {
+    const auto camId = str(args, "cameraId");
+    {
+      std::lock_guard l(m_);
+      if (!show_.findCamera(camId)) throw CmdError("not-found", "no camera " + camId);
+    }
+    if (cmd == "findChart") {
+      try {
+        return fx_.findChart(camId);
+      } catch (const std::exception& e) {
+        throw CmdError("invalid", e.what());
+      }
+    }
+    const auto chart = args.value("chart", std::string("card"));
+    if (chart != "card" && chart != "tablet") throw CmdError("invalid", "chart must be card or tablet");
+    const auto q = quadFrom(args);
+    json res;
+    try {
+      res = fx_.calibrateColor(camId, chart, q);  // ~1 s, without the show lock
+    } catch (const std::invalid_argument& e) {
+      throw CmdError("invalid", e.what());
+    }
+    std::lock_guard l(m_);
+    Show next = show_;
+    auto* c = next.findCamera(camId);
+    if (!c) throw CmdError("not-found", "camera " + camId + " was removed during the calibration");
+    auto p = normalizeStageParams("color", c->stages.value("color", json::object()));
+    p["previousLut"] = p["lut"];
+    p["lut"] = res["lutPath"];
+    p["enabled"] = true;
+    p["chart"] = chart;
+    p["deltaE"] = std::min(100.0, res["deltaE"].get<double>());
+    p["deltaEBefore"] = std::min(100.0, res["deltaEBefore"].get<double>());
+    p["calibratedAt"] = static_cast<double>(std::time(nullptr));
+    p["reference"] = res.value("reference", false);
+    c->stages["color"] = normalizeStageParams("color", p);
+    show_ = std::move(next);
+    fx_.showChanged(show_);
+    return {{"deltaEBefore", res["deltaEBefore"]},
+            {"deltaE", res["deltaE"]},
+            {"rating", res["rating"]},
+            {"reference", res.value("reference", false)}};
+  }
+
   std::lock_guard l(m_);
   if (cmd == "getShow") return showToJson(show_, SecretMode::Redact);
 
@@ -190,6 +250,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     const auto camId = str(args, "id");
     findCam(camId);
     std::erase_if(next.cameras, [&](const CameraConfig& c) { return c.id == camId; });
+    fx_.forgetColor(camId);
   } else if (cmd == "addOutput") {
     auto& c = findCam(str(args, "cameraId"));
     const auto& o = obj(args, "output");
@@ -236,6 +297,20 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     const auto stage = str(args, "stage");
     if (!c.stages.contains(stage)) throw CmdError("not-found", "effect " + stage + " is not on this camera");
     c.stages.erase(stage);
+  } else if (cmd == "undoColor") {
+    auto& c = findCam(str(args, "cameraId"));
+    auto p = normalizeStageParams("color", c.stages.value("color", json::object()));
+    if (p["previousLut"] == "") throw CmdError("invalid", "nothing to undo");
+    std::swap(p["lut"], p["previousLut"]);
+    c.stages["color"] = normalizeStageParams("color", p);
+  } else if (cmd == "clearColor") {
+    auto& c = findCam(str(args, "cameraId"));
+    auto old = normalizeStageParams("color", c.stages.value("color", json::object()));
+    auto p = normalizeStageParams("color", json::object());
+    p["enabled"] = old["enabled"];
+    p["previousLut"] = old["lut"];
+    c.stages["color"] = normalizeStageParams("color", p);
+    fx_.forgetColor(c.id);
   } else if (cmd == "stopAllOutputs") {
     for (auto& c : next.cameras)
       for (auto& o : c.outputs) o.enabled = false;

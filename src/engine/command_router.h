@@ -6,6 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/chart.h"
 #include "core/show.h"
 #include "engine/preview_hub.h"
 
@@ -27,6 +28,9 @@ class CommandRouter {
     virtual void subscribePreview(const ClientId& client, std::vector<std::string> cameraIds, PreviewSize size) = 0;
     virtual void requestKeyframe(const std::string& cameraId, PreviewSize size) = 0;
     virtual nlohmann::json listMonitors() = 0;
+    virtual nlohmann::json findChart(const std::string& cameraId) = 0;
+    virtual nlohmann::json calibrateColor(const std::string& cameraId, const std::string& chart, const ChartQuad& q) = 0;
+    virtual void forgetColor(const std::string& cameraId) = 0;
     virtual void shutdown() = 0;
   };
 

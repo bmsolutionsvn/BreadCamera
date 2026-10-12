@@ -14,6 +14,7 @@
 #include "core/utf8.h"
 #include "engine/adapter_factory.h"
 #include "engine/command_router.h"
+#include "engine/color_calibration_service.h"
 #include "engine/control_server.h"
 #include "engine/engine.h"
 #include "engine/gpu_tools.h"
@@ -99,6 +100,7 @@ int wmain(int argc, wchar_t** argv) {
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);
   engine.apply(loaded.show);
+  bc::ColorCalibrationService calib(engine, showDir / L"luts");
   bc::ControlServer server(port, token);
   bc::PreviewHub hub;
   bc::PreviewService previews(conv, state, hub, [&](const bc::ClientId& c, std::vector<uint8_t> m) { server.sendBinary(c, m); });
@@ -110,8 +112,10 @@ int wmain(int argc, wchar_t** argv) {
     bc::ControlServer& server;
     bc::PreviewHub& hub;
     bc::PreviewService& previews;
-    Fx(bc::Engine& e, bc::ShowStore& s, bc::ControlServer& sv, bc::PreviewHub& h, bc::PreviewService& p)
-        : engine(e), store(s), server(sv), hub(h), previews(p) {}
+    bc::ColorCalibrationService& calib;
+    Fx(bc::Engine& e, bc::ShowStore& s, bc::ControlServer& sv, bc::PreviewHub& h, bc::PreviewService& p,
+       bc::ColorCalibrationService& c)
+        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c) {}
     void showChanged(const bc::Show& s) override {
       engine.apply(s);
       store.scheduleSave(s);
@@ -128,8 +132,14 @@ int wmain(int argc, wchar_t** argv) {
       }
       return out;
     }
+    json findChart(const std::string& id) override { return calib.find(id); }
+    json calibrateColor(const std::string& id, const std::string& chart, const bc::ChartQuad& q) override {
+      auto r = calib.calibrate(id, chart, q);
+      return {{"lutPath", r.lutPath}, {"deltaEBefore", r.deltaEBefore}, {"deltaE", r.deltaE}, {"rating", r.rating}, {"reference", r.reference}};
+    }
+    void forgetColor(const std::string& id) override { calib.forget(id); }
     void shutdown() override { g_quit = true; }
-  } fx(engine, store, server, hub, previews);
+  } fx(engine, store, server, hub, previews, calib);
   bc::CommandRouter router(loaded.show, fx);
 
   server.setHandlers({
