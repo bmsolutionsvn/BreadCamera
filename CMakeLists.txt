@@ -48,6 +48,9 @@ add_library(bc_core STATIC
   # Task 4
   src/core/signal_state.cpp
   src/core/state_store.cpp
+  # M3 Task 1
+  src/core/color_math.cpp
+  src/core/lut.cpp
 )
 target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
@@ -197,6 +200,9 @@ add_executable(bc_tests
   tests/maxine_matte_test.cpp
   # M2 Task 7
   tests/e2e_m2_test.cpp
+  # M3 Task 1
+  tests/color_math_test.cpp
+  tests/lut_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
