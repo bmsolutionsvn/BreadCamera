@@ -51,6 +51,9 @@ add_library(bc_core STATIC
   # M3 Task 1
   src/core/color_math.cpp
   src/core/lut.cpp
+  # M3 Task 2
+  src/core/chart.cpp
+  src/core/calibration.cpp
 )
 target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
@@ -203,6 +206,9 @@ add_executable(bc_tests
   # M3 Task 1
   tests/color_math_test.cpp
   tests/lut_test.cpp
+  # M3 Task 2
+  tests/chart_test.cpp
+  tests/calibration_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
