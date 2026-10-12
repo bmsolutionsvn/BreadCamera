@@ -8,6 +8,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - M4a Task 3 (OMT output, libomt) is superseded by `docs/superpowers/plans/2026-10-13-m4c-omt-hx-output.md` (omthx, plain OMT + OMT-HX) — not implemented here.
 - M4a Task 4: capture is video only (no audio) — USB/UVC audio stays a follow-up (spec §4.2).
 - M4a Task 4: the build PC enumerates 5 virtual capture devices (NDI Webcam Video 1–4, a phone virtual camera). The first never delivers a frame, so the input uses an async MF reader and the test scans devices for one that delivers; a PC with none prints `[skip] no capture device delivered frames` (`src/io/mf_capture_input.cpp`, `tests/mf_capture_test.cpp`).
+- M4a Task 6: NDI input drops audio that is not 48 kHz, with a visible message (`src/io/ndi_input.cpp`).
+- M4a Task 6: NDI input/discovery are tested only when the NDI SDK is installed on the build PC (`tests/ndi_input_test.cpp`).
 
 ## Untested on hardware
 - `h264_nvenc` preview path — never opened on the AMD build PC (`src/engine/preview_encoder.cpp`).
