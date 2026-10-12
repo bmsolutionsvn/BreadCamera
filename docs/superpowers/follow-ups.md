@@ -115,3 +115,10 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The M2 acceptance measures pipeline cost with a test matte; the real inference cost needs an RTX run (`tests/e2e_m2_test.cpp`).
 - M2 acceptance on the build PC (RX 6600): the zero-overrun bound **fails** — +742…+757 skips in 20 s across four runs (tick body 32.7 ms EWMA vs the 16.7 ms budget); every other check passes (latency 19.5/26.7/33.4/44.1 ms ≤ 50 in the final run, all runs ≤ 48, matte + background `active` on all four cameras, keyed corner/centre alpha 0/255 — 15 of 16 assertions). Temporary instrumentation split the tick: matte batch ~0.001 ms (TestMatte), refine ≤ 0.24 ms, background ≤ 0.03 ms per camera, blocking CPU readback 5.5–12.7 ms per camera (≈ the whole tick) — the same `Converter::readback` hotspot as the M1 entry under Known ceilings. Bounds left strict; the acceptance verdict is the owner's (`tests/e2e_m2_test.cpp`).
 - M2 run observation: `CameraStats::fps` reads 164 during sustained overruns — `freshThisSecond_` accumulates until the `index % ticksPerSecond == 0` publish fires, and tick-index skipping delays that publish past one second (`src/engine/engine.cpp`, `run`).
+
+## M3
+- Real-camera calibration is a **human check** (`docs/superpowers/manual-checks/m3-calibration.md`). Automated evidence uses rendered charts with known casts (`tests/e2e_m3_test.cpp`).
+- Chart detection depends on OpenCV's `mcc` module (`BC_WITH_CHART_DETECT`); without it the operator places the corners (`src/engine/chart_detector.cpp`).
+- The tablet chart's colours are only as good as the tablet; tablet mode matches cameras to each other, not to absolute colour (`src/engine/color_calibration_service.cpp`).
+- Trims stay in the colour schema as hidden fields at neutral values; manual trims are out of scope (spec §10) (`src/core/stage_params.cpp`).
+- OpenCV (Apache-2.0) must be listed in the M5 licence notices (`installer/THIRD_PARTY_NOTICES.md`).

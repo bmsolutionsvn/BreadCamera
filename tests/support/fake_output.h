@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -36,6 +37,12 @@ class FakeOutput final : public bc::QueuedOutput {
     return seen_;
   }
 
+  // The most recent frame with a CPU image (null until one arrives).
+  std::shared_ptr<const bc::CpuImage> lastImage() const {
+    std::lock_guard l(m_);
+    return lastImage_;
+  }
+
  protected:
   void open() override { ++opens; }
   void deliver(const bc::OutFrame& f) override {
@@ -52,13 +59,15 @@ class FakeOutput final : public bc::QueuedOutput {
       s.width = f.linear->width;
     }
     std::lock_guard l(m_);
+    if (f.bgra) lastImage_ = f.bgra;
     seen_.push_back(s);
   }
   void close() noexcept override {}
 
  private:
   bool needsCpu_;
-  std::mutex m_;
+  mutable std::mutex m_;
   std::vector<Seen> seen_;
+  std::shared_ptr<const bc::CpuImage> lastImage_;
 };
 }  // namespace bc::test

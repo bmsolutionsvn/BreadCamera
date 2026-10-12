@@ -240,6 +240,8 @@ add_executable(bc_tests
   tests/chart_detector_test.cpp
   # M3 Task 6
   tests/color_calibration_test.cpp
+  # M3 Task 8
+  tests/e2e_m3_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
