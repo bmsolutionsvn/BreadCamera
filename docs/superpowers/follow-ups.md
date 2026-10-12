@@ -15,6 +15,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Readback maps synchronously under the context lock (`src/gpu/converter.cpp`, `Converter::readback`); double-buffer staging if the tick budget gets tight.
 - Task 14 fix: the 4x 1080p60 M1 acceptance case fails reproducibly on the readback hotspot — `Converter::readback`/`toBgra8` (synchronous `CopyResource` + blocking `Map(READ)` + 8.3 MB memcpy under the context lock, `src/engine/camera.cpp:140`, per distinct size per camera per tick) costs ~98% of the tick (~24 fps instead of 60); `NdiOutput::needsCpu()` is true (`src/io/ndi_output.h:15`) and spec §9 names NDI as M1's output; A/B with `cpu:false` outputs passes (1201 frames/20 s, 0 overruns) (`tests/e2e_m1_test.cpp`). Reported, not fixed — planner decides.
 - Bilinear-only downscale for previews (`src/gpu/shaders/linear_to_bgra8.hlsl`).
+- M3: `sampleChartRaw` is exported without a `validQuad` guard (`src/core/chart.h:30`) — only `sampleChart` validates; document the contract or validate at the raw entry too.
+- M3: the tone-curve duplicate-x merge is a pairwise mean, not an n-point mean (`src/core/calibration.cpp`, `neutralCurve`) — absorbed by the monotone pass and the ±0.25 clamp, so only visible with clustered near-identical patches.
 - No audio clock-drift resampling; overflow trims (`src/core/audio_delay.h`).
 - The audio resampler is built from the first frame only (`src/io/ffmpeg_input.cpp`, `emitAudio`).
 - Fullscreen output stretches, no letterbox (`src/io/fullscreen_output.h`).
@@ -89,6 +91,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Task 4: minor (deferred): unlocked `r.matte->batchSizes` reads in one matte test (`tests/engine_matte_test.cpp`, the blur/replace case) — snapshot under `r.matte->m` like the overrun case does.
 - Maxine (M2 Task 5): `tests/maxine_matte_test.cpp` only asserts matte dimensions — add a content check (non-trivial alpha) and a >4-camera growth case when an RTX machine is available.
 - Task 4: pre-existing flake — `tests/engine_test.cpp:251` half-rate audio carry (`1600 == 3200`, 1 of 3 runs), unrelated to Task 4.
+- M3: `tests/chart_test.cpp` has no empty-frames case and no boundary-quad (corners on the patch edge) case.
 - Task 14 review: `tests/e2e_m1_test.cpp` — `exeDir()` neither checks `GetModuleFileNameW`'s return length nor `MAX_PATH` truncation (test-only; the folder is controlled).
 - Task 14 review: `tests/e2e_m1_test.cpp` — the `askShow()` busy-retry loops have empty bodies; a short sleep between attempts would be clearer (style).
 - Task 14 fix review: `tests/e2e_m1_test.cpp` — the CaseGuard is declared after `engine.start()`/the pusher loop, leaving a narrow non-REQUIRE exception window before the guard exists; `~CaseGuard` is implicitly noexcept (its steps are verified-idempotent and non-throwing); and the seam test cannot pin the guard's declaration-order property (verified by review instead).

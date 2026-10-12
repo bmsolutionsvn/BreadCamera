@@ -28,11 +28,12 @@ class ColorGrader {
   static bool isIdentity(const ColorGrade& g);
 
  private:
-  struct alignas(16) Params {
+  // 56 bytes on the CPU; the constant buffer is created at the next multiple of 16.
+  struct Params {
     float a[4];
     float b[4];
     float c[4];
-    uint32_t outW, outH, srcW, srcH;
+    uint32_t outW, outH;
   };
   GpuDevice& gpu_;
   TexturePool& pool_;

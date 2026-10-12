@@ -106,6 +106,7 @@ double meanDeltaE(const ChartColors& a, const ChartColors& b) {
 std::string_view calibrationRating(double d) { return d <= 2 ? "good" : d <= 4 ? "fair" : "poor"; }
 
 Calibration solveCalibration(const ChartColors& measured, const ChartColors& target, int lutSize) {
+  if (lutSize < 2 || lutSize > 65) throw std::invalid_argument("lutSize must be 2 to 65");
   double neutral = 0;
   for (size_t i = 18; i < 24; ++i) neutral += luma(measured[i]);
   if (neutral / 6 < 0.01) throw std::invalid_argument("the chart is too dark — add light on it");

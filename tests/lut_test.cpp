@@ -20,6 +20,10 @@ TEST_CASE("Lut3D: identity applies as identity, trilinear in between") {
   CHECK(clamped.g == doctest::Approx(1.0f));
 }
 
+TEST_CASE("Lut3D: identity refuses a degenerate size") {
+  CHECK_THROWS_AS(bc::Lut3D::identity(1), std::invalid_argument);
+}
+
 TEST_CASE("cube: write then read round-trips") {
   bc::test::TempDir dir;
   auto lut = bc::Lut3D::identity(5);

@@ -8,6 +8,7 @@
 
 namespace bc {
 Lut3D Lut3D::identity(int size) {
+  if (size < 2 || size > 65) throw std::invalid_argument("LUT size must be 2 to 65");
   Lut3D l;
   l.size = size;
   l.data.resize(static_cast<size_t>(size) * size * size);
@@ -19,6 +20,7 @@ Lut3D Lut3D::identity(int size) {
 }
 
 Rgb Lut3D::apply(Rgb in) const {
+  if (size < 2 || data.empty()) throw std::invalid_argument("LUT is not initialised");
   auto coord = [&](float v, int& i0, float& t) {
     const float x = std::clamp(v, 0.0f, 1.0f) * static_cast<float>(size - 1);
     i0 = std::min(static_cast<int>(x), size - 2);
@@ -86,6 +88,8 @@ Lut3D readCube(const std::filesystem::path& path) {
 }
 
 void writeCube(const std::filesystem::path& path, const Lut3D& lut, std::string_view title) {
+  if (lut.size < 2 || lut.data.size() != static_cast<size_t>(lut.size) * lut.size * lut.size)
+    throw CubeError("the LUT's size does not match its data");
   std::filesystem::create_directories(path.parent_path());
   std::ofstream f(path, std::ios::trunc);
   if (!f) throw CubeError("cannot write " + path.string());

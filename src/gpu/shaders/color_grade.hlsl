@@ -7,7 +7,6 @@ cbuffer Params : register(b0) {
   float4 gB;  // lift, gamma, gain, saturation
   float4 gC;  // useLut, lutSize
   uint2 gOutSize;
-  uint2 gSrcSize;
 };
 
 [numthreads(8, 8, 1)]

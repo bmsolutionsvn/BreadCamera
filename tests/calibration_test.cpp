@@ -56,6 +56,11 @@ TEST_CASE("solveCalibration: too dark or clipped charts are refused; an extreme 
   }
 }
 
+TEST_CASE("solveCalibration: an out-of-range LUT size is refused") {
+  const auto& ref = bc::colorCheckerReference();
+  CHECK_THROWS_AS(bc::solveCalibration(ref, ref, 0), std::invalid_argument);
+}
+
 TEST_CASE("calibrationRating words") {
   CHECK(bc::calibrationRating(1.9) == "good");
   CHECK(bc::calibrationRating(3.5) == "fair");

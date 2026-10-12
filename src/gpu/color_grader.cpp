@@ -28,7 +28,7 @@ bool ColorGrader::isIdentity(const ColorGrade& g) {
 ColorGrader::ColorGrader(GpuDevice& gpu, TexturePool& pool) : gpu_(gpu), pool_(pool) {
   auto* d = gpu_.device();
   if (FAILED(d->CreateComputeShader(g_color_grade, sizeof(g_color_grade), nullptr, &cs_))) throw std::runtime_error("CreateComputeShader failed");
-  D3D11_BUFFER_DESC bd{sizeof(Params), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+  D3D11_BUFFER_DESC bd{static_cast<UINT>((sizeof(Params) + 15) & ~size_t{15}), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
   if (FAILED(d->CreateBuffer(&bd, nullptr, &cb_))) throw std::runtime_error("CreateBuffer failed");
   D3D11_SAMPLER_DESC sd{};
   sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -73,8 +73,8 @@ TextureRef ColorGrader::apply(const TextureRef& frame, const ColorGrade& g) {
   const auto& lut = g.lut ? g.lut : identity_;
   p.c[0] = g.lut ? 1.0f : 0.0f;
   p.c[1] = static_cast<float>(lut->size);
-  p.outW = p.srcW = frame->width;
-  p.outH = p.srcH = frame->height;
+  p.outW = frame->width;
+  p.outH = frame->height;
   auto lock = gpu_.lock();
   auto* ctx = gpu_.context();
   D3D11_MAPPED_SUBRESOURCE m{};
