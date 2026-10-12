@@ -130,6 +130,7 @@ std::map<std::string, std::vector<CpuImage>> Engine::capture(const std::vector<s
     }
   }
   if (capture_) throw std::runtime_error("another capture is running");
+  if (!running_) throw std::invalid_argument("the engine is not running");
   capture_ = job;
   const bool finished = captureCv_.wait_for(l, timeout, [&] { return job->done; });
   capture_.reset();

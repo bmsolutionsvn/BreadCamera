@@ -45,6 +45,8 @@ class Camera final : public InputSink {
     width_ = w;
     height_ = h;
     lastConverted_.reset();
+    lastGraded_.reset();
+    gradeDirty_ = true;
   }
   // First half (tick thread): newest frame → linear texture, or the slate. Never null.
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slate);

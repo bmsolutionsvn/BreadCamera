@@ -92,6 +92,9 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Maxine (M2 Task 5): `tests/maxine_matte_test.cpp` only asserts matte dimensions — add a content check (non-trivial alpha) and a >4-camera growth case when an RTX machine is available.
 - Task 4: pre-existing flake — `tests/engine_test.cpp:251` half-rate audio carry (`1600 == 3200`, 1 of 3 runs), unrelated to Task 4.
 - M3: `tests/chart_test.cpp` has no empty-frames case and no boundary-quad (corners on the patch edge) case.
+- M3 Task 6 review: a capture timeout and a genuine "no picture" both reach the operator as code `invalid` (`src/engine/command_router.cpp`, `src/engine/color_calibration_service.cpp`); give them distinct codes if it matters.
+- M3 Task 6 review: `ColorCalibrationService::calibrate` holds its mutex across the ~1–3 s capture, so a concurrent `forget` (holding the router lock) waits (`src/engine/color_calibration_service.cpp`).
+- M3 Task 6 review: `FakeFx::lastChart` is set but never asserted — the router test does not pin that the chart argument/corners reach the effect (`tests/command_router_test.cpp`).
 - Task 14 review: `tests/e2e_m1_test.cpp` — `exeDir()` neither checks `GetModuleFileNameW`'s return length nor `MAX_PATH` truncation (test-only; the folder is controlled).
 - Task 14 review: `tests/e2e_m1_test.cpp` — the `askShow()` busy-retry loops have empty bodies; a short sleep between attempts would be clearer (style).
 - Task 14 fix review: `tests/e2e_m1_test.cpp` — the CaseGuard is declared after `engine.start()`/the pusher loop, leaving a narrow non-REQUIRE exception window before the guard exists; `~CaseGuard` is implicitly noexcept (its steps are verified-idempotent and non-throwing); and the seam test cannot pin the guard's declaration-order property (verified by review instead).
