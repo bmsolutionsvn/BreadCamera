@@ -51,4 +51,16 @@ FfmpegInputOptions srtOptionsFromParams(const json& p) {
   if (!sid.empty()) o.avOptions["streamid"] = sid;
   return o;
 }
+
+SrtOutputOptions srtOutputOptionsFromParams(const json& p) {
+  if (!p.is_object()) throw std::invalid_argument("SRT settings must be an object");
+  json conn = p;
+  conn.erase("bitrateKbps");
+  auto in = srtOptionsFromParams(conn);
+  SrtOutputOptions o;
+  o.url = in.url;
+  o.avOptions = in.avOptions;
+  o.bitrateKbps = intIn(p, "bitrateKbps", 8000, 1000, 50000);
+  return o;
+}
 }  // namespace bc

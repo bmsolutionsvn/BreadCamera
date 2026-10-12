@@ -119,6 +119,9 @@ add_library(bc_io STATIC
   src/io/monitors.cpp
   src/io/fullscreen_output.cpp
   # Task 8
+  # M4a Task 1
+  src/io/h264_encoder.cpp
+  src/io/srt_output.cpp
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
@@ -200,6 +203,8 @@ add_executable(bc_tests
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp
+  # M4a Task 1
+  tests/srt_output_test.cpp
   tests/support/test_media.cpp
   # Task 7
   tests/queued_output_test.cpp

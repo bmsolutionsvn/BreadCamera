@@ -9,13 +9,10 @@ extern "C" {
 #include <cstring>
 #include <stdexcept>
 
+#include "io/h264_encoder.h"
+
 namespace bc {
 namespace {
-std::string averr(int rc) {
-  char buf[AV_ERROR_MAX_STRING_SIZE];
-  av_strerror(rc, buf, sizeof(buf));
-  return buf;
-}
 bool isAnnexB(std::span<const uint8_t> d) {
   return d.size() >= 4 && d[0] == 0 && d[1] == 0 && (d[2] == 1 || (d[2] == 0 && d[3] == 1));
 }
@@ -68,57 +65,12 @@ std::vector<uint8_t> encodePreviewMessage(std::string_view id, const PreviewPack
   return m;
 }
 
-const std::vector<std::string>& PreviewEncoder::encoderOrder() {
-  static const std::vector<std::string> order{"h264_nvenc", "h264_amf", "h264_qsv", "h264_mf"};
-  return order;
-}
+const std::vector<std::string>& PreviewEncoder::encoderOrder() { return h264EncoderOrder(); }
 
 PreviewEncoder::PreviewEncoder(int w, int h, int fps) : w_(w), h_(h) {
-  std::string tried;
-  for (const auto& name : encoderOrder()) {
-    const AVCodec* codec = avcodec_find_encoder_by_name(name.c_str());
-    if (!codec) {
-      tried += name + " (not built); ";
-      continue;
-    }
-    AVCodecContext* c = avcodec_alloc_context3(codec);
-    c->width = w;
-    c->height = h;
-    c->time_base = {1, fps};
-    c->framerate = {fps, 1};
-    c->pix_fmt = AV_PIX_FMT_NV12;
-    c->gop_size = fps;
-    c->max_b_frames = 0;
-    c->bit_rate = w >= 1280 ? 4'000'000 : 1'000'000;
-    c->flags |= AV_CODEC_FLAG_LOW_DELAY | AV_CODEC_FLAG_GLOBAL_HEADER;
-    AVDictionary* o = nullptr;
-    if (name == "h264_nvenc") {
-      av_dict_set(&o, "preset", "p1", 0);
-      av_dict_set(&o, "tune", "ull", 0);
-      av_dict_set(&o, "zerolatency", "1", 0);
-      av_dict_set(&o, "forced-idr", "1", 0);
-    } else if (name == "h264_amf") {
-      av_dict_set(&o, "usage", "ultralowlatency", 0);
-      av_dict_set(&o, "forced_idr", "1", 0);
-    } else if (name == "h264_qsv") {
-      av_dict_set(&o, "preset", "veryfast", 0);
-      av_dict_set(&o, "async_depth", "1", 0);
-    } else if (name == "h264_mf") {
-      av_dict_set(&o, "rate_control", "cbr", 0);
-      av_dict_set(&o, "scenario", "display_remoting", 0);
-    }
-    const int rc = avcodec_open2(c, codec, &o);
-    av_dict_free(&o);
-    if (rc < 0) {
-      tried += name + " (" + averr(rc) + "); ";
-      avcodec_free_context(&c);
-      continue;
-    }
-    ctx_ = c;
-    name_ = name;
-    break;
-  }
-  if (!ctx_) throw std::runtime_error("no H.264 encoder could be opened: " + tried);
+  auto opened = openH264Encoder(w, h, fps, 1, w >= 1280 ? 4'000'000 : 1'000'000, fps, true);
+  ctx_ = opened.ctx;
+  name_ = opened.name;
   if (ctx_->extradata_size > 0) {
     std::span<const uint8_t> ex(ctx_->extradata, static_cast<size_t>(ctx_->extradata_size));
     headers_ = isAnnexB(ex) ? std::vector<uint8_t>(ex.begin(), ex.end()) : avccToAnnexB(ex);

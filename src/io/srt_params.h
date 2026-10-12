@@ -17,4 +17,13 @@ struct FfmpegInputOptions {
 
 // Validates show params for the "srt" input kind (spec §4.2). Throws std::invalid_argument.
 FfmpegInputOptions srtOptionsFromParams(const nlohmann::json& params);
+
+struct SrtOutputOptions {
+  std::string url;
+  std::map<std::string, std::string> avOptions;
+  int bitrateKbps = 8000;
+};
+// Same connection keys as the input (spec §4.2) plus bitrateKbps. The size comes from the frames
+// (the per-output format, spec §4.3). Throws std::invalid_argument.
+SrtOutputOptions srtOutputOptionsFromParams(const nlohmann::json& params);
 }  // namespace bc

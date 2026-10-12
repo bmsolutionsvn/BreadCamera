@@ -24,6 +24,7 @@ class QueuedOutput : public Output {
   virtual void deliver(const OutFrame& frame) = 0;  // on the worker thread
   virtual void close() noexcept = 0;              // on the worker thread
   virtual std::string errorCode() const { return "output-failed"; }
+  bool stopRequested() const { return stopping_; }  // FFmpeg interrupt callbacks
 
  private:
   void run();
