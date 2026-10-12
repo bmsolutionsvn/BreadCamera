@@ -17,6 +17,8 @@ struct FakeFx : bc::CommandRouter::Effects {
   void subscribePreview(const bc::ClientId&, std::vector<std::string>, bc::PreviewSize) override {}
   void requestKeyframe(const std::string&, bc::PreviewSize) override {}
   json listMonitors() override { return json::array({{{"index", 0}}}); }
+  json listNdiSources() override { return json::array({"STUDIO (vMix - Output 1)"}); }
+  json listCaptureDevices() override { return json::array({{{"name", "Cam Link 4K"}, {"id", "\\\\?\\usb#vid_0fd9"}}}); }
   std::string lastChart;
   std::vector<std::string> forgotten;
   json findChart(const std::string&) override { return {{"available", false}, {"found", false}}; }
@@ -136,6 +138,8 @@ struct RecFx : bc::CommandRouter::Effects {
     keySizes.push_back(s);
   }
   json listMonitors() override { return json::array(); }
+  json listNdiSources() override { return json::array(); }
+  json listCaptureDevices() override { return json::array(); }
   json findChart(const std::string&) override { return json::object(); }
   json calibrateColor(const std::string&, const std::string&, const bc::ChartQuad&) override { return json::object(); }
   void forgetColor(const std::string&) override {}
@@ -261,4 +265,21 @@ TEST_CASE("CommandRouter: calibrateColor stores the result; undo, clear and remo
   CHECK(r.show().cameras[0].stages["color"]["lut"] == "C:/luts/x.cube");
   call(r, {{"cmd", "removeCamera"}, {"args", {{"id", cam}}}});
   CHECK(fx.forgotten.size() == 2);  // clearColor and removeCamera
+}
+
+TEST_CASE("CommandRouter: new input and output kinds are validated") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto ok = [&](json input) { return call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", input}}}})["ok"] == true; };
+  CHECK(ok({{"kind", "ndi"}, {"params", {{"source", "STUDIO (vMix - Output 1)"}}}}));
+  CHECK_FALSE(ok({{"kind", "ndi"}, {"params", {{"source", ""}}}}));
+  CHECK(ok({{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}}));
+  CHECK_FALSE(ok({{"kind", "uvc"}, {"params", {{"device", "x"}, {"fps", 240}}}}));
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
+  auto addOut = [&](json o) { return call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", o}}}}); };
+  CHECK(addOut({{"kind", "srt"}, {"params", {{"mode", "listener"}, {"port", 9200}}}})["ok"] == true);
+  CHECK(addOut({{"kind", "srt"}, {"params", {{"mode", "listener"}, {"port", 0}}}})["error"]["code"] == "invalid");
+  CHECK(addOut({{"kind", "srt"}, {"params", {{"mode", "listener"}, {"port", 9200}, {"bitrateKbps", 999999}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "listNdiSources"}})["result"][0] == "STUDIO (vMix - Output 1)");
+  CHECK(call(r, {{"cmd", "listCaptureDevices"}})["result"][0]["name"] == "Cam Link 4K");
 }

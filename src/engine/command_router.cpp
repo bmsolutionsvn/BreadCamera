@@ -94,11 +94,37 @@ void formatFrom(const json& f, OutputConfig& o) {
   o.halfRate = f.value("halfRate", false);
   if (!isOutputSize(o.width, o.height)) throw CmdError("invalid", "output size must be same as show, 1280x720 or 960x540");
 }
+
+std::string strParam(const json& p, const char* key, size_t minLen, size_t maxLen, const char* what) {
+  if (!p.contains(key) || !p[key].is_string()) throw std::invalid_argument(std::string(what) + " is required");
+  auto s = p[key].get<std::string>();
+  if (s.size() < minLen || s.size() > maxLen)
+    throw std::invalid_argument(std::string(what) + " must be " + std::to_string(minLen) + " to " + std::to_string(maxLen) + " characters");
+  return s;
+}
+void optInt(const json& p, const char* key, int lo, int hi, const char* what) {
+  if (!p.contains(key)) return;
+  if (!p[key].is_number_integer()) throw std::invalid_argument(std::string(what) + " must be a whole number");
+  const int v = p[key].get<int>();
+  if (v != 0 && (v < lo || v > hi))
+    throw std::invalid_argument(std::string(what) + " must be 0 (auto) or " + std::to_string(lo) + " to " + std::to_string(hi));
+}
 }  // namespace
 
 void validateInput(const InputConfig& in) {
   if (in.kind == "srt") {
     srtOptionsFromParams(in.params);
+    return;
+  }
+  if (in.kind == "ndi") {
+    strParam(in.params, "source", 1, 256, "NDI source");
+    return;
+  }
+  if (in.kind == "uvc") {
+    strParam(in.params, "device", 1, 512, "device");
+    optInt(in.params, "width", 640, 3840, "width");
+    optInt(in.params, "height", 360, 2160, "height");
+    optInt(in.params, "fps", 15, 60, "fps");
     return;
   }
   throw std::invalid_argument("unknown input kind '" + in.kind + "'");
@@ -117,6 +143,10 @@ void validateOutput(const OutputConfig& o) {
     if (o.params.contains("monitor") && (!o.params["monitor"].is_number_integer() || o.params["monitor"].get<int>() < 0)) {
       throw std::invalid_argument("monitor must be a whole number from 0");
     }
+    return;
+  }
+  if (o.kind == "srt") {
+    srtOutputOptionsFromParams(o.params);
     return;
   }
   throw std::invalid_argument("unknown output kind '" + o.kind + "'");
@@ -156,6 +186,8 @@ json CommandRouter::handle(const ClientId& client, std::string_view text) {
 json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, const json& args) {
   if (cmd == "ping") return {{"pong", true}, {"pid", GetCurrentProcessId()}};
   if (cmd == "listMonitors") return fx_.listMonitors();
+  if (cmd == "listNdiSources") return fx_.listNdiSources();
+  if (cmd == "listCaptureDevices") return fx_.listCaptureDevices();
   if (cmd == "shutdown") {
     fx_.shutdown();
     return json::object();

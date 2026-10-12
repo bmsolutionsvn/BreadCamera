@@ -24,7 +24,11 @@
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
+#include "io/mf_capture_input.h"
 #include "io/monitors.h"
+#if BC_WITH_NDI
+#include "io/ndi_discovery.h"
+#endif
 
 namespace {
 using nlohmann::json;
@@ -130,6 +134,18 @@ int wmain(int argc, wchar_t** argv) {
       for (auto& m : bc::listMonitors()) {
         out.push_back({{"index", m.index}, {"name", m.name}, {"width", m.width}, {"height", m.height}, {"primary", m.primary}});
       }
+      return out;
+    }
+    json listNdiSources() override {
+#if BC_WITH_NDI
+      return bc::listNdiSources();
+#else
+      return json::array();
+#endif
+    }
+    json listCaptureDevices() override {
+      json out = json::array();
+      for (auto& d : bc::listCaptureDevices()) out.push_back({{"name", d.name}, {"id", d.id}});
       return out;
     }
     json findChart(const std::string& id) override { return calib.find(id); }

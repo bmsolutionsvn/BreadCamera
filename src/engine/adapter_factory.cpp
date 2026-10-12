@@ -5,14 +5,28 @@
 #include "core/utf8.h"
 #include "io/ffmpeg_input.h"
 #include "io/fullscreen_output.h"
+#include "io/mf_capture_input.h"
+#include "io/srt_output.h"
 #include "io/srt_params.h"
 #if BC_WITH_NDI
+#include "io/ndi_input.h"
 #include "io/ndi_output.h"
 #endif
 
 namespace bc {
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
   if (cfg.kind == "srt") return std::make_unique<FfmpegInput>(gpu_, pool_, srtOptionsFromParams(cfg.params));
+  if (cfg.kind == "ndi") {
+#if BC_WITH_NDI
+    return std::make_unique<NdiInput>(gpu_, pool_, cfg.params.at("source").get<std::string>());
+#else
+    throw std::invalid_argument("NDI support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "uvc") {
+    return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params.at("device").get<std::string>(), cfg.params.value("width", 0),
+                                            cfg.params.value("height", 0), cfg.params.value("fps", 0));
+  }
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");
 }
 
@@ -37,6 +51,7 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
     }
     return std::make_unique<FullscreenOutput>(gpu_, cfg.params.value("monitor", 0));
   }
+  if (cfg.kind == "srt") return std::make_unique<SrtOutput>(srtOutputOptionsFromParams(cfg.params));
   throw std::invalid_argument("unknown output kind '" + cfg.kind + "'");
 }
 }  // namespace bc

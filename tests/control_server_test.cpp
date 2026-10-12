@@ -86,6 +86,8 @@ TEST_CASE("ControlServer: hostile messages over the socket get error replies, ne
     void subscribePreview(const bc::ClientId&, std::vector<std::string>, bc::PreviewSize) override {}
     void requestKeyframe(const std::string&, bc::PreviewSize) override {}
     nlohmann::json listMonitors() override { return nlohmann::json::array(); }
+    nlohmann::json listNdiSources() override { return nlohmann::json::array(); }
+    nlohmann::json listCaptureDevices() override { return nlohmann::json::array(); }
     nlohmann::json findChart(const std::string&) override { return nlohmann::json::object(); }
     nlohmann::json calibrateColor(const std::string&, const std::string&, const bc::ChartQuad&) override { return nlohmann::json::object(); }
     void forgetColor(const std::string&) override {}

@@ -43,8 +43,16 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
 }) {
   const [confirm, setConfirm] = useState<null | { kind: 'camera' } | { kind: 'output'; id: string }>(null);
   const p = cam?.input.params ?? {};
+  const kind = cam?.input.kind ?? 'srt';
   const [draft, setDraft] = useState({ mode: '', url: '', host: '', port: '', latency: '', passphrase: '' });
+  const [ndiSources, setNdiSources] = useState<string[]>([]);
+  const [ndiSource, setNdiSource] = useState('');
+  const [devices, setDevices] = useState<{ name: string; id: string }[]>([]);
+  const [device, setDevice] = useState('');
   const [error, setError] = useState('');
+  const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
+  const refreshDevices = () =>
+    client.request<{ name: string; id: string }[]>('listCaptureDevices').then(setDevices).catch(() => setDevices([]));
   useEffect(() => {
     setDraft({
       mode: String(p.mode ?? 'caller'),
@@ -54,9 +62,16 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
       latency: String(p.latencyMs ?? 120),
       passphrase: '',
     });
+    setNdiSource(String(p.source ?? ''));
+    setDevice(String(p.device ?? ''));
     setError('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cam?.id, JSON.stringify(p)]);
+  useEffect(() => {
+    if (kind === 'ndi') refreshNdi();
+    else if (kind === 'uvc') refreshDevices();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cam?.id, kind]);
 
   if (!cam) {
     return (
@@ -73,24 +88,34 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
   const stats = snap.stats?.cameras?.[cam.id];
   const health = cs?.input?.health ?? 'offline';
   const dirty =
-    draft.mode !== String(p.mode ?? 'caller') ||
-    draft.url !== String(p.url ?? '') ||
-    draft.host !== String(p.host ?? '') ||
-    draft.port !== (p.port === undefined ? '' : String(p.port)) ||
-    draft.latency !== String(p.latencyMs ?? 120) ||
-    draft.passphrase !== '';
+    kind === 'ndi'
+      ? ndiSource !== String(p.source ?? '')
+      : kind === 'uvc'
+        ? device !== String(p.device ?? '')
+        : kind === 'srt' &&
+          (draft.mode !== String(p.mode ?? 'caller') ||
+            draft.url !== String(p.url ?? '') ||
+            draft.host !== String(p.host ?? '') ||
+            draft.port !== (p.port === undefined ? '' : String(p.port)) ||
+            draft.latency !== String(p.latencyMs ?? 120) ||
+            draft.passphrase !== '');
 
   async function apply() {
-    const params: Record<string, unknown> = { mode: draft.mode, latencyMs: Number(draft.latency) || 120 };
-    if (draft.url) params.url = draft.url;
+    let params: Record<string, unknown>;
+    if (kind === 'ndi') params = { source: ndiSource };
+    else if (kind === 'uvc') params = { device };
     else {
-      params.port = Number(draft.port);
-      if (draft.host) params.host = draft.host;
+      params = { mode: draft.mode, latencyMs: Number(draft.latency) || 120 };
+      if (draft.url) params.url = draft.url;
+      else {
+        params.port = Number(draft.port);
+        if (draft.host) params.host = draft.host;
+      }
+      params.passphrase = draft.passphrase ? draft.passphrase : { set: (p.passphrase as { set?: boolean })?.set ?? false };
+      if (p.streamId) params.streamId = p.streamId;
     }
-    params.passphrase = draft.passphrase ? draft.passphrase : { set: (p.passphrase as { set?: boolean })?.set ?? false };
-    if (p.streamId) params.streamId = p.streamId;
     try {
-      await client.request('updateCamera', { id: cam!.id, input: { kind: cam!.input.kind, params } });
+      await client.request('updateCamera', { id: cam!.id, input: { kind, params } });
       setError('');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -111,27 +136,70 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
           {cs?.input?.error && <ErrorBlock title="Input failed." message={cs.input.error.message} />}
           {cs?.tickError && <ErrorBlock title="Processing failed." message={cs.tickError} />}
           {error && <ErrorBlock message={error} />}
-          <Prop label="Mode">
-            {(id) => (
-              <select id={id} className="ctl" value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
-                <option value="caller">Caller (BreadCamera dials out)</option>
-                <option value="listener">Listener (waits for the source)</option>
-              </select>
-            )}
-          </Prop>
-          {draft.mode === 'caller' && (
-            <Prop label="URL">{(id) => <input id={id} className="ctl mono" value={draft.url} placeholder="srt://host:port" onChange={(e) => setDraft({ ...draft, url: e.target.value })} />}</Prop>
-          )}
-          {!draft.url && (
+          {kind === 'srt' && (
             <>
-              {draft.mode === 'caller' && <Prop label="Host">{(id) => <input id={id} className="ctl mono" value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />}</Prop>}
-              <Prop label="Port">{(id) => <input id={id} className="ctl mono" inputMode="numeric" value={draft.port} onChange={(e) => setDraft({ ...draft, port: e.target.value })} />}</Prop>
+              <Prop label="Mode">
+                {(id) => (
+                  <select id={id} className="ctl" value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
+                    <option value="caller">Caller (BreadCamera dials out)</option>
+                    <option value="listener">Listener (waits for the source)</option>
+                  </select>
+                )}
+              </Prop>
+              {draft.mode === 'caller' && (
+                <Prop label="URL">{(id) => <input id={id} className="ctl mono" value={draft.url} placeholder="srt://host:port" onChange={(e) => setDraft({ ...draft, url: e.target.value })} />}</Prop>
+              )}
+              {!draft.url && (
+                <>
+                  {draft.mode === 'caller' && <Prop label="Host">{(id) => <input id={id} className="ctl mono" value={draft.host} onChange={(e) => setDraft({ ...draft, host: e.target.value })} />}</Prop>}
+                  <Prop label="Port">{(id) => <input id={id} className="ctl mono" inputMode="numeric" value={draft.port} onChange={(e) => setDraft({ ...draft, port: e.target.value })} />}</Prop>
+                </>
+              )}
+              <Prop label="Latency (ms)">{(id) => <input id={id} className="ctl mono" type="number" min={20} max={8000} value={draft.latency} onChange={(e) => setDraft({ ...draft, latency: e.target.value })} />}</Prop>
+              <Prop label="Passphrase" hint={(p.passphrase as { set?: boolean })?.set ? 'Set. Type a new one to replace it.' : 'Optional, stored encrypted.'}>
+                {(id) => <input id={id} className="ctl" type="password" value={draft.passphrase} onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} />}
+              </Prop>
             </>
           )}
-          <Prop label="Latency (ms)">{(id) => <input id={id} className="ctl mono" type="number" min={20} max={8000} value={draft.latency} onChange={(e) => setDraft({ ...draft, latency: e.target.value })} />}</Prop>
-          <Prop label="Passphrase" hint={(p.passphrase as { set?: boolean })?.set ? 'Set. Type a new one to replace it.' : 'Optional, stored encrypted.'}>
-            {(id) => <input id={id} className="ctl" type="password" value={draft.passphrase} onChange={(e) => setDraft({ ...draft, passphrase: e.target.value })} />}
-          </Prop>
+          {kind === 'ndi' && (
+            <Prop label="NDI source">
+              {(id) => (
+                <div className="row-btns">
+                  <select id={id} className="ctl" value={ndiSource} onChange={(e) => setNdiSource(e.target.value)}>
+                    <option value="">Choose a source…</option>
+                    {ndiSources.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn" onClick={refreshNdi}>
+                    Refresh
+                  </button>
+                </div>
+              )}
+            </Prop>
+          )}
+          {kind === 'uvc' && (
+            <Prop label="Device" hint="USB and built-in cameras are video only, no audio.">
+              {(id) => (
+                <div className="row-btns">
+                  <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>
+                    <option value="">Choose a device…</option>
+                    {devices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="btn" onClick={refreshDevices}>
+                    Refresh
+                  </button>
+                </div>
+              )}
+            </Prop>
+          )}
+          {kind !== 'srt' && kind !== 'ndi' && kind !== 'uvc' && <p className="note">This input kind is not editable here.</p>}
           {stats && (
             <Prop label="Receiving">
               {() => (
