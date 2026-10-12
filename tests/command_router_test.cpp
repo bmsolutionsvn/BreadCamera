@@ -213,7 +213,7 @@ TEST_CASE("CommandRouter: setStage merges, normalizes and validates") {
   auto bad = call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"choke", 50}}}}}});
   CHECK(bad["error"]["code"] == "invalid");
   CHECK(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", "nope"}, {"stage", "matte"}, {"params", json::object()}}}})["error"]["code"] == "not-found");
-  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 2);
+  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 3);
 }
 
 TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {

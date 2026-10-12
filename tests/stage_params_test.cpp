@@ -41,7 +41,24 @@ TEST_CASE("stage schemas: pipeline order, labels, add-in metadata, enabled first
   auto& mode = j["fields"][1];
   CHECK(mode["key"] == "mode");
   CHECK(mode["options"].size() == mode["optionLabels"].size());
-  REQUIRE(bc::stageSchemas().size() == 2);
-  CHECK(bc::stageSchemas()[0].kind == "matte");  // pipeline order (M3 puts color first)
+  REQUIRE(bc::stageSchemas().size() == 3);
+  CHECK(bc::stageSchemas()[0].kind == "color");  // pipeline order: colour runs first
+  CHECK(bc::stageSchemas()[1].kind == "matte");
   for (auto& s : bc::stageSchemas()) CHECK(s.fields.front().key == "enabled");
+}
+
+TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
+  auto c = bc::normalizeStageParams("color", nlohmann::json::object());
+  CHECK(c["enabled"] == false);
+  CHECK(c["gamma"] == 1);
+  CHECK(c["lut"] == "");
+  CHECK(bc::stageSchemas().front().kind == "color");
+  auto j = bc::schemaToJson(*bc::findStageSchema("color"));
+  bool lutHidden = false;
+  for (auto& f : j["fields"]) if (f["key"] == "lut") lutHidden = f.value("hidden", false);
+  CHECK(lutHidden);
+  CHECK(j["icon"] == "color");
+  CHECK(j["onAdd"]["enabled"] == true);
+  for (auto& f : j["fields"]) if (f["key"] != "enabled") CHECK(f.value("hidden", false));  // the UI shows only the switch
+  CHECK_THROWS_AS(bc::normalizeStageParams("color", {{"exposure", 4}}), std::invalid_argument);
 }

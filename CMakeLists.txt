@@ -84,6 +84,8 @@ bc_shader(fullscreen_ps ps_5_0)
 foreach(s alpha_threshold alpha_morph alpha_blur bg_downsample bg_blur bg_composite)
   bc_shader(${s} cs_5_0)
 endforeach()
+# M3 Task 3
+bc_shader(color_grade cs_5_0)
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
@@ -91,6 +93,8 @@ add_library(bc_gpu STATIC
   src/gpu/converter.cpp
   src/gpu/image_io.cpp
   src/gpu/compositor.cpp
+  # M3 Task 3
+  src/gpu/color_grader.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
@@ -209,6 +213,8 @@ add_executable(bc_tests
   # M3 Task 2
   tests/chart_test.cpp
   tests/calibration_test.cpp
+  # M3 Task 3
+  tests/color_grader_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

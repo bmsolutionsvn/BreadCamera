@@ -15,6 +15,7 @@ struct StageField {
   std::vector<std::string> optionLabels;
   nlohmann::json def;
   std::string label;
+  bool hidden = false;  // kept in the schema (calibration writes it) but not shown in the UI
 };
 
 // spec §5.4: every stage has a parameter schema; the UI builds its group from it and

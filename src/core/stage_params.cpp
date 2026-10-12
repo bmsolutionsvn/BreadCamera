@@ -42,6 +42,30 @@ StageField simple(std::string key, std::string type, json def, std::string label
 }
 
 std::vector<StageSchema> build() {
+  StageSchema color{"color", "Colour",
+                    "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.",
+                    "color", {}, json{{"enabled", true}}, {}};
+  auto hide = [](StageField f) {
+    f.hidden = true;
+    return f;
+  };
+  color.fields = {
+      simple("enabled", "bool", false, "On"),
+      hide(number("exposure", -3, 3, 0.05, 0, "Exposure (EV)")),
+      hide(number("temperature", -100, 100, 1, 0, "Temperature")),
+      hide(number("tint", -100, 100, 1, 0, "Tint")),
+      hide(number("lift", -0.2, 0.2, 0.005, 0, "Lift")),
+      hide(number("gamma", 0.5, 2, 0.01, 1, "Gamma")),
+      hide(number("gain", 0.5, 2, 0.01, 1, "Gain")),
+      hide(number("saturation", 0, 2, 0.01, 1, "Saturation")),
+      hide(simple("lut", "path", "", "LUT")),
+      hide(simple("previousLut", "path", "", "Previous LUT")),
+      hide(enumeration("chart", {"card", "tablet"}, {"Printed card", "Tablet"}, "card", "Chart")),
+      hide(number("deltaE", 0, 100, 0.01, 0, "Colour error after")),
+      hide(number("deltaEBefore", 0, 100, 0.01, 0, "Colour error before")),
+      hide(number("calibratedAt", 0, 4102444800.0, 1, 0, "Calibrated at")),
+      hide(simple("reference", "bool", false, "Tablet reference")),
+  };
   StageSchema matte{"matte", "Background removal",
                     "AI person cut-out without a green screen (NVIDIA Maxine, or ONNX on other GPUs).", "matte", {},
                     json{{"enabled", true}}, {}};
@@ -63,7 +87,7 @@ std::vector<StageSchema> build() {
       simple("color", "color", "#101418", "Colour"),
       simple("image", "path", "", "Image"),
   };
-  return {matte, background};
+  return {color, matte, background};
 }
 
 json checkField(const StageField& f, const json& v) {
@@ -122,6 +146,7 @@ json schemaToJson(const StageSchema& s) {
       j["options"] = f.options;
       j["optionLabels"] = f.optionLabels;
     }
+    if (f.hidden) j["hidden"] = true;
     fields.push_back(j);
   }
   return {{"kind", s.kind},     {"label", s.label},       {"description", s.description}, {"icon", s.icon},
