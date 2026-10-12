@@ -4,6 +4,7 @@
 #include <mutex>
 #include <set>
 
+#include "engine/chart_detector.h"
 #include "engine/preview_encoder.h"
 #include "gpu/device.h"
 
@@ -41,6 +42,9 @@ bool check(Req r, const char*& reason) {
         return true;
       }
     }
+    case Req::ChartDetect:
+      reason = "chart detection is not in this build (OpenCV mcc missing)";
+      return !bc::chartDetectionAvailable();
   }
   return true;
 }

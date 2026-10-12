@@ -31,6 +31,16 @@ if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
 endif()
 message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
 
+# M3 Task 5 — optional chart detection (OpenCV mcc)
+find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
+if(OpenCV_FOUND)
+  set(BC_WITH_CHART_DETECT ON)
+else()
+  set(BC_WITH_CHART_DETECT OFF)
+  message(STATUS "Chart detection OFF: OpenCV with the mcc module not found (manual corners still work)")
+endif()
+message(STATUS "BC_WITH_CHART_DETECT=${BC_WITH_CHART_DETECT}")
+
 # ---- core (no GPU) ----
 add_library(bc_core STATIC
   src/core/rate.cpp
@@ -145,6 +155,8 @@ add_library(bc_engine STATIC
   src/engine/control_server.cpp
   # M2 Task 4
   src/engine/matte.cpp
+  # M3 Task 5
+  src/engine/chart_detector.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
@@ -156,6 +168,11 @@ if(BC_WITH_MAXINE)
   target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=1 BC_MAXINE_ROOT="${MAXINE_ROOT}")
 else()
   target_compile_definitions(bc_engine PUBLIC BC_WITH_MAXINE=0)
+endif()
+
+target_compile_definitions(bc_engine PUBLIC BC_WITH_CHART_DETECT=$<BOOL:${BC_WITH_CHART_DETECT}>)
+if(BC_WITH_CHART_DETECT)
+  target_link_libraries(bc_engine PUBLIC opencv_core opencv_imgproc opencv_mcc)
 endif()
 
 # ---- tests ----
@@ -217,6 +234,8 @@ add_executable(bc_tests
   tests/color_grader_test.cpp
   # M3 Task 4
   tests/engine_color_test.cpp
+  # M3 Task 5
+  tests/chart_detector_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

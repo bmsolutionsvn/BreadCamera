@@ -19,7 +19,12 @@
     "nlohmann-json",
     "doctest",
     "webview2",
-    "wil"
+    "wil",
+    {
+      "name": "opencv4",
+      "default-features": false,
+      "features": ["contrib", "dnn"]
+    }
   ],
   "builtin-baseline": "2750401336fb7c95f6619657a46a7e798661341c"
 }
