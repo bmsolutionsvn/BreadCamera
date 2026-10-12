@@ -26,8 +26,11 @@ void ensureMf() {
 }
 
 struct ComInit {
-  ComInit() { CoInitializeEx(nullptr, COINIT_MULTITHREADED); }
-  ~ComInit() { CoUninitialize(); }
+  ComInit() : hr_(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {}
+  ~ComInit() {
+    if (SUCCEEDED(hr_)) CoUninitialize();
+  }
+  HRESULT hr_;
 };
 
 std::vector<ComPtr<IMFActivate>> enumerate() {
@@ -160,8 +163,6 @@ void MfCaptureInput::run() {
   ensureMf();
   ComInit com;
   Backoff backoff;
-  std::mutex m;
-  std::condition_variable cv;
   while (!stopping_) {
     sink_->onState(SignalState::Connecting, std::nullopt);
     try {
@@ -172,8 +173,10 @@ void MfCaptureInput::run() {
       if (stopping_) break;
       sink_->onState(SignalState::Offline, ErrorInfo{"capture-failed", device_ + ": " + e.what()});
     }
-    std::unique_lock l(m);
-    cv.wait_for(l, backoff.next(), [&] { return stopping_.load(); });
+    // Wait on the callback's condition variable so stop() (cb_->stop()) wakes this too, not
+    // just the frame wait — otherwise stop() could block for the whole backoff interval.
+    std::unique_lock l(cb_->m);
+    cb_->cv.wait_for(l, backoff.next(), [&] { return stopping_.load(); });
   }
   sink_->onState(SignalState::Offline, std::nullopt);
 }
@@ -196,7 +199,6 @@ void MfCaptureInput::runOnce() {
   ComPtr<IMFAttributes> ra;
   MFCreateAttributes(&ra, 2);
   ra->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);
-  ra->SetUINT32(MF_SOURCE_READER_ASYNC_CALLBACK, TRUE);
   ra->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, cb_);
   ComPtr<IMFSourceReader> reader;
   if (FAILED(MFCreateSourceReaderFromMediaSource(source.Get(), ra.Get(), &reader))) throw std::runtime_error("cannot create a source reader");
@@ -223,12 +225,12 @@ void MfCaptureInput::runOnce() {
   if (!best) throw std::runtime_error("the device offers no video mode");
   reader->SetCurrentMediaType(kVideo, nullptr, best.Get());
   ComPtr<IMFMediaType> rgb;
-  MFCreateMediaType(&rgb);
+  if (FAILED(MFCreateMediaType(&rgb))) throw std::runtime_error("cannot build the RGB media type");
   rgb->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
   rgb->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
   if (FAILED(reader->SetCurrentMediaType(kVideo, nullptr, rgb.Get()))) throw std::runtime_error("cannot convert the device format to RGB");
   ComPtr<IMFMediaType> actual;
-  reader->GetCurrentMediaType(kVideo, &actual);
+  if (FAILED(reader->GetCurrentMediaType(kVideo, &actual))) throw std::runtime_error("cannot read the device media type");
   UINT32 w = 0, h = 0;
   MFGetAttributeSize(actual.Get(), MF_MT_FRAME_SIZE, &w, &h);
   LONG stride = static_cast<LONG>(w * 4);
@@ -264,7 +266,10 @@ void MfCaptureInput::runOnce() {
     ComPtr<IMFSample> sample;
     sample.Attach(raw);
     ComPtr<IMFMediaBuffer> buf;
-    sample->ConvertToContiguousBuffer(&buf);
+    if (FAILED(sample->ConvertToContiguousBuffer(&buf))) {
+      if (!stopping_) reader->ReadSample(kVideo, 0, nullptr, nullptr, nullptr, nullptr);
+      continue;
+    }
     BYTE* data = nullptr;
     DWORD len = 0;
     if (FAILED(buf->Lock(&data, nullptr, &len))) {

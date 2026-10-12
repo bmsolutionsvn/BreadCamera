@@ -18,13 +18,19 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
   if (cfg.kind == "srt") return std::make_unique<FfmpegInput>(gpu_, pool_, srtOptionsFromParams(cfg.params));
   if (cfg.kind == "ndi") {
 #if BC_WITH_NDI
-    return std::make_unique<NdiInput>(gpu_, pool_, cfg.params.at("source").get<std::string>());
+    // showFromJson does not run validateInput, so a hand-edited show file must be guarded
+    // here too (same rule as the NDI output below).
+    if (!cfg.params.contains("source") || !cfg.params["source"].is_string())
+      throw std::invalid_argument("NDI source is required");
+    return std::make_unique<NdiInput>(gpu_, pool_, cfg.params["source"].get<std::string>());
 #else
     throw std::invalid_argument("NDI support is not installed in this build");
 #endif
   }
   if (cfg.kind == "uvc") {
-    return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params.at("device").get<std::string>(), cfg.params.value("width", 0),
+    if (!cfg.params.contains("device") || !cfg.params["device"].is_string())
+      throw std::invalid_argument("device is required");
+    return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params["device"].get<std::string>(), cfg.params.value("width", 0),
                                             cfg.params.value("height", 0), cfg.params.value("fps", 0));
   }
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");
