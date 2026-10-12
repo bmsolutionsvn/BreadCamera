@@ -122,11 +122,14 @@ add_library(bc_io STATIC
   # M4a Task 1
   src/io/h264_encoder.cpp
   src/io/srt_output.cpp
+  # M4a Task 4
+  src/io/mf_capture_input.cpp
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
 target_link_libraries(bc_io PUBLIC user32)
+target_link_libraries(bc_io PUBLIC mf mfplat mfreadwrite mfuuid ole32)
 
 if(BC_WITH_NDI)
   # M4a Task 2
@@ -214,6 +217,8 @@ add_executable(bc_tests
   tests/ndi_output_test.cpp
   # M4a Task 2
   tests/ndi_input_test.cpp
+  # M4a Task 4
+  tests/mf_capture_test.cpp
   # Task 2..14 test files
   # Task 9
   tests/engine_test.cpp

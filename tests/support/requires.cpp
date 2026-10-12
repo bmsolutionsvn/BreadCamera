@@ -7,6 +7,7 @@
 #include "engine/chart_detector.h"
 #include "engine/preview_encoder.h"
 #include "gpu/device.h"
+#include "io/mf_capture_input.h"
 
 namespace bc::test {
 namespace {
@@ -45,6 +46,9 @@ bool check(Req r, const char*& reason) {
     case Req::ChartDetect:
       reason = "chart detection is not in this build (OpenCV mcc missing)";
       return !bc::chartDetectionAvailable();
+    case Req::CaptureDevice:
+      reason = "no USB/UVC capture device on this PC";
+      return bc::listCaptureDevices().empty();
   }
   return true;
 }
