@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(BreadCamera LANGUAGES CXX)
+project(BreadCamera LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,15 @@ if(BC_WITH_NDI AND NOT NDI_FOUND)
   set(BC_WITH_NDI OFF)
 endif()
 message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")
+
+# M4b Task 1 — optional DeckLink SDI/HDMI adapters (spec §7.2).
+find_package(DeckLink)
+option(BC_WITH_DECKLINK "Build the DeckLink SDI/HDMI adapters" ${DeckLink_FOUND})
+if(BC_WITH_DECKLINK AND NOT DeckLink_FOUND)
+  message(WARNING "BC_WITH_DECKLINK=ON but the DeckLink SDK was not found; turning it off")
+  set(BC_WITH_DECKLINK OFF)
+endif()
+message(STATUS "BC_WITH_DECKLINK=${BC_WITH_DECKLINK}")
 
 # Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
 # scripts/build-libomt.ps1 once so third_party/libomt is populated.
@@ -126,6 +135,8 @@ target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
 add_library(bc_io STATIC
   src/io/srt_params.cpp
   src/io/ffmpeg_input.cpp
+  # M4b Task 1 (always built)
+  src/io/uyvy.cpp
   # Task 7
   src/io/queued_output.cpp
   src/io/monitors.cpp
@@ -158,6 +169,24 @@ if(BC_WITH_OMT)
   target_compile_definitions(bc_io PUBLIC BC_WITH_OMT=1)
 else()
   target_compile_definitions(bc_io PUBLIC BC_WITH_OMT=0)
+endif()
+
+# M4b Task 1 — DeckLink. The SDK ships an IDL (no import library), so MIDL compiles
+# DeckLinkAPI.idl into DeckLinkAPI_h.h + DeckLinkAPI_i.c, which the adapters use through
+# CoCreateInstance.
+if(BC_WITH_DECKLINK)
+  set(_dlgen ${CMAKE_BINARY_DIR}/decklink)
+  file(MAKE_DIRECTORY ${_dlgen})
+  get_filename_component(_dlinc ${DECKLINK_IDL} DIRECTORY)
+  add_custom_command(
+    OUTPUT ${_dlgen}/DeckLinkAPI_h.h ${_dlgen}/DeckLinkAPI_i.c
+    COMMAND midl /nologo /env x64 /I ${_dlinc} /h DeckLinkAPI_h.h /iid DeckLinkAPI_i.c /out ${_dlgen} ${DECKLINK_IDL}
+    DEPENDS ${DECKLINK_IDL} VERBATIM)
+  target_sources(bc_io PRIVATE ${_dlgen}/DeckLinkAPI_i.c src/io/decklink.cpp src/io/decklink_input.cpp src/io/decklink_output.cpp)
+  target_include_directories(bc_io PUBLIC ${_dlgen})
+  target_compile_definitions(bc_io PUBLIC BC_WITH_DECKLINK=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_DECKLINK=0)
 endif()
 
 # Copies runtime DLLs that vcpkg does not manage (NDI) next to an executable.
@@ -286,6 +315,9 @@ add_executable(bc_tests
   tests/omt_build_test.cpp
   # M4c Task 3
   tests/omt_output_test.cpp
+  # M4b Task 1
+  tests/uyvy_test.cpp
+  tests/decklink_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

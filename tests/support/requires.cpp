@@ -7,6 +7,7 @@
 #include "engine/chart_detector.h"
 #include "engine/preview_encoder.h"
 #include "gpu/device.h"
+#include "io/decklink.h"
 #include "io/mf_capture_input.h"
 
 namespace bc::test {
@@ -52,6 +53,13 @@ bool check(Req r, const char*& reason) {
     case Req::Omt:
       reason = "OMT-HX checkout not built (BC_WITH_OMT=OFF)";
       return BC_WITH_OMT == 0;
+    case Req::DeckLink:
+      reason = "no DeckLink SDK or card";
+#if BC_WITH_DECKLINK
+      return bc::listDeckLinkDevices().empty();
+#else
+      return true;
+#endif
   }
   return true;
 }
