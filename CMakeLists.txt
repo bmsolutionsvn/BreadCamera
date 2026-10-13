@@ -23,6 +23,18 @@ if(BC_WITH_NDI AND NOT NDI_FOUND)
 endif()
 message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")
 
+# Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
+# scripts/build-libomt.ps1 once so third_party/libomt is populated.
+set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
+if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/third_party/libomt/libomt.lib")
+  add_subdirectory("${OMTHX_ROOT}" omthx-build)
+  set(BC_WITH_OMT ON)
+else()
+  set(BC_WITH_OMT OFF)
+  message(STATUS "OMT output OFF: no built OMT-HX checkout at ${OMTHX_ROOT} (run its scripts/build-libomt.ps1)")
+endif()
+message(STATUS "BC_WITH_OMT=${BC_WITH_OMT}")
+
 find_package(Maxine)
 option(BC_WITH_MAXINE "Build the Maxine matte backend" ${Maxine_FOUND})
 if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
@@ -140,11 +152,24 @@ else()
   target_compile_definitions(bc_io PUBLIC BC_WITH_NDI=0)
 endif()
 
+if(BC_WITH_OMT)
+  target_sources(bc_io PRIVATE src/io/omt_output.cpp)
+  target_link_libraries(bc_io PUBLIC omthx)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_OMT=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_OMT=0)
+endif()
+
 # Copies runtime DLLs that vcpkg does not manage (NDI) next to an executable.
 function(bc_copy_runtime target)
   if(BC_WITH_NDI)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NDI_DLL}" "$<TARGET_FILE_DIR:${target}>")
+  endif()
+  if(BC_WITH_OMT)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${OMTHX_LIBOMT_DIR}/libomt.dll" "${OMTHX_LIBOMT_DIR}/libvmx.dll" "$<TARGET_FILE_DIR:${target}>")
   endif()
 endfunction()
 
@@ -257,6 +282,8 @@ add_executable(bc_tests
   tests/e2e_m3_test.cpp
   # M4a Task 6
   tests/e2e_m4a_test.cpp
+  # M4c Task 1
+  tests/omt_build_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

@@ -49,6 +49,9 @@ bool check(Req r, const char*& reason) {
     case Req::CaptureDevice:
       reason = "no USB/UVC capture device on this PC";
       return bc::listCaptureDevices().empty();
+    case Req::Omt:
+      reason = "OMT-HX checkout not built (BC_WITH_OMT=OFF)";
+      return BC_WITH_OMT == 0;
   }
   return true;
 }
