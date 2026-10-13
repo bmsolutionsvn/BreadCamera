@@ -149,6 +149,19 @@ void validateOutput(const OutputConfig& o) {
     srtOutputOptionsFromParams(o.params);
     return;
   }
+  if (o.kind == "omt") {
+    if (o.params.contains("mode")) {
+      if (!o.params["mode"].is_string()) throw std::invalid_argument("OMT mode must be text");
+      const auto m = o.params["mode"].get<std::string>();
+      if (m != "hx" && m != "full") throw std::invalid_argument("OMT mode must be 'hx' or 'full'");
+    }
+    if (o.params.contains("name")) {
+      if (!o.params["name"].is_string()) throw std::invalid_argument("OMT name must be text");
+      const auto n = o.params["name"].get<std::string>();
+      if (n.empty() || utf8Length(n) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
+    }
+    return;
+  }
   throw std::invalid_argument("unknown output kind '" + o.kind + "'");
 }
 

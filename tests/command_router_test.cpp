@@ -283,3 +283,16 @@ TEST_CASE("CommandRouter: new input and output kinds are validated") {
   CHECK(call(r, {{"cmd", "listNdiSources"}})["result"][0] == "STUDIO (vMix - Output 1)");
   CHECK(call(r, {{"cmd", "listCaptureDevices"}})["result"][0]["name"] == "Cam Link 4K");
 }
+
+TEST_CASE("output kind omt validates its params") {
+  using nlohmann::json;
+  CHECK_NOTHROW(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt"}));
+  CHECK_NOTHROW(bc::validateOutput(
+      bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"name", "Cam"}}}));
+  CHECK_THROWS_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "fast"}}}),
+      std::invalid_argument);
+  CHECK_THROWS_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"name", 5}}}),
+      std::invalid_argument);
+}

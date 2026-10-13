@@ -287,3 +287,27 @@ TEST_CASE("Factory: a non-string NDI name is rejected with the router's message"
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be text", std::invalid_argument);
   CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "NDI name must be text", std::invalid_argument);
 }
+
+TEST_CASE("Factory: an omt output is built from its mode and name") {
+  Rig r;
+  bc::DefaultAdapterFactory factory(*r.gpu, r.pool);
+  bc::CameraConfig c;
+  c.id = "a";
+  c.name = "Cam a";
+  bc::OutputConfig o;
+  o.id = "omt1";
+  o.kind = "omt";
+  o.params = {{"mode", "full"}, {"name", "Stage"}};
+#if BC_WITH_OMT
+  CHECK(factory.makeOutput(o, c) != nullptr);
+  o.params["name"] = 7;  // hand-edited show file: name is not text
+  CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT name must be text", std::invalid_argument);
+  o.params["name"] = "Stage";
+  o.params["mode"] = 5;  // hand-edited show file: mode is not text
+  CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT mode must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT mode must be text", std::invalid_argument);
+#else
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT support is not built (BC_WITH_OMT=OFF)", std::invalid_argument);
+#endif
+}

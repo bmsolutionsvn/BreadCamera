@@ -12,6 +12,10 @@
 #include "io/ndi_input.h"
 #include "io/ndi_output.h"
 #endif
+#if BC_WITH_OMT
+#include "io/omt_output.h"
+#include "omthx/omthx.h"
+#endif
 
 namespace bc {
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
@@ -58,6 +62,23 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
     return std::make_unique<FullscreenOutput>(gpu_, cfg.params.value("monitor", 0));
   }
   if (cfg.kind == "srt") return std::make_unique<SrtOutput>(srtOutputOptionsFromParams(cfg.params));
+  if (cfg.kind == "omt") {
+    // Same rule as CommandRouter::validateOutput: a hand-edited show file with a
+    // non-string mode or name is rejected here too instead of silently using the default.
+    if (cfg.params.contains("mode") && !cfg.params["mode"].is_string())
+      throw std::invalid_argument("OMT mode must be text");
+    if (cfg.params.contains("name") && !cfg.params["name"].is_string())
+      throw std::invalid_argument("OMT name must be text");
+#if BC_WITH_OMT
+    const std::string mode = cfg.params.value("mode", std::string("hx"));
+    std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
+    if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
+    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx);
+#else
+    (void)cam;
+    throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");
+#endif
+  }
   throw std::invalid_argument("unknown output kind '" + cfg.kind + "'");
 }
 }  // namespace bc
