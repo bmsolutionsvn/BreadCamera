@@ -133,7 +133,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
       </div>
       <div className="insp-b">
         <Section title="Input" right={<span className="ro">{health}</span>}>
-          {cs?.input?.error && <ErrorBlock title="Input failed." message={cs.input.error.message} />}
+          {cs?.input?.error && <ErrorBlock error={cs.input.error} />}
           {cs?.tickError && <ErrorBlock title="Processing failed." message={cs.tickError} />}
           {error && <ErrorBlock message={error} />}
           {kind === 'srt' && (
@@ -225,7 +225,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
             </button>
           }
         >
-          {cam.outputs.map((o) => cs?.outputs?.[o.id]?.error && <ErrorBlock key={`e-${o.id}`} title={`${outputName(o.kind)} failed.`} message={cs!.outputs![o.id].error!.message} />)}
+          {cam.outputs.map((o) => cs?.outputs?.[o.id]?.error && <ErrorBlock key={`e-${o.id}`} error={cs!.outputs![o.id].error!} />)}
           {cam.outputs.length === 0 && <p className="note">No outputs yet. Add one to send this camera on.</p>}
           {cam.outputs.map((o) => {
             const os = cs?.outputs?.[o.id];

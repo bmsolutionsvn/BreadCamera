@@ -101,7 +101,7 @@ export function Effects({ client, snap, cam, n, schemas, onAdd, calib }: {
               </span>
             </div>
             <div className="group-b">
-              {st?.error && <ErrorBlock title={`${s.label} bypassed.`} message={st.error.message} />}
+              {st?.error && <ErrorBlock error={st.error} />}
               {errors[s.kind] && <ErrorBlock message={errors[s.kind]} />}
               {missing.length > 0 && <p className="note">Needs {missing.map(labelOf).join(', ')}, which is not on this camera.</p>}
               {s.kind === 'color' && <ColourPanel client={client} cam={cam} n={n} calib={calib} />}
