@@ -8,7 +8,20 @@ import { Prop } from '../components/Prop';
 
 const chars = (s: string) => [...s].length;
 
-type Kind = 'srt' | 'ndi' | 'uvc';
+type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja';
+
+interface DeckLinkDevice {
+  index: number;
+  name: string;
+  hasInput: boolean;
+  hasOutput: boolean;
+  externalKeying: boolean;
+}
+
+interface AjaDevice {
+  index: number;
+  name: string;
+}
 
 export function AddCameraDialog({ client, onClose }: { client: EngineClient; onClose: () => void }) {
   const [name, setName] = useState('');
@@ -24,14 +37,24 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const [ndiSource, setNdiSource] = useState('');
   const [devices, setDevices] = useState<{ name: string; id: string }[]>([]);
   const [device, setDevice] = useState('');
+  const [decklinkDevices, setDecklinkDevices] = useState<DeckLinkDevice[]>([]);
+  const [decklinkDevice, setDecklinkDevice] = useState('');
+  const [ajaDevices, setAjaDevices] = useState<AjaDevice[]>([]);
+  const [ajaDevice, setAjaDevice] = useState('');
+  const [ajaChannel, setAjaChannel] = useState(1);
   const [serverError, setServerError] = useState('');
 
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
   const refreshDevices = () =>
     client.request<{ name: string; id: string }[]>('listCaptureDevices').then(setDevices).catch(() => setDevices([]));
+  const refreshDeckLink = () =>
+    client.request<DeckLinkDevice[]>('listDeckLinkDevices').then(setDecklinkDevices).catch(() => setDecklinkDevices([]));
+  const refreshAja = () => client.request<AjaDevice[]>('listAjaDevices').then(setAjaDevices).catch(() => setAjaDevices([]));
   useEffect(() => {
     if (kind === 'ndi') refreshNdi();
     if (kind === 'uvc') refreshDevices();
+    if (kind === 'decklink') refreshDeckLink();
+    if (kind === 'aja') refreshAja();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
@@ -43,6 +66,8 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
     host: kind === 'srt' && mode === 'caller' && !url && !host ? 'Caller mode needs a host or a URL' : '',
     ndi: kind === 'ndi' && !ndiSource ? 'Choose an NDI source' : '',
     device: kind === 'uvc' && !device ? 'Choose a device' : '',
+    decklinkDevice: kind === 'decklink' && !decklinkDevice ? 'Choose a card' : '',
+    aja: kind === 'aja' && !ajaDevice ? 'Choose a card' : '',
   };
   const valid = Object.values(errors).every((e) => !e);
 
@@ -64,7 +89,11 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
         ? { kind: 'ndi', params: { source: ndiSource } }
         : kind === 'uvc'
           ? { kind: 'uvc', params: { device } }
-          : { kind: 'srt', params: srtParams() };
+          : kind === 'decklink'
+            ? { kind: 'decklink', params: { device: Number(decklinkDevice) } }
+            : kind === 'aja'
+              ? { kind: 'aja', params: { device: Number(ajaDevice), channel: ajaChannel } }
+              : { kind: 'srt', params: srtParams() };
     try {
       await client.request('addCamera', { name: name.trim(), input });
       onClose();
@@ -99,6 +128,8 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             <option value="srt">SRT (BreadCall feeds, encoders)</option>
             <option value="ndi">NDI</option>
             <option value="uvc">USB or built-in camera</option>
+            <option value="decklink">DeckLink (SDI/HDMI)</option>
+            <option value="aja">AJA (experimental)</option>
           </select>
         )}
       </Prop>
@@ -139,6 +170,60 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             </div>
           )}
         </Prop>
+      )}
+      {kind === 'decklink' && (
+        <Prop label="Card" hint={errors.decklinkDevice}>
+          {(id) => (
+            <div className="row-btns">
+              <select id={id} className="ctl" value={decklinkDevice} onChange={(e) => setDecklinkDevice(e.target.value)}>
+                <option value="">Choose a card…</option>
+                {decklinkDevices
+                  .filter((d) => d.hasInput)
+                  .map((d) => (
+                    <option key={d.index} value={String(d.index)}>
+                      {d.index + 1}. {d.name}
+                    </option>
+                  ))}
+              </select>
+              <button className="btn" onClick={refreshDeckLink}>
+                Refresh
+              </button>
+            </div>
+          )}
+        </Prop>
+      )}
+      {kind === 'aja' && (
+        <>
+          <Prop label="Card" hint={errors.aja}>
+            {(id) => (
+              <div className="row-btns">
+                <select id={id} className="ctl" value={ajaDevice} onChange={(e) => setAjaDevice(e.target.value)}>
+                  <option value="">Choose a card…</option>
+                  {ajaDevices.map((d) => (
+                    <option key={d.index} value={String(d.index)}>
+                      {d.index + 1}. {d.name}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn" onClick={refreshAja}>
+                  Refresh
+                </button>
+              </div>
+            )}
+          </Prop>
+          <Prop label="Channel">
+            {(id) => (
+              <select id={id} className="ctl" value={ajaChannel} onChange={(e) => setAjaChannel(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Prop>
+          <ErrorBlock severity="warning" message="Experimental — not verified on hardware" />
+        </>
       )}
       {kind === 'srt' && (
         <>

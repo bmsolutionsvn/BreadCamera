@@ -19,6 +19,10 @@ struct FakeFx : bc::CommandRouter::Effects {
   json listMonitors() override { return json::array({{{"index", 0}}}); }
   json listNdiSources() override { return json::array({"STUDIO (vMix - Output 1)"}); }
   json listCaptureDevices() override { return json::array({{{"name", "Cam Link 4K"}, {"id", "\\\\?\\usb#vid_0fd9"}}}); }
+  json listDeckLinkDevices() override {
+    return json::array({{{"index", 0}, {"name", "DeckLink Quad HDMI"}, {"hasInput", true}, {"hasOutput", true}, {"externalKeying", true}}});
+  }
+  json listAjaDevices() override { return json::array({{{"index", 0}, {"name", "Corvid 44"}}}); }
   std::string lastChart;
   std::vector<std::string> forgotten;
   json findChart(const std::string&) override { return {{"available", false}, {"found", false}}; }
@@ -140,6 +144,8 @@ struct RecFx : bc::CommandRouter::Effects {
   json listMonitors() override { return json::array(); }
   json listNdiSources() override { return json::array(); }
   json listCaptureDevices() override { return json::array(); }
+  json listDeckLinkDevices() override { return json::array(); }
+  json listAjaDevices() override { return json::array(); }
   json findChart(const std::string&) override { return json::object(); }
   json calibrateColor(const std::string&, const std::string&, const bc::ChartQuad&) override { return json::object(); }
   void forgetColor(const std::string&) override {}
@@ -282,6 +288,33 @@ TEST_CASE("CommandRouter: new input and output kinds are validated") {
   CHECK(addOut({{"kind", "srt"}, {"params", {{"mode", "listener"}, {"port", 9200}, {"bitrateKbps", 999999}}}})["error"]["code"] == "invalid");
   CHECK(call(r, {{"cmd", "listNdiSources"}})["result"][0] == "STUDIO (vMix - Output 1)");
   CHECK(call(r, {{"cmd", "listCaptureDevices"}})["result"][0]["name"] == "Cam Link 4K");
+}
+
+TEST_CASE("CommandRouter: card and virtual camera kinds") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto addCam = [&](json input) { return call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", input}}}}); };
+  CHECK(addCam({{"kind", "decklink"}, {"params", {{"device", 0}}}})["ok"] == true);
+  CHECK(addCam({{"kind", "aja"}, {"params", {{"device", 0}, {"channel", 9}}}})["error"]["code"] == "invalid");
+  auto a = addCam({{"kind", "aja"}, {"params", {{"device", 0}, {"channel", 1}}}})["result"]["id"];
+  auto b = addCam(kSrt)["result"]["id"];
+  auto out = [&](json cam, json o) { return call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", o}}}}); };
+  CHECK(out(a, {{"kind", "vcam"}, {"params", {{"index", 1}}}})["ok"] == true);
+  auto dup = out(b, {{"kind", "vcam"}, {"params", {{"index", 1}}}});
+  CHECK(dup["error"]["code"] == "invalid");
+  CHECK(dup["error"]["message"].get<std::string>().find("1") != std::string::npos);
+  CHECK(out(b, {{"kind", "vcam"}, {"params", {{"index", 5}}}})["error"]["code"] == "invalid");
+  CHECK(out(b, {{"kind", "decklink"}, {"keyed", true}, {"params", {{"device", 0}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "listDeckLinkDevices"}})["result"].size() == 1);
+  CHECK(call(r, {{"cmd", "listAjaDevices"}})["result"].size() == 1);
+}
+
+TEST_CASE("CommandRouter: SDI and virtual camera outputs refuse a format override") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
+  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(add["error"]["code"] == "invalid");
 }
 
 TEST_CASE("output kind omt validates its params") {

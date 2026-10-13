@@ -81,6 +81,18 @@ void checkOutput(const OutputConfig& o) {
   }
 }
 
+// A show may hold each virtual camera number once, so the second camera that asks for the same
+// one is refused (spec §4.3). Needs the whole show, so it is not part of validateOutput.
+void checkVcamFree(const Show& show, const OutputConfig& o) {
+  if (o.kind != "vcam") return;
+  const int n = o.params["index"].get<int>();
+  for (auto& c : show.cameras)
+    for (auto& other : c.outputs)
+      if (other.id != o.id && other.kind == "vcam" && other.params.value("index", 0) == n) {
+        throw CmdError("invalid", "virtual camera " + std::to_string(n) + " is already used by camera " + c.name);
+      }
+}
+
 PreviewSize sizeArg(const json& args) {
   auto s = parsePreviewSize(args.value("size", std::string("small")));
   if (!s) throw CmdError("invalid", "size must be small or large");
@@ -101,6 +113,12 @@ std::string strParam(const json& p, const char* key, size_t minLen, size_t maxLe
   if (s.size() < minLen || s.size() > maxLen)
     throw std::invalid_argument(std::string(what) + " must be " + std::to_string(minLen) + " to " + std::to_string(maxLen) + " characters");
   return s;
+}
+int intParam(const json& p, const char* key, int lo, int hi, const char* what) {
+  if (!p.contains(key) || !p[key].is_number_integer()) throw std::invalid_argument(std::string(what) + " is required (a whole number)");
+  const int v = p[key].get<int>();
+  if (v < lo || v > hi) throw std::invalid_argument(std::string(what) + " must be " + std::to_string(lo) + " to " + std::to_string(hi));
+  return v;
 }
 void optInt(const json& p, const char* key, int lo, int hi, const char* what) {
   if (!p.contains(key)) return;
@@ -125,6 +143,15 @@ void validateInput(const InputConfig& in) {
     optInt(in.params, "width", 640, 3840, "width");
     optInt(in.params, "height", 360, 2160, "height");
     optInt(in.params, "fps", 15, 60, "fps");
+    return;
+  }
+  if (in.kind == "decklink") {
+    intParam(in.params, "device", 0, 15, "DeckLink card");
+    return;
+  }
+  if (in.kind == "aja") {
+    intParam(in.params, "device", 0, 7, "AJA card");
+    intParam(in.params, "channel", 1, 8, "AJA channel");
     return;
   }
   throw std::invalid_argument("unknown input kind '" + in.kind + "'");
@@ -160,6 +187,23 @@ void validateOutput(const OutputConfig& o) {
       const auto n = o.params["name"].get<std::string>();
       if (n.empty() || utf8Length(n) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
     }
+    return;
+  }
+  if (o.kind == "decklink") {
+    intParam(o.params, "device", 0, 15, "DeckLink card");
+    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    return;
+  }
+  if (o.kind == "aja") {
+    intParam(o.params, "device", 0, 7, "AJA card");
+    intParam(o.params, "channel", 1, 8, "AJA channel");
+    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    return;
+  }
+  if (o.kind == "vcam") {
+    intParam(o.params, "index", 1, 4, "virtual camera number");
+    if (o.params.contains("name")) strParam(o.params, "name", 1, 80, "virtual camera name");
+    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
     return;
   }
   throw std::invalid_argument("unknown output kind '" + o.kind + "'");
@@ -201,6 +245,8 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   if (cmd == "listMonitors") return fx_.listMonitors();
   if (cmd == "listNdiSources") return fx_.listNdiSources();
   if (cmd == "listCaptureDevices") return fx_.listCaptureDevices();
+  if (cmd == "listDeckLinkDevices") return fx_.listDeckLinkDevices();
+  if (cmd == "listAjaDevices") return fx_.listAjaDevices();
   if (cmd == "shutdown") {
     fx_.shutdown();
     return json::object();
@@ -308,6 +354,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     if (!out.params.is_object()) throw CmdError("bad-request", "params must be an object");
     if (o.contains("format")) formatFrom(o["format"], out);
     checkOutput(out);
+    checkVcamFree(next, out);
     c.outputs.push_back(out);
     result = {{"id", out.id}};
   } else if (cmd == "updateOutput") {
@@ -320,6 +367,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     if (args.contains("params")) it->params = obj(args, "params");
     if (args.contains("format")) formatFrom(args["format"], *it);
     checkOutput(*it);
+    checkVcamFree(next, *it);
   } else if (cmd == "removeOutput") {
     auto& c = findCam(str(args, "cameraId"));
     const auto outId = str(args, "id");

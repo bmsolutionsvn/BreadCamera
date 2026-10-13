@@ -24,6 +24,8 @@
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
+#include "io/aja.h"
+#include "io/decklink.h"
 #include "io/mf_capture_input.h"
 #include "io/monitors.h"
 #if BC_WITH_NDI
@@ -146,6 +148,22 @@ int wmain(int argc, wchar_t** argv) {
     json listCaptureDevices() override {
       json out = json::array();
       for (auto& d : bc::listCaptureDevices()) out.push_back({{"name", d.name}, {"id", d.id}});
+      return out;
+    }
+    json listDeckLinkDevices() override {
+      json out = json::array();
+#if BC_WITH_DECKLINK
+      for (auto& d : bc::listDeckLinkDevices()) {
+        out.push_back({{"index", d.index}, {"name", d.name}, {"hasInput", d.hasInput}, {"hasOutput", d.hasOutput}, {"externalKeying", d.externalKeying}});
+      }
+#endif
+      return out;
+    }
+    json listAjaDevices() override {
+      json out = json::array();
+#if BC_WITH_AJA
+      for (auto& d : bc::listAjaDevices()) out.push_back({{"index", d.index}, {"name", d.name}});
+#endif
       return out;
     }
     json findChart(const std::string& id) override { return calib.find(id); }

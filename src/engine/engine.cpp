@@ -54,6 +54,7 @@ void Engine::loadSlate() {
 }
 
 void Engine::apply(const Show& show) {
+  factory_.setShowRate(show.settings.rate);
   std::vector<std::unique_ptr<Camera>> removed;
   {
     std::lock_guard l(mutex_);

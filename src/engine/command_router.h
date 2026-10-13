@@ -30,6 +30,8 @@ class CommandRouter {
     virtual nlohmann::json listMonitors() = 0;
     virtual nlohmann::json listNdiSources() = 0;
     virtual nlohmann::json listCaptureDevices() = 0;
+    virtual nlohmann::json listDeckLinkDevices() = 0;
+    virtual nlohmann::json listAjaDevices() = 0;
     virtual nlohmann::json findChart(const std::string& cameraId) = 0;
     virtual nlohmann::json calibrateColor(const std::string& cameraId, const std::string& chart, const ChartQuad& q) = 0;
     virtual void forgetColor(const std::string& cameraId) = 0;

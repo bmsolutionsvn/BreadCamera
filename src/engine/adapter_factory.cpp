@@ -16,6 +16,17 @@
 #include "io/omt_output.h"
 #include "omthx/omthx.h"
 #endif
+#if BC_WITH_DECKLINK
+#include "io/decklink_input.h"
+#include "io/decklink_output.h"
+#endif
+#if BC_WITH_AJA
+#include "io/aja_input.h"
+#include "io/aja_output.h"
+#endif
+#if BC_WITH_VCAM
+#include "io/vcam_output.h"
+#endif
 
 namespace bc {
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
@@ -36,6 +47,20 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
       throw std::invalid_argument("device is required");
     return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params["device"].get<std::string>(), cfg.params.value("width", 0),
                                             cfg.params.value("height", 0), cfg.params.value("fps", 0));
+  }
+  if (cfg.kind == "decklink") {
+#if BC_WITH_DECKLINK
+    return std::make_unique<DeckLinkInput>(gpu_, pool_, cfg.params.at("device").get<int>());
+#else
+    throw std::invalid_argument("DeckLink support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "aja") {
+#if BC_WITH_AJA
+    return std::make_unique<AjaInput>(gpu_, pool_, cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>());
+#else
+    throw std::invalid_argument("AJA support is not installed in this build");
+#endif
   }
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");
 }
@@ -77,6 +102,28 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
 #else
     (void)cam;
     throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");
+#endif
+  }
+  if (cfg.kind == "decklink") {
+#if BC_WITH_DECKLINK
+    return std::make_unique<DeckLinkOutput>(cfg.params.at("device").get<int>(), rate_, cfg.keyed);
+#else
+    throw std::invalid_argument("DeckLink support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "aja") {
+#if BC_WITH_AJA
+    return std::make_unique<AjaOutput>(cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>(), rate_);
+#else
+    throw std::invalid_argument("AJA support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "vcam") {
+#if BC_WITH_VCAM
+    return std::make_unique<VirtualCameraOutput>(cfg.params.at("index").get<int>(), cfg.params.value("name", "BreadCamera - " + cam.name));
+#else
+    (void)cam;
+    throw std::invalid_argument("the virtual camera is not available in this build");
 #endif
   }
   throw std::invalid_argument("unknown output kind '" + cfg.kind + "'");
