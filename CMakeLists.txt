@@ -32,6 +32,34 @@ if(BC_WITH_DECKLINK AND NOT DeckLink_FOUND)
 endif()
 message(STATUS "BC_WITH_DECKLINK=${BC_WITH_DECKLINK}")
 
+# M4b Task 2 — optional AJA NTV2 SDI adapters (experimental, spec §4.2/§4.3). libajantv2 is
+# fetched from GitHub; a configure time-out/failure behaves like a missing SDK. Default OFF
+# because libajantv2 18.0's own ajabase/common/dpx_hdr.cpp does not compile with the Windows
+# SDK on this machine (VS 2022 + recent Win10/11 SDK):
+
+#   dpx_hdr.cpp(38): error C2556: 'float htonf(float)': overloaded function differs only by
+#   return type from 'unsigned int htonf(float)'
+#   dpx_hdr.cpp(38): error C2371: 'htonf': redefinition; different basic types
+
+# (its `inline float htonf(float)` collides with the SDK's `htonf`). Not caused by our
+# /W4 /permissive- flags — it reproduces with a bare /W3 compile. Pass -DBC_WITH_AJA=ON to
+# try again; the adapters compile cleanly once the library builds.
+option(BC_WITH_AJA "Build the AJA adapters (experimental)" OFF)
+if(BC_WITH_AJA)
+  include(FetchContent)
+  set(AJANTV2_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  foreach(o DEMOS TESTS TOOLS DRIVER PLUGIN_LOAD RDMA)
+    set(AJANTV2_DISABLE_${o} ON CACHE BOOL "" FORCE)
+  endforeach()
+  FetchContent_Declare(libajantv2 GIT_REPOSITORY https://github.com/aja-video/libajantv2.git GIT_TAG ntv2_18_0_0 GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(libajantv2)
+  if(NOT TARGET ajantv2)
+    message(WARNING "libajantv2 did not provide the ajantv2 target; turning AJA off")
+    set(BC_WITH_AJA OFF)
+  endif()
+endif()
+message(STATUS "BC_WITH_AJA=${BC_WITH_AJA}")
+
 # Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
 # scripts/build-libomt.ps1 once so third_party/libomt is populated.
 set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
@@ -189,6 +217,15 @@ else()
   target_compile_definitions(bc_io PUBLIC BC_WITH_DECKLINK=0)
 endif()
 
+# M4b Task 2 — AJA. Fill-only output (spec §4.3 deviation); keying is a follow-up.
+if(BC_WITH_AJA)
+  target_sources(bc_io PRIVATE src/io/aja.cpp src/io/aja_input.cpp src/io/aja_output.cpp)
+  target_link_libraries(bc_io PUBLIC ajantv2)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_AJA=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_AJA=0)
+endif()
+
 # Copies runtime DLLs that vcpkg does not manage (NDI) next to an executable.
 function(bc_copy_runtime target)
   if(BC_WITH_NDI)
@@ -318,6 +355,8 @@ add_executable(bc_tests
   # M4b Task 1
   tests/uyvy_test.cpp
   tests/decklink_test.cpp
+  # M4b Task 2
+  tests/aja_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

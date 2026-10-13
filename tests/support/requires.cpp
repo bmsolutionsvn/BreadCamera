@@ -7,6 +7,7 @@
 #include "engine/chart_detector.h"
 #include "engine/preview_encoder.h"
 #include "gpu/device.h"
+#include "io/aja.h"
 #include "io/decklink.h"
 #include "io/mf_capture_input.h"
 
@@ -57,6 +58,13 @@ bool check(Req r, const char*& reason) {
       reason = "no DeckLink SDK or card";
 #if BC_WITH_DECKLINK
       return bc::listDeckLinkDevices().empty();
+#else
+      return true;
+#endif
+    case Req::Aja:
+      reason = "no AJA SDK or card";
+#if BC_WITH_AJA
+      return bc::listAjaDevices().empty();
 #else
       return true;
 #endif
