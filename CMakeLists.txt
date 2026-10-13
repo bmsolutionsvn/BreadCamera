@@ -60,6 +60,32 @@ if(BC_WITH_AJA)
 endif()
 message(STATUS "BC_WITH_AJA=${BC_WITH_AJA}")
 
+# M4b Task 3 — Windows 11 virtual camera (spec §4.3). The media-source DLL is built from the
+# vendored VCamSample source (vcam/); the engine output registers it with MFCreateVirtualCamera.
+# mfvirtualcamera.h ships in the Windows SDK 10.0.22000+; this machine has the 10.0.26100.0 SDK
+# (mfvirtualcamera.h and the mfsensorgroup.lib import library are both present).
+include(CheckIncludeFileCXX)
+check_include_file_cxx(mfvirtualcamera.h HAVE_MFVCAM)
+option(BC_WITH_VCAM "Build the virtual camera" ${HAVE_MFVCAM})
+if(BC_WITH_VCAM AND NOT HAVE_MFVCAM)
+  message(WARNING "BC_WITH_VCAM=ON but mfvirtualcamera.h was not found; turning it off")
+  set(BC_WITH_VCAM OFF)
+endif()
+# C++/WinRT (winrt/base.h) ships with the Windows SDK; locate it from the SDK's mt.exe path
+# (.../Windows Kits/10/bin/<ver>/x64/mt.exe) so this works with the Ninja generator too.
+if(CMAKE_MT)
+  get_filename_component(_bc_mt_dir "${CMAKE_MT}" DIRECTORY)          # .../bin/<ver>/x64
+  get_filename_component(_bc_mt_ver_dir "${_bc_mt_dir}" DIRECTORY)    # .../bin/<ver>
+  get_filename_component(_bc_sdk_ver "${_bc_mt_ver_dir}" NAME)        # <ver>
+  get_filename_component(_bc_sdk_bin "${_bc_mt_ver_dir}" DIRECTORY)   # .../bin
+  get_filename_component(_bc_sdk_root "${_bc_sdk_bin}" DIRECTORY)     # .../Windows Kits/10
+  set(BC_WINDOWS_SDK_CPPWINRT "${_bc_sdk_root}/Include/${_bc_sdk_ver}/cppwinrt")
+endif()
+message(STATUS "BC_WITH_VCAM=${BC_WITH_VCAM}")
+if(BC_WITH_VCAM)
+  add_subdirectory(vcam)
+endif()
+
 # Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
 # scripts/build-libomt.ps1 once so third_party/libomt is populated.
 set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
@@ -113,10 +139,13 @@ add_library(bc_core STATIC
   # M3 Task 2
   src/core/chart.cpp
   src/core/calibration.cpp
+  # M4b Task 3 (always built)
+  src/core/vcam_shared.cpp
 )
 target_include_directories(bc_core PUBLIC src)
 target_link_libraries(bc_core PUBLIC nlohmann_json::nlohmann_json)
 target_link_libraries(bc_core PUBLIC crypt32)
+target_link_libraries(bc_core PUBLIC advapi32)
 
 # ---- gpu ----
 find_program(FXC fxc REQUIRED)  # Windows SDK; on PATH in the VS developer shell
@@ -224,6 +253,16 @@ if(BC_WITH_AJA)
   target_compile_definitions(bc_io PUBLIC BC_WITH_AJA=1)
 else()
   target_compile_definitions(bc_io PUBLIC BC_WITH_AJA=0)
+endif()
+
+# M4b Task 3 — the Windows 11 virtual-camera output. The import library provides
+# MFCreateVirtualCamera (10.0.26100.0 SDK); missing it would be a link error, not a silent OFF.
+if(BC_WITH_VCAM)
+  target_sources(bc_io PRIVATE src/io/vcam_output.cpp)
+  target_link_libraries(bc_io PUBLIC mfsensorgroup)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_VCAM=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_VCAM=0)
 endif()
 
 # Copies runtime DLLs that vcpkg does not manage (NDI) next to an executable.
@@ -357,6 +396,9 @@ add_executable(bc_tests
   tests/decklink_test.cpp
   # M4b Task 2
   tests/aja_test.cpp
+  # M4b Task 3
+  tests/vcam_shared_test.cpp
+  tests/vcam_output_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

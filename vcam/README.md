@@ -1,0 +1,1 @@
+Vendored from github.com/smourier/VCamSample @ 58b6d4b (MIT). Changes: four CLSIDs, frames from BreadCamera shared memory.

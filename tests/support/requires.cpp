@@ -10,6 +10,7 @@
 #include "io/aja.h"
 #include "io/decklink.h"
 #include "io/mf_capture_input.h"
+#include "io/vcam_output.h"
 
 namespace bc::test {
 namespace {
@@ -65,6 +66,13 @@ bool check(Req r, const char*& reason) {
       reason = "no AJA SDK or card";
 #if BC_WITH_AJA
       return bc::listAjaDevices().empty();
+#else
+      return true;
+#endif
+    case Req::VcamInstalled:
+      reason = "virtual camera not registered (run regsvr32 breadcamera-vcam.dll as admin on Windows 11)";
+#if BC_WITH_VCAM
+      return !bc::VirtualCameraOutput::installed();
 #else
       return true;
 #endif
