@@ -56,7 +56,7 @@
 - Consumes: the OMT-HX checkout at `../OMT-HX` with `third_party/libomt/libomt.lib` present.
 - Produces: CMake option `BC_WITH_OMT` (default on when the OMT-HX checkout has `include/omthx/omthx.h`); the `omthx` target linked into `bc_io`; `libomt.dll` and `libvmx.dll` copied beside an executable by `bc_copy_runtime`; `bc::test::Req::Omt` (missing when `BC_WITH_OMT == 0`).
 
-- [ ] **Step 1: Prerequisite — drop the superseded M4a Task 3, then build libomt once**
+- [x] **Step 1: Prerequisite — drop the superseded M4a Task 3, then build libomt once**
 
 If M4a Task 3 was already implemented, remove its artifacts (this plan replaces it):
 ```powershell
@@ -74,7 +74,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ..\OMT-HX\scripts\build-libo
 ```
 Expected: `..\OMT-HX\third_party\libomt\libomt.lib` exists. If the OMT-HX checkout is missing, stop: this plan needs it (see the OMT-HX README).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Create `tests/omt_build_test.cpp`:
 ```cpp
@@ -98,12 +98,12 @@ TEST_CASE("omthx is linked and discovery runs without a transmitter" BC_REQUIRES
 ```
 Add `tests/omt_build_test.cpp` to the `bc_tests` source list in `CMakeLists.txt`.
 
-- [ ] **Step 3: Run it; expect a build failure**
+- [x] **Step 3: Run it; expect a build failure**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "omthx is linked*"`
 Expected: build FAILS — `BC_WITH_OMT` is undefined, so `#if BC_WITH_OMT` takes the `#else` branch, which names `bc::test::Req::Omt` (added in Step 5, not yet present).
 
-- [ ] **Step 4: Wire the subproject into CMake**
+- [x] **Step 4: Wire the subproject into CMake**
 
 In `CMakeLists.txt`, after the NDI block (after `message(STATUS "BC_WITH_NDI=${BC_WITH_NDI}")`), add:
 ```cmake
@@ -141,7 +141,7 @@ Extend `bc_copy_runtime` (add before its closing `endfunction()`):
 
 Note: Task 3 creates `src/io/omt_output.cpp`. Until then, keep the `target_sources(bc_io PRIVATE src/io/omt_output.cpp)` line but create a placeholder file in Step 5 so the configure does not fail.
 
-- [ ] **Step 5: Create the placeholder source and add the requirement**
+- [x] **Step 5: Create the placeholder source and add the requirement**
 
 Create `src/io/omt_output.cpp` containing only `#if BC_WITH_OMT\n#include "io/omt_output.h"\n#endif`.
 
@@ -156,12 +156,12 @@ In `tests/support/requires.cpp`, add a case in `check(...)`:
       return BC_WITH_OMT == 0;
 ```
 
-- [ ] **Step 6: Run the test; expect a pass**
+- [x] **Step 6: Run the test; expect a pass**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "omthx is linked*"`
 Expected: `1 passed` (the test body runs; `discover()` returns a list, typically empty).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add CMakeLists.txt tests/support/requires.h tests/support/requires.cpp tests/omt_build_test.cpp src/io/omt_output.cpp
@@ -180,7 +180,7 @@ git commit -m "feat(io): link the omthx library into BreadCamera (BC_WITH_OMT)"
 - Consumes: nothing new.
 - Produces: `bool QueuedOutput::consumeDrop()` (protected) — true once for each frame the drop-oldest queue discarded since the last call; false otherwise.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/queued_output_test.cpp`:
 ```cpp
@@ -214,12 +214,12 @@ TEST_CASE("QueuedOutput reports a dropped frame to deliver()") {
 ```
 Ensure the file includes `<atomic>` and `<thread>` (add the includes if missing).
 
-- [ ] **Step 2: Run it; expect a link failure**
+- [x] **Step 2: Run it; expect a link failure**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "QueuedOutput reports*"`
 Expected: build FAILS — `consumeDrop` is not a member of `QueuedOutput`.
 
-- [ ] **Step 3: Implement the drop signal**
+- [x] **Step 3: Implement the drop signal**
 
 In `src/io/queued_output.h`, in the `protected:` section, add:
 ```cpp
@@ -237,12 +237,12 @@ void QueuedOutput::submit(OutFrame frame) {
 }
 ```
 
-- [ ] **Step 4: Run it; expect a pass**
+- [x] **Step 4: Run it; expect a pass**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "QueuedOutput*"`
 Expected: all queued-output tests pass, including the new one.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/io/queued_output.h src/io/queued_output.cpp tests/queued_output_test.cpp
@@ -262,7 +262,7 @@ git commit -m "feat(io): tell a QueuedOutput when its queue dropped a frame"
 - Consumes: `QueuedOutput` (Task 2), `OutFrame`, and `omthx::Sender`.
 - Produces: `bc::OmthOutput(std::string name, omthx::Mode mode)` — `needsCpu() == true`, error code `"omt-failed"`. Mode maps `"full"` → `omthx::Mode::Full`, anything else → `Hx`; the factory validates the string.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/omt_output_test.cpp`:
 ```cpp
@@ -388,12 +388,12 @@ TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRE
 ```
 The test needs `bc::OmthOutput::address()` (the OMT address of the source, as a `std::string` a receiver connects to). Add it to the interface. Add `tests/omt_output_test.cpp` to `bc_tests`.
 
-- [ ] **Step 2: Run it; expect a build failure**
+- [x] **Step 2: Run it; expect a build failure**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "OmthOutput*"`
 Expected: build FAILS — `io/omt_output.h` missing / `OmthOutput` undefined.
 
-- [ ] **Step 3: Implement the output**
+- [x] **Step 3: Implement the output**
 
 `src/io/omt_output.h`:
 ```cpp
@@ -486,12 +486,12 @@ void OmthOutput::close() noexcept {
 }  // namespace bc
 ```
 
-- [ ] **Step 4: Run it; expect a pass**
+- [x] **Step 4: Run it; expect a pass**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "OmthOutput*"`
 Expected: `2 passed` on this PC (encoder `hevc_amf`; full mode is software VMX). If `receiveVideo` never returns a frame within the loop, the keyframe request or the discovery is not working — debug before loosening the test.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/io/omt_output.h src/io/omt_output.cpp tests/omt_output_test.cpp CMakeLists.txt
@@ -511,7 +511,7 @@ git commit -m "feat(io): OMT output on omthx, plain OMT and OMT-HX"
 - Consumes: `OmthOutput` (Task 3).
 - Produces: `validateOutput` and `DefaultAdapterFactory::makeOutput` accept `kind == "omt"`. Params: `mode` (`"hx"` default, or `"full"`), `name` (text, 1..200 chars, default `"BreadCamera - <camera name>"`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/command_router_test.cpp`:
 ```cpp
@@ -530,12 +530,12 @@ TEST_CASE("output kind omt validates its params") {
 ```
 (If `validateOutput` is not already declared in a header the test includes, include the header that declares it; it is declared in `engine/command_router.h`.)
 
-- [ ] **Step 2: Run it; expect a failure**
+- [x] **Step 2: Run it; expect a failure**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "output kind omt*"`
 Expected: FAIL — `unknown output kind 'omt'` (the second and third CHECKs may already pass; the first throws).
 
-- [ ] **Step 3: Implement validation**
+- [x] **Step 3: Implement validation**
 
 In `src/engine/command_router.cpp`, in `validateOutput`, before the final `throw`, add:
 ```cpp
@@ -554,7 +554,7 @@ In `src/engine/command_router.cpp`, in `validateOutput`, before the final `throw
   }
 ```
 
-- [ ] **Step 4: Implement the factory**
+- [x] **Step 4: Implement the factory**
 
 In `src/engine/adapter_factory.cpp`, add the include (near the NDI one):
 ```cpp
@@ -582,12 +582,12 @@ and in `makeOutput`, before the final `throw`:
   }
 ```
 
-- [ ] **Step 5: Run the tests; expect a pass**
+- [x] **Step 5: Run the tests; expect a pass**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "omt*,*output kind*"`
 Expected: `validateOutput` tests pass; a factory test that builds an `OmthOutput` passes (add one mirroring the NDI factory test if the file has one; otherwise the validation test is the required one).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/engine/command_router.cpp src/engine/adapter_factory.cpp tests/command_router_test.cpp
@@ -608,7 +608,7 @@ git commit -m "feat(engine): output kind omt, with mode hx|full"
 - Consumes: `omthx::Sender::tally()`.
 - Produces: `OutputStatus::program` and `OutputStatus::preview` (both default false); `OmthOutput::status()` fills them from the sender; the engine writes `outputs/<id>/tally` as JSON `{"program": bool, "preview": bool}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/omt_output_test.cpp` (inside the `#if BC_WITH_OMT` block):
 ```cpp
@@ -623,12 +623,12 @@ TEST_CASE("OmthOutput: status carries the tally, off until a receiver sets it" B
 }
 ```
 
-- [ ] **Step 2: Run it; expect a compile failure**
+- [x] **Step 2: Run it; expect a compile failure**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "status carries the tally*"`
 Expected: build FAILS — `OutputStatus` has no member `program`.
 
-- [ ] **Step 3: Add the fields and fill them**
+- [x] **Step 3: Add the fields and fill them**
 
 In `src/io/output.h`, in `struct OutputStatus`, add:
 ```cpp
@@ -660,19 +660,19 @@ OutputStatus OmthOutput::status() const {
 }
 ```
 
-- [ ] **Step 4: Publish it in the engine**
+- [x] **Step 4: Publish it in the engine**
 
 In `src/engine/camera.cpp`, in the outputs loop (around the `auto st = s.out->status();` line), after setting `/state` and `/error`, add:
 ```cpp
       state_.set(p + "/tally", {{"program", st.program}, {"preview", st.preview}});
 ```
 
-- [ ] **Step 5: Run the tests; expect a pass**
+- [x] **Step 5: Run the tests; expect a pass**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1 -Filter "status carries the tally*,*state*"`
 Expected: the tally test passes and no state-store test regresses.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add src/io/output.h src/io/omt_output.h src/io/omt_output.cpp src/engine/camera.cpp tests/omt_output_test.cpp
@@ -686,20 +686,20 @@ git commit -m "feat(engine): publish each output's OMT tally on its state node"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-10-11-remaining-milestones-opencode.md` (tick this milestone), `docs/superpowers/follow-ups.md` (note the multiview-tile follow-up)
 
-- [ ] **Step 1: Full suite**
+- [x] **Step 1: Full suite**
 
 Run: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test.ps1`
 Expected: all tests pass (new OMT tests included; they run on this PC).
 
-- [ ] **Step 2: Two tools by hand**
+- [x] **Step 2: Two tools by hand**
 
 Run `breadcamera-engine` with a show whose camera has an `omt` output (`mode` `hx`), and from the OMT-HX `build\release` connect `omthx-recv.exe --source "<THIS-PC> (BreadCamera - <camera>)"`. Expected: the receiver shows 60 fps HEVC at about 30 Mbps and, with alpha, `+alpha`; the output's `tally` node reads `{"program":false,"preview":false}` until a receiver sets it.
 
-- [ ] **Step 3: Record the follow-ups**
+- [x] **Step 3: Record the follow-ups**
 
 In `docs/superpowers/follow-ups.md`, add: "Draw the OMT tally on the multiview tile (reads `outputs/<id>/tally`)". In the milestones plan, mark M4c done and note that M4a Task 3 (libomt `OmtOutput`) is superseded by this plan.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add docs

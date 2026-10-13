@@ -51,6 +51,8 @@ Each row is one task in its milestone plan. Task text, Files, Interfaces and com
 | 8 | bcam-m5 | M5 Tasks 1–5 (Settings dialog, error headlines, soak tool, installer and licence notices, verification) | `2026-10-08-m5-hardening.md` |
 | 9 | bcam-m6 | M6 Tasks 1–3 (ONNX Runtime + DirectML + model, `OnnxMatte`, M6 acceptance on the AMD PC) | `2026-10-08-m6-onnx-matte.md` |
 
+**M4c (branch `bcam-m4c`, plan `2026-10-13-m4c-omt-hx-output.md`): done.** One `omt` output kind on the merged `omthx` library — plain OMT and OMT-HX (HEVC from the GPU hardware encoder) with alpha, audio, a keyframe on a dropped frame, and tally published on the output state. It **supersedes M4a Task 3** (the libomt `OmtOutput`, never implemented).
+
 ## Per-task procedure
 
 - [ ] **Step 1: Branch.** `git checkout <branch>`. Create it from the previous branch if missing (`git checkout -b bcam-m3 bcam-m2`, etc.). Confirm `git status` is clean before you start.

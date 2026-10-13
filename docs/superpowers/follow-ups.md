@@ -11,6 +11,10 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - M4a Task 6: NDI input drops audio that is not 48 kHz, with a visible message (`src/io/ndi_input.cpp`).
 - M4a Task 6: NDI input/discovery are tested only when the NDI SDK is installed on the build PC (`tests/ndi_input_test.cpp`).
 
+## M4c
+- Draw the OMT tally on the multiview tile (reads `outputs/<id>/tally`) (`src/engine/camera.cpp`).
+- M4c acceptance: the operator two-tool check (engine `omt` output + OMT-HX `omthx-recv.exe`) was not run on this PC — it needs a live input delivering frames to the camera; the automated `tests/omt_output_test.cpp` covers the same sender↔receiver path (plain OMT, OMT-HX with alpha, and the tally round-trip).
+
 ## Untested on hardware
 - `h264_nvenc` preview path — never opened on the AMD build PC (`src/engine/preview_encoder.cpp`).
 - NDI output — only tested if the NDI SDK was installed on the build PC; see the M1 report (`src/io/ndi_output.cpp`).
