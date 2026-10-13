@@ -51,7 +51,12 @@ void DeckLinkOutput::deliver(const OutFrame& f) {
     frame->Release();
     throw std::runtime_error("cannot access a DeckLink frame buffer");
   }
-  buf->GetBytes(&bytes);
+  if (buf->GetBytes(&bytes) != S_OK || !bytes) {
+    buf->EndAccess(bmdBufferAccessWrite);
+    buf->Release();
+    frame->Release();
+    throw std::runtime_error("cannot access a DeckLink frame buffer");
+  }
   if (static_cast<int>(f.bgra->width) == W && static_cast<int>(f.bgra->height) == H) {
     std::memcpy(bytes, f.bgra->bgra.data(), static_cast<size_t>(W) * H * 4);
   } else {
