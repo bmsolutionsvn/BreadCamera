@@ -50,6 +50,7 @@ export interface StateTree {
     resolution?: string;
     overruns?: number;
     previewEncoder?: string;
+    matteBackend?: string;
     warnings?: Record<string, string>;
   };
   cameras?: Record<string, CameraState>;

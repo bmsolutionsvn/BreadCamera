@@ -235,3 +235,12 @@ select.ctl { appearance: auto; }
 .bad-line { color: var(--bm-danger); }
 .row-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .link { color: var(--bm-text-muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--bm-border-strong); justify-self: start; }
+
+/* settings (M5) */
+.settings-wrap { display: grid; grid-template-columns: 150px 1fr; min-height: 320px; margin: -6px -14px -14px; }
+.cats { background: var(--bm-surface); border-right: 1px solid var(--bm-border); padding: 6px; display: grid; align-content: start; gap: 2px; }
+.cats button { height: 28px; text-align: left; padding: 0 8px; border-radius: 4px; color: var(--bm-text-muted); }
+.cats button.on { background: var(--bm-brand-wash); color: var(--bm-brand); font-weight: 600; }
+.pane { padding: 12px 16px; display: grid; gap: 8px; align-content: start; }
+.pane h3 { font-size: 12px; font-weight: 600; color: var(--bm-text); }
+.pane .prop { grid-template-columns: 200px minmax(0, 1fr); }

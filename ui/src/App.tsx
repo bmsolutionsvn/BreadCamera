@@ -5,11 +5,13 @@ import { useEngine } from './api/useEngine';
 import { CalibrationView } from './calibration/CalibrationView';
 import { useCalibration } from './calibration/useCalibration';
 import { ErrorBlock } from './components/ErrorBlock';
+import { Icon } from './components/Icon';
 import { AddCameraDialog } from './dialogs/AddCameraDialog';
 import { AddEffectDialog } from './dialogs/AddEffectDialog';
 import { AddOutputDialog } from './dialogs/AddOutputDialog';
 import { ConfirmDialog } from './dialogs/ConfirmDialog';
 import { QuitDialog } from './dialogs/QuitDialog';
+import { SettingsDialog } from './dialogs/SettingsDialog';
 import { Effects } from './inspector/Effects';
 import { Inspector } from './inspector/Inspector';
 import { Multiview, type Layout } from './multiview/Multiview';
@@ -34,7 +36,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('auto');
-  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit'>(null);
+  const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit' | 'settings'>(null);
   const [now, setNow] = useState(() => Date.now());
   const marks = useRef<Record<string, Marks>>({});
   const calib = useCalibration(client);
@@ -69,6 +71,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const menus = useMemo(
     () => ({
       file: [{ label: 'Quit…', onSelect: () => setDialog('quit') }],
+      show: [{ label: 'Settings…', shortcut: 'Ctrl+,', onSelect: () => setDialog('settings') }],
       camera: [
         { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
         { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
@@ -95,6 +98,10 @@ export function Workspace({ client }: { client: EngineClient }) {
         e.preventDefault();
         if (cam?.stages && 'color' in cam.stages) calib.start(cam.id);
       }
+      if (e.ctrlKey && e.key === ',') {
+        e.preventDefault();
+        setDialog('settings');
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -106,7 +113,16 @@ export function Workspace({ client }: { client: EngineClient }) {
   return (
     <div className="win">
       <TitleBar menus={menus} />
-      <Toolbar onAddCamera={() => setDialog('addCamera')} onStopAll={() => setDialog('stopAll')} />
+      <Toolbar
+        onAddCamera={() => setDialog('addCamera')}
+        onStopAll={() => setDialog('stopAll')}
+        extra={
+          <button className="tb" title="Settings (Ctrl+,)" onClick={() => setDialog('settings')}>
+            <Icon name="settings" />
+            Settings
+          </button>
+        }
+      />
       <div className="body">
         {calib.state && calibCam ? (
           <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} />
@@ -148,6 +164,7 @@ export function Workspace({ client }: { client: EngineClient }) {
         />
       )}
       <QuitDialog open={dialog === 'quit'} onClose={() => setDialog(null)} />
+      {dialog === 'settings' && <SettingsDialog client={client} onClose={() => setDialog(null)} />}
     </div>
   );
 }

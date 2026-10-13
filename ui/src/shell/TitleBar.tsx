@@ -6,6 +6,7 @@ import { Menu, type MenuItem } from '../components/Menu';
 
 export interface TitleMenus {
   file: (MenuItem | 'sep')[];
+  show?: (MenuItem | 'sep')[];
   camera: (MenuItem | 'sep')[];
   view: (MenuItem | 'sep')[];
   help: (MenuItem | 'sep')[];
@@ -23,6 +24,7 @@ export function TitleBar({ menus }: { menus: TitleMenus }) {
       </span>
       <nav className="menus" aria-label="Menu bar">
         <Menu label="File" items={menus.file} />
+        {menus.show && <Menu label="Show" items={menus.show} />}
         <Menu label="Camera" items={menus.camera} />
         <Menu label="View" items={menus.view} />
         <Menu label="Help" items={menus.help} />
