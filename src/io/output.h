@@ -27,6 +27,8 @@ struct OutputStatus {
   std::optional<ErrorInfo> error;
   uint64_t dropped = 0;
   uint64_t delivered = 0;
+  bool program = false;  // a downstream receiver has us on program
+  bool preview = false;  // ... on preview
 };
 
 class Output {

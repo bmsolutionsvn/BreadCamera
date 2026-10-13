@@ -326,6 +326,7 @@ void Camera::publishStatus() {
       auto st = s.out->status();
       state_.set(p + "/state", std::string(toString(st.state)));
       state_.set(p + "/error", errorToJson(st.error));
+      state_.set(p + "/tally", {{"program", st.program}, {"preview", st.preview}});
     }
   }
 }

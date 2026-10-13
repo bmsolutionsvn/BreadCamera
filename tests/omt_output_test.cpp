@@ -116,7 +116,54 @@ TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRE
   out.stop();
   REQUIRE(got);
 }
+
+TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc::test::Req::Omt)) {
+  bc::OmthOutput out("BreadCamera OMT tally " + std::to_string(GetCurrentProcessId()), omthx::Mode::Hx);
+  auto img = std::make_shared<bc::CpuImage>();
+  img->width = 640;
+  img->height = 360;
+  img->bgra.assign(640 * 360 * 4, 200);
+  out.start();
+  const bc::Rate rate{30, 1};
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    for (uint64_t t = 0; run; ++t) {
+      out.submit(frameWith(img, t, rate, false));
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+
+  std::string address;
+  for (int i = 0; i < 50 && address.empty(); ++i) {
+    address = out.address();
+    if (address.empty()) std::this_thread::sleep_for(100ms);
+  }
+  REQUIRE_FALSE(address.empty());
+
+  // Off until a receiver says otherwise.
+  const auto off = out.status();
+  CHECK_FALSE(off.program);
+  CHECK_FALSE(off.preview);
+
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  for (int i = 0; i < 60; ++i) {
+    if (rx.receiveVideo(vf, 200)) break;  // make sure the receiver is connected
+  }
+  rx.setTally(omthx::Tally{.preview = false, .program = true});
+  bool program = false;
+  for (int i = 0; i < 60 && !program; ++i) {
+    program = out.status().program;
+    if (!program) std::this_thread::sleep_for(100ms);
+  }
+
+  run = false;
+  feeder.join();
+  out.stop();
+  CHECK(program);
+}
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRES(bc::test::Req::Omt)) {}
+TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc::test::Req::Omt)) {}
 #endif

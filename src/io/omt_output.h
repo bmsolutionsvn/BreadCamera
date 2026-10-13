@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -15,6 +16,7 @@ class OmthOutput final : public QueuedOutput {
   ~OmthOutput() override { stop(); }
   bool needsCpu() const override { return true; }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
+  OutputStatus status() const override;
 
  protected:
   void open() override;
@@ -30,5 +32,7 @@ class OmthOutput final : public QueuedOutput {
   omthx::VideoFormat format_;
   mutable std::mutex addrMutex_;  // guards address_, set by the worker in open()
   std::string address_;
+  std::atomic<bool> program_{false};  // the tally the sender reports, published by the worker
+  std::atomic<bool> preview_{false};
 };
 }  // namespace bc

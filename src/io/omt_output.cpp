@@ -39,6 +39,17 @@ void OmthOutput::deliver(const OutFrame& f) {
     const int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
     send_->sendAudio(planar_, f.sampleRate, ch, ts);
   }
+
+  const omthx::Tally t = send_->tally();  // a receiver may have set program/preview
+  program_ = t.program;
+  preview_ = t.preview;
+}
+
+OutputStatus OmthOutput::status() const {
+  OutputStatus s = QueuedOutput::status();
+  s.program = program_;
+  s.preview = preview_;
+  return s;
 }
 
 void OmthOutput::close() noexcept {
