@@ -18,7 +18,9 @@ void QueuedOutput::start() {
   thread_ = std::thread([this] { run(); });
 }
 
-void QueuedOutput::submit(OutFrame frame) { queue_.push(std::move(frame)); }
+void QueuedOutput::submit(OutFrame frame) {
+  if (queue_.push(std::move(frame))) dropPending_ = true;
+}
 
 void QueuedOutput::stop() {
   stopping_ = true;

@@ -25,6 +25,8 @@ class QueuedOutput : public Output {
   virtual void close() noexcept = 0;              // on the worker thread
   virtual std::string errorCode() const { return "output-failed"; }
   bool stopRequested() const { return stopping_; }  // FFmpeg interrupt callbacks
+  // Latches a drop: true at most once per delivery when the queue discarded a frame since the last call.
+  bool consumeDrop() { return dropPending_.exchange(false); }
 
  private:
   void run();
@@ -32,6 +34,7 @@ class QueuedOutput : public Output {
   BoundedQueue<OutFrame> queue_{2};
   std::thread thread_;
   std::atomic<bool> stopping_{false};
+  std::atomic<bool> dropPending_{false};
   mutable std::mutex m_;
   OutputStatus status_;
   std::mutex waitMutex_;

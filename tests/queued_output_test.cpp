@@ -3,6 +3,9 @@
 #define DOCTEST_CONFIG_DOUBLE_STRINGIFY
 #include <doctest/doctest.h>
 
+#include <atomic>
+#include <thread>
+
 #include "support/fake_output.h"
 
 using namespace std::chrono_literals;
@@ -71,4 +74,34 @@ TEST_CASE("QueuedOutput: stop joins quickly even while idle") {
   auto t0 = std::chrono::steady_clock::now();
   out.stop();
   CHECK(std::chrono::steady_clock::now() - t0 < 300ms);
+}
+
+namespace {
+// A delivery that sleeps long enough for the queue (capacity 2) to drop, then records drops.
+class DropProbe : public bc::QueuedOutput {
+ public:
+  std::atomic<int> deliveries{0};
+  std::atomic<int> dropsWithHistory{0};
+
+  bool needsCpu() const override { return false; }
+
+ protected:
+  void open() override {}
+  void deliver(const bc::OutFrame&) override {
+    ++deliveries;
+    if (consumeDrop()) ++dropsWithHistory;  // a drop happened before this frame arrived
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+  }
+  void close() noexcept override {}
+};
+}  // namespace
+
+TEST_CASE("QueuedOutput reports a dropped frame to deliver()") {
+  DropProbe out;
+  out.start();
+  for (int i = 0; i < 5; ++i) out.submit(bc::OutFrame{});
+  std::this_thread::sleep_for(std::chrono::milliseconds(400));
+  out.stop();
+  CHECK(out.deliveries >= 1);
+  CHECK(out.dropsWithHistory >= 1);  // the queue overflowed at least once
 }
