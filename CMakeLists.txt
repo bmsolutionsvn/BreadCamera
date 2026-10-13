@@ -284,6 +284,8 @@ add_executable(bc_tests
   tests/e2e_m4a_test.cpp
   # M4c Task 1
   tests/omt_build_test.cpp
+  # M4c Task 3
+  tests/omt_output_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
