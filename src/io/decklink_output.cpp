@@ -45,14 +45,24 @@ void DeckLinkOutput::deliver(const OutFrame& f) {
   }
   IDeckLinkVideoBuffer* buf = nullptr;
   void* bytes = nullptr;
-  frame->QueryInterface(IID_IDeckLinkVideoBuffer, reinterpret_cast<void**>(&buf));
-  buf->StartAccess(bmdBufferAccessWrite);
+  if (frame->QueryInterface(IID_IDeckLinkVideoBuffer, reinterpret_cast<void**>(&buf)) != S_OK || !buf ||
+      buf->StartAccess(bmdBufferAccessWrite) != S_OK) {
+    if (buf) buf->Release();
+    frame->Release();
+    throw std::runtime_error("cannot access a DeckLink frame buffer");
+  }
   buf->GetBytes(&bytes);
   if (static_cast<int>(f.bgra->width) == W && static_cast<int>(f.bgra->height) == H) {
     std::memcpy(bytes, f.bgra->bgra.data(), static_cast<size_t>(W) * H * 4);
   } else {
     sws_ = sws_getCachedContext(sws_, static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA, W, H,
                                 AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!sws_) {
+      buf->EndAccess(bmdBufferAccessWrite);
+      buf->Release();
+      frame->Release();
+      throw std::runtime_error("cannot create a pixel converter for the DeckLink frame");
+    }
     const uint8_t* src[1] = {f.bgra->bgra.data()};
     const int ss[1] = {static_cast<int>(f.bgra->width * 4)};
     uint8_t* dst[1] = {static_cast<uint8_t*>(bytes)};
