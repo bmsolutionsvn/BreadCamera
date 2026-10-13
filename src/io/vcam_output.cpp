@@ -45,6 +45,7 @@ void VirtualCameraOutput::deliver(const OutFrame& f) {
     scaled_.resize(vcam::kFrameBytes);
     sws_ = sws_getCachedContext(sws_, static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA,
                                 vcam::kWidth, vcam::kHeight, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!sws_) throw std::runtime_error("cannot create a pixel converter for the virtual camera");
     const uint8_t* s[1] = {src};
     const int ss[1] = {static_cast<int>(f.bgra->width * 4)};
     uint8_t* d[1] = {scaled_.data()};

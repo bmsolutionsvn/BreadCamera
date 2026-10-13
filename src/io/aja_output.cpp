@@ -58,6 +58,7 @@ void AjaOutput::deliver(const OutFrame& f) {
     scaled_.resize(static_cast<size_t>(W) * H * 4);
     SwsContext* s = sws_getContext(static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA, W, H,
                                    AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!s) throw std::runtime_error("cannot create a pixel converter for the AJA frame");
     const uint8_t* src[1] = {bgra};
     const int ss[1] = {static_cast<int>(f.bgra->width * 4)};
     uint8_t* dst[1] = {scaled_.data()};

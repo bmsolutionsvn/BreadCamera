@@ -33,11 +33,16 @@ void AjaInput::run() {
   Backoff backoff;
   while (!stopping_) {
     sink_->onState(SignalState::Connecting, std::nullopt);
+    bool clean = false;
     try {
       runOnce();
+      clean = true;
     } catch (const std::exception& e) {
       if (!stopping_) sink_->onState(SignalState::Offline, ErrorInfo{"aja-failed", e.what()});
     }
+    // A clean return means the capture ran (possibly until a healthy format change), so the
+    // next reconnect must not inherit an escalated delay; only failures should back off.
+    if (clean) backoff.reset();
     for (auto d = backoff.next(); !stopping_ && d.count() > 0; d -= std::chrono::milliseconds(100)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }

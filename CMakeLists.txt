@@ -239,7 +239,13 @@ if(BC_WITH_DECKLINK)
     OUTPUT ${_dlgen}/DeckLinkAPI_h.h ${_dlgen}/DeckLinkAPI_i.c
     COMMAND midl /nologo /env x64 /I ${_dlinc} /h DeckLinkAPI_h.h /iid DeckLinkAPI_i.c /out ${_dlgen} ${DECKLINK_IDL}
     DEPENDS ${DECKLINK_IDL} VERBATIM)
-  target_sources(bc_io PRIVATE ${_dlgen}/DeckLinkAPI_i.c src/io/decklink.cpp src/io/decklink_input.cpp src/io/decklink_output.cpp)
+  set(_dl_sources src/io/decklink.cpp src/io/decklink_input.cpp src/io/decklink_output.cpp)
+  # List the generated header as a source AND give each DeckLink TU an explicit OBJECT_DEPENDS
+  # edge on it. The header otherwise reaches the compiles only through the include directory,
+  # so Ninja has no edge from the MIDL step to the .cpp compiles and can start them in parallel
+  # ("cannot open DeckLinkAPI_h.h").
+  target_sources(bc_io PRIVATE ${_dlgen}/DeckLinkAPI_i.c ${_dlgen}/DeckLinkAPI_h.h ${_dl_sources})
+  set_source_files_properties(${_dl_sources} PROPERTIES OBJECT_DEPENDS ${_dlgen}/DeckLinkAPI_h.h)
   target_include_directories(bc_io PUBLIC ${_dlgen})
   target_compile_definitions(bc_io PUBLIC BC_WITH_DECKLINK=1)
 else()

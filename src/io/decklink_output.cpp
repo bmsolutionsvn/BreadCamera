@@ -86,8 +86,16 @@ void DeckLinkOutput::deliver(const OutFrame& f) {
   if (f.audio && !f.audio->empty()) {
     pcm_.resize(f.audio->size());
     for (size_t i = 0; i < pcm_.size(); ++i) pcm_[i] = static_cast<int16_t>(std::clamp((*f.audio)[i], -1.0f, 1.0f) * 32767.0f);
-    uint32_t written = 0;
-    output_->WriteAudioSamplesSync(pcm_.data(), static_cast<uint32_t>(pcm_.size() / 2), &written);
+    // Continuous audio output may accept fewer frames than offered; resubmit the remainder so
+    // no samples are dropped (which would gap/desync the audio against the video).
+    int16_t* p = pcm_.data();
+    uint32_t remaining = static_cast<uint32_t>(pcm_.size() / 2);
+    while (remaining > 0) {
+      uint32_t written = 0;
+      if (output_->WriteAudioSamplesSync(p, remaining, &written) != S_OK || written == 0) break;
+      remaining -= written;
+      p += static_cast<size_t>(written) * 2;  // 2 int16 samples per frame
+    }
   }
 }
 

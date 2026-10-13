@@ -78,12 +78,21 @@ void DeckLinkInput::stop() {
 }
 
 void DeckLinkInput::onFormatChanged(uint32_t mode, bool rgb) {
-  std::lock_guard l(m_);
-  if (!input_) return;
-  input_->PauseStreams();
-  input_->EnableVideoInput(static_cast<BMDDisplayMode>(mode), rgb ? bmdFormat8BitBGRA : bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
-  input_->FlushStreams();
-  input_->StartStreams();
+  // Snapshot the input under the lock (holding a reference), then drive it outside the lock.
+  // run() detaches and releases input_ outside the lock too, so neither side can block the
+  // other: StopStreams() waits for this callback, which must not wait for m_ in return.
+  IDeckLinkInput* input = nullptr;
+  {
+    std::lock_guard l(m_);
+    input = input_;
+    if (input) input->AddRef();
+  }
+  if (!input) return;
+  input->PauseStreams();
+  input->EnableVideoInput(static_cast<BMDDisplayMode>(mode), rgb ? bmdFormat8BitBGRA : bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
+  input->FlushStreams();
+  input->StartStreams();
+  input->Release();
 }
 
 void DeckLinkInput::onFrame(const uint8_t* bytes, int w, int h, int rowBytes, bool noSignal, const int32_t* audio, int audioFrames) {
@@ -141,14 +150,19 @@ void DeckLinkInput::run() {
     } catch (const std::exception& e) {
       sink_->onState(SignalState::Offline, ErrorInfo{"decklink-failed", e.what()});
     }
+    // Detach under the lock, then stop/release outside it. StopStreams() can block until the
+    // in-flight SDK callback returns, and that callback (onFormatChanged) takes m_ while the
+    // input is still attached — releasing here instead of inside the lock avoids the deadlock.
+    IDeckLinkInput* input = nullptr;
     {
       std::lock_guard l(m_);
-      if (input_) {
-        input_->StopStreams();
-        input_->SetCallback(nullptr);
-        input_->Release();
-        input_ = nullptr;
-      }
+      input = input_;
+      input_ = nullptr;
+    }
+    if (input) {
+      input->StopStreams();
+      input->SetCallback(nullptr);
+      input->Release();
     }
     if (cb) cb->Release();
     if (device_) {
