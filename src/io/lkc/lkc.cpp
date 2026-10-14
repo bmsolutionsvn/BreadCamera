@@ -534,11 +534,13 @@ struct Client::Impl {
     pc_->onLocalDescription([this](rtc::Description d) {
       const std::string type = d.typeString();
       std::string sdp = std::string(d);
+      // Snapshot the offer id produced by *this* answer at the moment the
+      // description is generated: a later offer's handleSignal must not be able
+      // to change the id an earlier answer carries.
+      const int32_t offerId = latestOfferId_;
       dbg("[lkc] local description %s (%zu bytes)", type.c_str(), sdp.size());
-      // Build and send the answer on the worker; the offer id is the one
-      // handleSignal captured, read here on the worker (not off-thread).
-      post([this, type, sdp = std::move(sdp)] {
-        if (type == "answer") sendSignal(encodeAnswer(sdp, latestOfferId_));
+      post([this, type, sdp = std::move(sdp), offerId] {
+        if (type == "answer") sendSignal(encodeAnswer(sdp, offerId));
       });
     });
     pc_->onLocalCandidate([this](rtc::Candidate c) {
@@ -559,22 +561,26 @@ struct Client::Impl {
       });
     });
     pc_->onTrack([this](std::shared_ptr<rtc::Track> t) {
-      // Hold the track until the worker runs: a released track drops its m-line.
+      const std::string mid = t->mid();
+      // Attach the RTP sink synchronously so packets that arrive before the
+      // worker runs are not dropped; the sink only posts, so no shared state is
+      // touched here.
+      t->onMessage([this, mid](rtc::message_variant msg) {
+        auto* b = std::get_if<rtc::binary>(&msg);
+        if (!b) return;
+        std::string bytes(reinterpret_cast<const char*>(b->data()), b->size());
+        post([this, mid, bytes = std::move(bytes)] { handleRtp(mid, bytes); });
+      });
+      // Retain the track on the worker (a released track drops its m-line).
       post([this, t] {
-        const std::string mid = t->mid();
-        auto it = midMedia_.find(mid);
+        const std::string tmid = t->mid();
+        auto it = midMedia_.find(tmid);
         const std::string kind = it == midMedia_.end() ? std::string() : it->second.kind;
         if (kind == "audio") {
           audioTrack_ = t;
         } else {
           videoTrack_ = t;
         }
-        t->onMessage([this, mid](rtc::message_variant msg) {
-          auto* b = std::get_if<rtc::binary>(&msg);
-          if (!b) return;
-          std::string bytes(reinterpret_cast<const char*>(b->data()), b->size());
-          post([this, mid, bytes = std::move(bytes)] { handleRtp(mid, bytes); });
-        });
       });
     });
     pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> dc) {
@@ -607,8 +613,8 @@ struct Client::Impl {
         case 3: {  // offer (server-initiated subscriber PC)
           auto sd = parseSessionDescription(f.data, f.len);
           if (sd.type != "offer") break;
-          // Captured on the worker; the answer posted from onLocalDescription
-          // reads it here too, never on libdatachannel's thread.
+          // The id of the offer being handled; onLocalDescription snapshots it while
+          // generating this answer, before the async hop to the worker.
           latestOfferId_ = sd.id;
           midMedia_ = parseSdpMedia(sd.sdp);
           for (const auto& [mid, sid] : sd.midToTrack)
