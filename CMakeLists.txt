@@ -116,6 +116,16 @@ if(BC_WITH_ONNX AND NOT OnnxRuntime_FOUND)
 endif()
 message(STATUS "BC_WITH_ONNX=${BC_WITH_ONNX}")
 
+# C1 — the shared LiveKit client (spec D1/§7). libdatachannel comes from vcpkg;
+# a missing library turns the client off and its code compiles out.
+find_package(LibDataChannel)
+option(BC_WITH_LIVECALL "Build the shared LiveKit client" ${LibDataChannel_FOUND})
+if(BC_WITH_LIVECALL AND NOT LibDataChannel_FOUND)
+  message(WARNING "BC_WITH_LIVECALL=ON but libdatachannel was not found; turning it off")
+  set(BC_WITH_LIVECALL OFF)
+endif()
+message(STATUS "BC_WITH_LIVECALL=${BC_WITH_LIVECALL}")
+
 # M3 Task 5 — optional chart detection (OpenCV mcc)
 find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
 if(OpenCV_FOUND)
@@ -214,12 +224,23 @@ add_library(bc_io STATIC
   src/io/srt_output.cpp
   # M4a Task 4
   src/io/mf_capture_input.cpp
+  # C1 Task 1
+  src/io/lkc/lkc.cpp
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
 target_link_libraries(bc_io PUBLIC user32)
 target_link_libraries(bc_io PUBLIC mf mfplat mfreadwrite mfuuid ole32)
+
+# C1 Task 1 — the shared LiveKit client. When libdatachannel is absent the
+# client still compiles (BC_WITH_LIVECALL=0) and reports `lkc-unavailable`.
+if(BC_WITH_LIVECALL)
+  target_link_libraries(bc_io PUBLIC LibDataChannel::LibDataChannel)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_LIVECALL=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_LIVECALL=0)
+endif()
 
 if(BC_WITH_NDI)
   # M4a Task 2
@@ -426,6 +447,8 @@ add_executable(bc_tests
   # M4b Task 1
   tests/uyvy_test.cpp
   tests/decklink_test.cpp
+  # C1 Task 1
+  tests/lkc_test.cpp
   # M4b Task 2
   tests/aja_test.cpp
   # M4b Task 3

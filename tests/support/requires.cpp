@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <mutex>
 #include <set>
@@ -17,6 +18,14 @@
 
 namespace bc::test {
 namespace {
+bool envSet(const char* name) {
+  char* buf = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) return false;
+  const bool set = buf[0] != '\0';
+  std::free(buf);
+  return set;
+}
 bool check(Req r, const char*& reason) {
   switch (r) {
     case Req::Ndi:
@@ -88,6 +97,13 @@ bool check(Req r, const char*& reason) {
         return !std::filesystem::exists(std::filesystem::path(buf).parent_path() / "models" /
                                         "modnet.onnx");
       }
+#else
+      return true;
+#endif
+    case Req::LiveCall:
+      reason = "no LiveKit server (set BC_LIVECALL_URL and BC_LIVECALL_TOKEN)";
+#if BC_WITH_LIVECALL
+      return !envSet("BC_LIVECALL_URL") || !envSet("BC_LIVECALL_TOKEN");
 #else
       return true;
 #endif
