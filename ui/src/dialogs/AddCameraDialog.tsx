@@ -8,7 +8,7 @@ import { Prop } from '../components/Prop';
 
 const chars = (s: string) => [...s].length;
 
-type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja';
+type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja' | 'breadcall';
 
 interface DeckLinkDevice {
   index: number;
@@ -42,6 +42,9 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const [ajaDevices, setAjaDevices] = useState<AjaDevice[]>([]);
   const [ajaDevice, setAjaDevice] = useState('');
   const [ajaChannel, setAjaChannel] = useState(1);
+  const [roomUrl, setRoomUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [slot, setSlot] = useState(1);
   const [serverError, setServerError] = useState('');
 
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
@@ -68,6 +71,8 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
     device: kind === 'uvc' && !device ? 'Choose a device' : '',
     decklinkDevice: kind === 'decklink' && !decklinkDevice ? 'Choose a card' : '',
     aja: kind === 'aja' && !ajaDevice ? 'Choose a card' : '',
+    breadcallUrl: kind === 'breadcall' && (roomUrl.trim().length < 1 || roomUrl.length > 512) ? 'Room URL is 1 to 512 characters' : '',
+    breadcallToken: kind === 'breadcall' && (token.trim().length < 1 || token.length > 2048) ? 'Token is 1 to 2048 characters' : '',
   };
   const valid = Object.values(errors).every((e) => !e);
 
@@ -93,7 +98,9 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             ? { kind: 'decklink', params: { device: Number(decklinkDevice) } }
             : kind === 'aja'
               ? { kind: 'aja', params: { device: Number(ajaDevice), channel: ajaChannel } }
-              : { kind: 'srt', params: srtParams() };
+              : kind === 'breadcall'
+                ? { kind: 'breadcall', params: { url: roomUrl.trim(), token: token.trim(), slot } }
+                : { kind: 'srt', params: srtParams() };
     try {
       await client.request('addCamera', { name: name.trim(), input });
       onClose();
@@ -130,6 +137,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             <option value="uvc">USB or built-in camera</option>
             <option value="decklink">DeckLink (SDI/HDMI)</option>
             <option value="aja">AJA (experimental)</option>
+            <option value="breadcall">BreadCall guest</option>
           </select>
         )}
       </Prop>
@@ -223,6 +231,27 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             )}
           </Prop>
           <ErrorBlock severity="warning" message="Experimental — not verified on hardware" />
+        </>
+      )}
+      {kind === 'breadcall' && (
+        <>
+          <Prop label="Room URL" hint={errors.breadcallUrl || 'The LiveKit room URL from BreadCall.'}>
+            {(id) => <input id={id} className="ctl mono" value={roomUrl} placeholder="wss://…" onChange={(e) => setRoomUrl(e.target.value)} />}
+          </Prop>
+          <Prop label="Token" hint={errors.breadcallToken || 'The receiver token BreadCall minted for this slot.'}>
+            {(id) => <input id={id} className="ctl mono" value={token} onChange={(e) => setToken(e.target.value)} />}
+          </Prop>
+          <Prop label="Slot" hint="The guest slot this camera subscribes to.">
+            {(id) => (
+              <select id={id} className="ctl" value={slot} onChange={(e) => setSlot(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Prop>
         </>
       )}
       {kind === 'srt' && (

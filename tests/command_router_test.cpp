@@ -309,6 +309,41 @@ TEST_CASE("CommandRouter: card and virtual camera kinds") {
   CHECK(call(r, {{"cmd", "listAjaDevices"}})["result"].size() == 1);
 }
 
+TEST_CASE("CommandRouter: breadcall input validates the room URL, token and slot") {
+  // C1: a BreadCall guest slot is one camera. Validation is compile-independent, so this
+  // passes with BC_WITH_LIVECALL on or off.
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto addCam = [&](json input) { return call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", input}}}}); };
+  const json ok = {{"kind", "breadcall"},
+                   {"params", {{"url", "wss://livekit.example.com"}, {"token", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}, {"slot", 2}}}};
+  CHECK(addCam(ok)["ok"] == true);
+  REQUIRE(r.show().cameras.size() == 1);
+  CHECK(r.show().cameras[0].input.params["slot"] == 2);
+
+  json badSlot = ok;
+  badSlot["params"]["slot"] = 9;
+  auto res = addCam(badSlot);
+  CHECK(res["error"]["code"] == "invalid");
+  CHECK(res["error"]["message"].get<std::string>().find("slot") != std::string::npos);
+
+  json noToken = ok;
+  noToken["params"].erase("token");
+  auto res2 = addCam(noToken);
+  CHECK(res2["error"]["code"] == "invalid");
+  CHECK(res2["error"]["message"].get<std::string>().find("token") != std::string::npos);
+
+  json textSlot = ok;
+  textSlot["params"]["slot"] = "2";
+  CHECK(addCam(textSlot)["error"]["code"] == "invalid");
+
+  json noUrl = ok;
+  noUrl["params"].erase("url");
+  CHECK(addCam(noUrl)["error"]["code"] == "invalid");
+
+  CHECK(r.show().cameras.size() == 1);  // only the valid one was added
+}
+
 TEST_CASE("CommandRouter: SDI and virtual camera outputs refuse a format override") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);

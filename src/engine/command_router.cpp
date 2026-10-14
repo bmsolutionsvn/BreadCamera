@@ -154,6 +154,14 @@ void validateInput(const InputConfig& in) {
     intParam(in.params, "channel", 1, 8, "AJA channel");
     return;
   }
+  if (in.kind == "breadcall") {
+    // C1: one camera per enabled guest slot. Validation is compile-independent, so it holds
+    // whether or not BC_WITH_LIVECALL built the input (the factory reports the missing build).
+    strParam(in.params, "url", 1, 512, "BreadCall room URL");
+    strParam(in.params, "token", 1, 2048, "BreadCall token");
+    intParam(in.params, "slot", 1, 8, "BreadCall slot");
+    return;
+  }
   throw std::invalid_argument("unknown input kind '" + in.kind + "'");
 }
 

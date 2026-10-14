@@ -27,6 +27,9 @@
 #if BC_WITH_VCAM
 #include "io/vcam_output.h"
 #endif
+#if BC_WITH_LIVECALL
+#include "io/breadcall_input.h"
+#endif
 
 namespace bc {
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
@@ -60,6 +63,20 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
     return std::make_unique<AjaInput>(gpu_, pool_, cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>());
 #else
     throw std::invalid_argument("AJA support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "breadcall") {
+    // showFromJson does not run validateInput, so a hand-edited show file must be guarded
+    // here too (same rule as NDI above): non-string url or token is refused.
+    if (!cfg.params.contains("url") || !cfg.params["url"].is_string())
+      throw std::invalid_argument("BreadCall room URL is required");
+    if (!cfg.params.contains("token") || !cfg.params["token"].is_string())
+      throw std::invalid_argument("BreadCall token is required");
+#if BC_WITH_LIVECALL
+    return std::make_unique<BreadCallInput>(gpu_, pool_, cfg.params["url"].get<std::string>(),
+                                            cfg.params["token"].get<std::string>(), cfg.params.at("slot").get<int>());
+#else
+    throw std::invalid_argument("BreadCall support is not built in this build");
 #endif
   }
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");

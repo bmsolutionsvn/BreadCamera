@@ -26,6 +26,22 @@ test('NDI cameras pick a discovered source', async () => {
   expect(add.args).toEqual({ name: 'Khách mời', input: { kind: 'ndi', params: { source: 'STUDIO (vMix - Output 1)' } } });
 });
 
+test('a BreadCall guest slot is sent as a breadcall input', async () => {
+  const c = client();
+  render(<AddCameraDialog client={c} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Guest 2' } });
+  fireEvent.change(screen.getByLabelText('Input type'), { target: { value: 'breadcall' } });
+  fireEvent.change(screen.getByLabelText('Room URL'), { target: { value: 'wss://livekit.example.com' } });
+  fireEvent.change(screen.getByLabelText('Token'), { target: { value: 'abc.def.ghi' } });
+  fireEvent.change(screen.getByLabelText('Slot'), { target: { value: '3' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add camera' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addCamera');
+  expect(add.args).toEqual({
+    name: 'Guest 2',
+    input: { kind: 'breadcall', params: { url: 'wss://livekit.example.com', token: 'abc.def.ghi', slot: 3 } },
+  });
+});
+
 test('a built-in or USB camera is picked by device id', async () => {
   const deviceId = '\\\\?\\usb#vid_04f2';
   const c = client();
