@@ -106,6 +106,16 @@ if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
 endif()
 message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
 
+# M6 Task 1 — optional ONNX Runtime (DirectML) matte backend (spec §7.2). The runtime, the
+# DirectML redistributable and the MODNet model are fetched by scripts/fetch-sdks.ps1.
+find_package(OnnxRuntime)
+option(BC_WITH_ONNX "Build the ONNX Runtime (DirectML) matte backend" ${OnnxRuntime_FOUND})
+if(BC_WITH_ONNX AND NOT OnnxRuntime_FOUND)
+  message(WARNING "BC_WITH_ONNX=ON but ONNX Runtime / the MODNet model were not found (run scripts/fetch-sdks.ps1); turning it off")
+  set(BC_WITH_ONNX OFF)
+endif()
+message(STATUS "BC_WITH_ONNX=${BC_WITH_ONNX}")
+
 # M3 Task 5 — optional chart detection (OpenCV mcc)
 find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
 if(OpenCV_FOUND)
@@ -282,6 +292,12 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${OMTHX_LIBOMT_DIR}/libomt.dll" "${OMTHX_LIBOMT_DIR}/libvmx.dll" "$<TARGET_FILE_DIR:${target}>")
   endif()
+  if(BC_WITH_ONNX)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ORT_DLL}" "${DML_DLL}" "$<TARGET_FILE_DIR:${target}>"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/modnet.onnx")
+  endif()
 endfunction()
 
 # ---- engine ----
@@ -306,6 +322,19 @@ add_library(bc_engine STATIC
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
 target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
+
+# M6 Task 1 — the optional ONNX Runtime (DirectML) matte backend.
+if(BC_WITH_ONNX)
+  # The backend implementation lands in M6 Task 2 (src/engine/onnx_matte.cpp); guard so this
+  # commit still configures (and the file is picked up automatically once it exists).
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/onnx_matte.cpp")
+    target_sources(bc_engine PRIVATE src/engine/onnx_matte.cpp)
+  endif()
+  target_link_libraries(bc_engine PUBLIC ORT::ORT dxgi)
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_ONNX=1)
+else()
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_ONNX=0)
+endif()
 
 if(BC_WITH_MAXINE)
   target_sources(bc_engine PRIVATE src/engine/maxine_matte.cpp ${MAXINE_VFX_PROXY} ${MAXINE_IMAGE_PROXY})

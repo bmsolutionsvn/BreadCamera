@@ -1,6 +1,9 @@
 #include "support/requires.h"
 
+#include <windows.h>
+
 #include <cstdio>
+#include <filesystem>
 #include <mutex>
 #include <set>
 
@@ -73,6 +76,18 @@ bool check(Req r, const char*& reason) {
       reason = "virtual camera not registered (run regsvr32 breadcamera-vcam.dll as admin on Windows 11)";
 #if BC_WITH_VCAM
       return !bc::VirtualCameraOutput::installed();
+#else
+      return true;
+#endif
+    case Req::Onnx:
+      reason = "ONNX Runtime/model not fetched (scripts/fetch-sdks.ps1)";
+#if BC_WITH_ONNX
+      {
+        wchar_t buf[MAX_PATH];
+        if (GetModuleFileNameW(nullptr, buf, MAX_PATH) == 0) return true;
+        return !std::filesystem::exists(std::filesystem::path(buf).parent_path() / "models" /
+                                        "modnet.onnx");
+      }
 #else
       return true;
 #endif
