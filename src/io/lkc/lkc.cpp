@@ -450,19 +450,23 @@ struct Client::Impl {
     emitState(SignalState::Connecting, std::nullopt);
     const std::string url = wsBase + "/rtc?access_token=" + token_ +
                             "&auto_subscribe=1&sdk=cpp&version=0.1.0&protocol=9";
+    // Seed the ping clock on the worker before opening; every callback below
+    // hops onto the worker so no shared state is touched off-thread.
+    nextPing_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(pingIntervalMs_);
     ws_ = std::make_shared<rtc::WebSocket>();
     ws_->onOpen([this] {
-      nextPing_ = std::chrono::steady_clock::now() +
-                  std::chrono::milliseconds(pingIntervalMs_);
-      dbg("[lkc] ws open");
+      post([this] {
+        nextPing_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(pingIntervalMs_);
+        dbg("[lkc] ws open");
+      });
     });
     ws_->onError([this](std::string e) {
       dbg("[lkc] ws error: %s", e.c_str());
       post([this, e] { emitState(SignalState::Offline, ErrorInfo{"lkc-unreachable", e}); });
     });
     ws_->onClosed([this] {
-      dbg("[lkc] ws closed joined=%d", joined_ ? 1 : 0);
       post([this] {
+        dbg("[lkc] ws closed joined=%d", joined_ ? 1 : 0);
         if (stop_) return;
         const bool up = joined_;
         emitState(SignalState::Offline,
@@ -528,15 +532,21 @@ struct Client::Impl {
     cfg.forceMediaTransport = true;  // allocate SRTP before any track exists
     pc_ = std::make_shared<rtc::PeerConnection>(cfg);
     pc_->onLocalDescription([this](rtc::Description d) {
-      dbg("[lkc] local description %s (%zu bytes)", d.typeString().c_str(), std::string(d).size());
-      if (d.typeString() == "answer") sendSignal(encodeAnswer(std::string(d), latestOfferId_));
+      const std::string type = d.typeString();
+      std::string sdp = std::string(d);
+      dbg("[lkc] local description %s (%zu bytes)", type.c_str(), sdp.size());
+      // Build and send the answer on the worker; the offer id is the one
+      // handleSignal captured, read here on the worker (not off-thread).
+      post([this, type, sdp = std::move(sdp)] {
+        if (type == "answer") sendSignal(encodeAnswer(sdp, latestOfferId_));
+      });
     });
     pc_->onLocalCandidate([this](rtc::Candidate c) {
       // `Candidate::operator string()` prefixes "a=", which LiveKit's SDP parser
       // rejects ("invalid ice-char token: ="); candidateInit wants the bare form.
       std::string json = "{\"candidate\":\"" + c.candidate() + "\",\"sdpMid\":\"" + c.mid() +
                          "\",\"sdpMLineIndex\":0,\"usernameFragment\":null}";
-      sendSignal(encodeTrickle(json));
+      post([this, json = std::move(json)] { sendSignal(encodeTrickle(json)); });
     });
     pc_->onStateChange([this](rtc::PeerConnection::State s) {
       using S = rtc::PeerConnection::State;
@@ -549,22 +559,27 @@ struct Client::Impl {
       });
     });
     pc_->onTrack([this](std::shared_ptr<rtc::Track> t) {
-      const std::string mid = t->mid();
-      auto it = midMedia_.find(mid);
-      const std::string kind = it == midMedia_.end() ? std::string() : it->second.kind;
-      if (kind == "audio") {
-        audioTrack_ = t;
-      } else {
-        videoTrack_ = t;  // retain: a released track drops its m-line
-      }
-      t->onMessage([this, mid](rtc::message_variant msg) {
-        auto* b = std::get_if<rtc::binary>(&msg);
-        if (!b) return;
-        std::string bytes(reinterpret_cast<const char*>(b->data()), b->size());
-        post([this, mid, bytes = std::move(bytes)] { handleRtp(mid, bytes); });
+      // Hold the track until the worker runs: a released track drops its m-line.
+      post([this, t] {
+        const std::string mid = t->mid();
+        auto it = midMedia_.find(mid);
+        const std::string kind = it == midMedia_.end() ? std::string() : it->second.kind;
+        if (kind == "audio") {
+          audioTrack_ = t;
+        } else {
+          videoTrack_ = t;
+        }
+        t->onMessage([this, mid](rtc::message_variant msg) {
+          auto* b = std::get_if<rtc::binary>(&msg);
+          if (!b) return;
+          std::string bytes(reinterpret_cast<const char*>(b->data()), b->size());
+          post([this, mid, bytes = std::move(bytes)] { handleRtp(mid, bytes); });
+        });
       });
     });
-    pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> dc) { dcs_.push_back(dc); });
+    pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> dc) {
+      post([this, dc = std::move(dc)] { dcs_.push_back(dc); });
+    });
     return pc_;
   }
 
@@ -592,6 +607,8 @@ struct Client::Impl {
         case 3: {  // offer (server-initiated subscriber PC)
           auto sd = parseSessionDescription(f.data, f.len);
           if (sd.type != "offer") break;
+          // Captured on the worker; the answer posted from onLocalDescription
+          // reads it here too, never on libdatachannel's thread.
           latestOfferId_ = sd.id;
           midMedia_ = parseSdpMedia(sd.sdp);
           for (const auto& [mid, sid] : sd.midToTrack)
@@ -753,17 +770,28 @@ struct Client::Impl {
   }
 
   void teardown() {
-    if (ws_) {
+    std::shared_ptr<rtc::WebSocket> ws;
+    std::shared_ptr<rtc::PeerConnection> pc;
+    std::shared_ptr<rtc::Track> video;
+    std::shared_ptr<rtc::Track> audio;
+    std::vector<std::shared_ptr<rtc::DataChannel>> dcs;
+    {
+      std::lock_guard lk(m_);
+      ws = ws_;
+      pc = std::move(pc_);
+      video = std::move(videoTrack_);
+      audio = std::move(audioTrack_);
+      dcs = std::move(dcs_);
+      ws_.reset();  // reset shared state under the mutex sendSignal() reads it with
+    }
+    if (ws) {
       try {
-        ws_->close();
+        ws->close();
       } catch (...) {
       }
     }
-    ws_.reset();
-    pc_.reset();
-    videoTrack_.reset();
-    audioTrack_.reset();
-    dcs_.clear();
+    // ws/pc/video/audio/dcs destruct here, outside m_: a libdatachannel
+    // destructor that synchronously fires a callback can still post().
   }
 #endif  // BC_WITH_LIVECALL
 };

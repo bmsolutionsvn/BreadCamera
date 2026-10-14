@@ -28,10 +28,16 @@ struct AudioSample {
 // one participant's tracks and exposes them through callbacks. There is no
 // publish path in the API by design (R5) and the token is subscribe-only.
 //
-// The transport runs on a worker thread; public methods are safe to call from
-// the constructing thread and callbacks are serialized onto that one worker
-// thread (never libdatachannel's internal threads). Built only when
-// BC_WITH_LIVECALL=1; otherwise construction reports `lkc-unavailable`.
+// Threading contract: one worker thread owns the transport. Every
+// libdatachannel callback is marshalled onto that worker, so the user
+// callbacks (onVideo/onAudio/onState) are always invoked on the worker thread,
+// never on libdatachannel's internal threads. The public methods are safe to
+// call from any thread. Because the callbacks run on the worker:
+//   - a callback must not block (it stalls the transport);
+//   - a callback must not destroy the Client — ~Client joins the worker, so
+//     deleting the Client from inside its own callback deadlocks.
+// Built only when BC_WITH_LIVECALL=1; otherwise construction reports
+// `lkc-unavailable`.
 class Client {
  public:
   Client(std::string url, std::string token);
