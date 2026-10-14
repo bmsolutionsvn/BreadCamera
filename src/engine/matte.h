@@ -24,6 +24,8 @@ class MatteBackend {
   virtual std::string name() const = 0;
   virtual void process(std::vector<MatteJob*>& jobs) = 0;  // throws → the whole batch is bypassed
   virtual void forget(const std::string& cameraId) = 0;    // drop per-camera temporal state
+  // Last per-camera inference time in ms, for /engine/matteMs; 0 when the backend reports none.
+  virtual double lastInferenceMs() const { return 0; }
 };
 
 struct MatteBackendChoice {

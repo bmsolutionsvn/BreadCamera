@@ -325,11 +325,8 @@ target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
 
 # M6 Task 1 — the optional ONNX Runtime (DirectML) matte backend.
 if(BC_WITH_ONNX)
-  # The backend implementation lands in M6 Task 2 (src/engine/onnx_matte.cpp); guard so this
-  # commit still configures (and the file is picked up automatically once it exists).
-  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/engine/onnx_matte.cpp")
-    target_sources(bc_engine PRIVATE src/engine/onnx_matte.cpp)
-  endif()
+  # M6 Task 2 — the backend implementation.
+  target_sources(bc_engine PRIVATE src/engine/onnx_matte.cpp)
   target_link_libraries(bc_engine PUBLIC ORT::ORT dxgi)
   target_compile_definitions(bc_engine PUBLIC BC_WITH_ONNX=1)
 else()
@@ -434,6 +431,8 @@ add_executable(bc_tests
   # M4b Task 3
   tests/vcam_shared_test.cpp
   tests/vcam_output_test.cpp
+  # M6 Task 2
+  tests/onnx_matte_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

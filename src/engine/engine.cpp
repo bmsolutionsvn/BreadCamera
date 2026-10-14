@@ -257,6 +257,7 @@ void Engine::run() {
       if (index % ticksPerSecond == 0) {
         for (auto& cam : cameras_) cam->publishStatus();
         state_.set("/engine/overruns", overruns_.load());
+        if (matte_) state_.set("/engine/matteMs", matte_->lastInferenceMs());
       }
     }
     if (tap_) tap_(index, frames);
