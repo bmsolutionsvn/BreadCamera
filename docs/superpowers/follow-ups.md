@@ -145,3 +145,9 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The tablet chart's colours are only as good as the tablet; tablet mode matches cameras to each other, not to absolute colour (`src/engine/color_calibration_service.cpp`).
 - Trims stay in the colour schema as hidden fields at neutral values; manual trims are out of scope (spec §10) (`src/core/stage_params.cpp`).
 - OpenCV (Apache-2.0) must be listed in the M5 licence notices (`installer/THIRD_PARTY_NOTICES.md`).
+
+## M5
+- The 8-hour soak (`scripts/soak.ps1 -Hours 8 -Faults`) is queued as its own night run; M5 carries the 30-minute evidence.
+- Fresh-install check is a human gate: `docs/superpowers/manual-checks/m5-fresh-install.md`.
+- Engine error messages stay as detail lines under the plain headlines (`ui/src/errors.ts`).
+- The spec §8.3 soak does not pass on this PC: tick overruns and per-camera median latency > 50 ms (≈3 fps to the SRT outputs) on the default Intel UHD 630 adapter — the same Converter::readback hotspot as M1/M2 (§9); criteria unchanged, the 8-hour run stays queued (scripts/soak.ps1, .superpowers/sdd/2026-10-08-m5-hardening/task-3-report.md).
