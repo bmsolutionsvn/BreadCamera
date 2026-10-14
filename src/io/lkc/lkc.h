@@ -58,8 +58,11 @@ class Client {
   void onAudio(std::function<void(AudioSample)> cb);
   void onState(std::function<void(SignalState, std::optional<ErrorInfo>)> cb);
 
-  // Deliver only this participant's tracks. Empty (the default) delivers every
-  // subscribed track. Safe to call before or after the connection is up.
+  // Deliver only this participant's media. Every received track is retained
+  // (so one guest's track is never released to make room for another); with a
+  // filter set, media whose publisher cannot be resolved is NOT delivered (fail
+  // closed). Empty (the default) delivers every retained track. Safe to call
+  // before or after the connection is up.
   void subscribe(std::string participantIdentity);
 
  private:

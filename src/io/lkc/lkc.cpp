@@ -445,11 +445,18 @@ struct Client::Impl {
   }
 
 #if BC_WITH_LIVECALL
+  // Every received track is retained, keyed by its mid, so subscribing to one
+  // guest never releases another's (a released track drops its m-line). D4.
+  struct RetainedTrack {
+    std::string identity;  // publisher identity, resolved when retained
+    std::string kind;      // "video" | "audio"
+    std::shared_ptr<rtc::Track> track;
+  };
+
   std::shared_ptr<rtc::WebSocket> ws_;
   std::shared_ptr<rtc::PeerConnection> pc_;
-  std::shared_ptr<rtc::Track> videoTrack_;
-  std::shared_ptr<rtc::Track> audioTrack_;
   std::vector<std::shared_ptr<rtc::DataChannel>> dcs_;
+  std::map<std::string, RetainedTrack> tracks_;  // mid -> retained track
   std::map<std::string, MediaSection> midMedia_;
   std::map<std::string, std::string> midIdentity_;
   std::map<std::string, std::string> trackIdentity_;  // TrackInfo.sid -> participant
@@ -587,16 +594,15 @@ struct Client::Impl {
         std::string bytes(reinterpret_cast<const char*>(b->data()), b->size());
         post([this, mid, bytes = std::move(bytes)] { handleRtp(mid, bytes); });
       });
-      // Retain the track on the worker (a released track drops its m-line).
-      post([this, t] {
-        const std::string tmid = t->mid();
-        auto it = midMedia_.find(tmid);
-        const std::string kind = it == midMedia_.end() ? std::string() : it->second.kind;
-        if (kind == "audio") {
-          audioTrack_ = t;
-        } else {
-          videoTrack_ = t;
-        }
+      // Retain every track on the worker, keyed by mid: a released track drops
+      // its m-line, so two guests' tracks must both be kept.
+      post([this, t, mid] {
+        auto it = midMedia_.find(mid);
+        RetainedTrack rt;
+        rt.kind = it == midMedia_.end() ? std::string() : it->second.kind;
+        rt.identity = resolveIdentity(mid);
+        rt.track = t;
+        tracks_[mid] = std::move(rt);
       });
     });
     pc_->onDataChannel([this](std::shared_ptr<rtc::DataChannel> dc) {
@@ -638,6 +644,18 @@ struct Client::Impl {
           for (const auto& [mid, sid] : sd.midToTrack)
             if (auto t = trackIdentity_.find(sid); t != trackIdentity_.end())
               midIdentity_[mid] = t->second;
+          // Drop retained tracks whose m-line this offer no longer carries (the
+          // m-line is already gone, so the reference is only cleanup). Guarded by
+          // "the offer has media" so an application-only offer cannot wipe them.
+          bool offerHasMedia = false;
+          for (const auto& kv : midMedia_)
+            if (kv.second.kind == "video" || kv.second.kind == "audio") offerHasMedia = true;
+          if (offerHasMedia) {
+            for (auto it = tracks_.begin(); it != tracks_.end();) {
+              if (midMedia_.find(it->first) == midMedia_.end()) it = tracks_.erase(it);
+              else ++it;
+            }
+          }
           auto p = ensurePc();
           try {
             p->setRemoteDescription(rtc::Description(sd.sdp, "offer"));
@@ -694,15 +712,25 @@ struct Client::Impl {
     }
   }
 
+  // The publisher of a mid, from the offer's mid_to_track_id + the participants'
+  // track lists, falling back to the identity recorded when the track arrived.
+  std::string resolveIdentity(const std::string& mid) {
+    if (auto it = midIdentity_.find(mid); it != midIdentity_.end()) return it->second;
+    if (auto it = tracks_.find(mid); it != tracks_.end()) return it->second.identity;
+    return {};
+  }
+
   bool wanted(const std::string& mid) {
     std::string want;
     {
       std::lock_guard lk(m_);
       want = wantIdentity_;
     }
-    if (want.empty()) return true;
-    auto it = midIdentity_.find(mid);
-    return it == midIdentity_.end() ? true : it->second == want;  // unfilterable mid is delivered
+    if (want.empty()) return true;  // no filter: deliver every retained track
+    // With a filter set, an unattributable mid is NOT delivered (fail closed):
+    // the previous fail-open let another guest's media through.
+    const std::string ident = resolveIdentity(mid);
+    return !ident.empty() && ident == want;
   }
 
   void handleRtp(const std::string& mid, const std::string& bytes) {
@@ -796,15 +824,13 @@ struct Client::Impl {
   void teardown() {
     std::shared_ptr<rtc::WebSocket> ws;
     std::shared_ptr<rtc::PeerConnection> pc;
-    std::shared_ptr<rtc::Track> video;
-    std::shared_ptr<rtc::Track> audio;
+    std::map<std::string, RetainedTrack> tracks;
     std::vector<std::shared_ptr<rtc::DataChannel>> dcs;
     {
       std::lock_guard lk(m_);
       ws = ws_;
       pc = std::move(pc_);
-      video = std::move(videoTrack_);
-      audio = std::move(audioTrack_);
+      tracks = std::move(tracks_);
       dcs = std::move(dcs_);
       ws_.reset();  // reset shared state under the mutex sendSignal() reads it with
     }
@@ -814,8 +840,8 @@ struct Client::Impl {
       } catch (...) {
       }
     }
-    // ws/pc/video/audio/dcs destruct here, outside m_: a libdatachannel
-    // destructor that synchronously fires a callback can still post().
+    // ws/pc/tracks/dcs destruct here, outside m_: a libdatachannel destructor
+    // that synchronously fires a callback can still post().
   }
 #endif  // BC_WITH_LIVECALL
 };
