@@ -288,6 +288,18 @@ TEST_CASE("Factory: a non-string NDI name is rejected with the router's message"
   CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "NDI name must be text", std::invalid_argument);
 }
 
+TEST_CASE("Factory: a breadcall input with a missing or non-integer slot is rejected clearly") {
+  Rig r;
+  bc::DefaultAdapterFactory factory(*r.gpu, r.pool);
+  bc::InputConfig in;
+  in.kind = "breadcall";
+  in.params = {{"url", "wss://livekit.example.com"}, {"token", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}};
+  // A hand-edited show file with no slot must not surface nlohmann::out_of_range.
+  CHECK_THROWS_WITH_AS(factory.makeInput(in), "BreadCall slot is required (a whole number)", std::invalid_argument);
+  in.params["slot"] = "2";  // a string slot is not a whole number
+  CHECK_THROWS_WITH_AS(factory.makeInput(in), "BreadCall slot is required (a whole number)", std::invalid_argument);
+}
+
 TEST_CASE("Factory: an omt output is built from its mode and name") {
   Rig r;
   bc::DefaultAdapterFactory factory(*r.gpu, r.pool);

@@ -15,6 +15,7 @@ const ENGINE_CODES = [
   'decklink-no-signal',
   'aja-failed',
   'capture-failed',
+  'breadcall-no-guest',
   // src/io/*_output.h (errorCode()) and src/engine/camera.cpp
   'output-failed',
   'srt-out-failed',
@@ -35,6 +36,7 @@ test('known codes get a headline and keep the engine detail', () => {
   expect(r.headline).toBe('The source could not be opened.');
   expect(r.detail).toContain('srt://1.2.3.4:9000');
   expect(errorText({ code: 'ndi-failed', message: 'x' }).headline).toBe('The output failed and is retrying.');
+  expect(errorText({ code: 'breadcall-no-guest', message: 'no guest in slot 2' }).headline).toBe('No guest is in this BreadCall slot yet.');
 });
 
 test('every engine error code gets a plain headline', () => {

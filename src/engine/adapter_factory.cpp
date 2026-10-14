@@ -72,6 +72,8 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
       throw std::invalid_argument("BreadCall room URL is required");
     if (!cfg.params.contains("token") || !cfg.params["token"].is_string())
       throw std::invalid_argument("BreadCall token is required");
+    if (!cfg.params.contains("slot") || !cfg.params["slot"].is_number_integer())
+      throw std::invalid_argument("BreadCall slot is required (a whole number)");
 #if BC_WITH_LIVECALL
     return std::make_unique<BreadCallInput>(gpu_, pool_, cfg.params["url"].get<std::string>(),
                                             cfg.params["token"].get<std::string>(), cfg.params.at("slot").get<int>());

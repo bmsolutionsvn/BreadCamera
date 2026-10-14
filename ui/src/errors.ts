@@ -24,6 +24,7 @@ const HEADLINES: Record<string, string> = {
   'ndi-format': 'The NDI source sends a video format we cannot use.',
   'decklink-no-signal': 'No signal on the DeckLink input.',
   'capture-failed': 'The camera could not be opened (USB or built-in).',
+  'breadcall-no-guest': 'No guest is in this BreadCall slot yet.',
 };
 
 // A plain headline for the operator; the engine's own message stays underneath as the detail.
