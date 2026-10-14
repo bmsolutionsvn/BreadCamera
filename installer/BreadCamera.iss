@@ -40,6 +40,7 @@ Source: "{#BuildDir}\vcam\breadcamera-vcam.dll"; DestDir: "{app}"; Flags: ignore
 Source: "{#VcRedist}"; DestDir: "{tmp}"; Flags: deleteafterinstall
 Source: "THIRD_PARTY_NOTICES.md"; DestDir: "{app}"
 Source: "LGPL-source-offer.txt"; DestDir: "{app}"
+Source: "licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs
 
 [Icons]
 Name: "{group}\BreadCamera"; Filename: "{app}\BreadCamera.exe"

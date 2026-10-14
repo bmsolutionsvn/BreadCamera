@@ -30,8 +30,9 @@ options):
   (`avcodec`, `avformat`, `swresample`, `swscale`, plus the `srt`, `nvcodec` and `amf` features).
   No GPL parts (`--enable-gpl`, x264/x265, …) are enabled.
 
-The full LGPL-2.1 text is the `COPYING.LGPLv2.1` section of FFmpeg's own `LICENSE.md`, and the
-source-availability statement required by LGPL §6 is in `LGPL-source-offer.txt` next to this file:
+The full LGPL-2.1 text ships with the installer as `licenses\LGPL-2.1.txt` (copied from FFmpeg's
+own `COPYING.LGPLv2.1`). The source-availability statement required by LGPL §6 is in
+`LGPL-source-offer.txt` next to this file:
 
 > BreadCamera uses FFmpeg libraries under the GNU Lesser General Public License v2.1 or later,
 > linked dynamically (avcodec-*.dll, avformat-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll).
@@ -39,12 +40,12 @@ source-availability statement required by LGPL §6 is in `LGPL-source-offer.txt`
 > On request we provide the complete corresponding source code: contact bmsolutions.vn.
 > You may replace these DLLs with your own compatible builds.
 
-FFmpeg's own licence summary (`LICENSE.md`, MIT/X11/BSD bits combined into LGPL-2.1+) is shipped
-in the vcpkg package:
+FFmpeg's own licence summary (`LICENSE.md`, MIT/X11/BSD bits combined into LGPL-2.1+) reads:
 
     Most files in FFmpeg are under the GNU Lesser General Public License version 2.1
-    or later (LGPL v2.1+). ... Some other files have MIT/X11/BSD-style licenses.
-    In combination the LGPL v2.1+ applies to FFmpeg.
+    or later (LGPL v2.1+). Read the file `COPYING.LGPLv2.1` for details. Some other
+    files have MIT/X11/BSD-style licenses. In combination the LGPL v2.1+ applies to
+    FFmpeg.
 
 FFmpeg's optional features used here pull in two more permissive components, both linked in and
 covered by the FFmpeg build above:
@@ -59,16 +60,16 @@ covered by the FFmpeg build above:
 - **URL:** <https://github.com/Haivision/srt>
 - **Shipped as:** `srt.dll`
 
-Full MPL-2.0 text is the `LICENSE` section of the vcpkg `libsrt` copyright file. MPL-2.0 requires
-that if we modify libsrt we publish those file-level changes; **BreadCamera ships libsrt
-unmodified**. The required notice is:
+The full MPL-2.0 text ships with the installer as `licenses\MPL-2.0.txt`. MPL-2.0 requires that if
+we modify libsrt we publish those file-level changes; **BreadCamera ships libsrt unmodified**. The
+required notice is:
 
     This Source Code Form is subject to the terms of the Mozilla Public
     License, v. 2.0. If a copy of the MPL was not distributed with this
     file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 libsrt additionally contains the UDT BSD-3-Clause notice (University of Illinois) and public-domain
-files, reproduced in the same vcpkg copyright file.
+files; the BSD-3-Clause text ships as `licenses\BSD-3-Clause.txt`.
 
 ## ixwebsocket
 
@@ -173,23 +174,37 @@ files, reproduced in the same vcpkg copyright file.
 The SDK is redistributed under the Microsoft Software License Terms that accompany the WebView2
 SDK (the `LICENSE.txt` in the SDK package). The WebView2 *Runtime* itself is a Microsoft
 component installed on the end-user machine, not redistributed by BreadCamera. The vcpkg package's
-`copyright` file carries Microsoft's BSD-3-Clause style notice for the loader:
+`copyright` file carries Microsoft's complete BSD-3-Clause notice for the loader:
 
     Copyright (C) Microsoft Corporation. All rights reserved.
 
     Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+    modification, are permitted provided that the following conditions are
+    met:
 
-      * Redistributions of source code must retain the above copyright notice,
-        this list of conditions and the following disclaimer.
-      * Redistributions in binary form must reproduce the above copyright notice,
-        this list of conditions and the following disclaimer in the documentation
-        and/or other materials provided with the distribution.
-      * The name of Microsoft Corporation, or the names of its contributors may not
-        be used to endorse or promote products derived from this software without
-        specific prior written permission.
+       * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+       * Redistributions in binary form must reproduce the above
+    copyright notice, this list of conditions and the following disclaimer
+    in the documentation and/or other materials provided with the
+    distribution.
+       * The name of Microsoft Corporation, or the names of its contributors
+    may not be used to endorse or promote products derived from this
+    software without specific prior written permission.
 
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" ...
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+    A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+    OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+    SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+    LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+    DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+    THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+The same BSD-3-Clause text ships as `licenses\BSD-3-Clause.txt`.
 
 ## NDI SDK runtime
 
@@ -206,8 +221,9 @@ runtime file the licence marks redistributable. Required attribution:
 
 ## NVIDIA Video Effects SDK (Maxine) runtime and AI Green Screen model
 
-- **Version:** NVIDIA Video Effects SDK (Maxine) runtime — the `nvvfx` proxy sources and the
-  `nvvfxgreenscreen` feature model from the installed SDK
+- **Version:** n/a on this machine (NVIDIA VFX SDK absent). The SDK ships unpinned; when built, the
+  version is whatever the operator's `%VFXSDK_ROOT%` provides (the `nvvfx` proxy sources and the
+  `nvvfxgreenscreen` feature model)
 - **Licence:** NVIDIA Software License Agreement; Product-Specific Terms for NVIDIA AI Products;
   NVIDIA Community Model License
 - **URL:** <https://developer.nvidia.com/nvidia-video-effects-sdk>
@@ -228,7 +244,7 @@ available for commercial/non-commercial use; downloads require a free NVIDIA Dev
   `opencv_calib3d4.dll`, `opencv_features2d4.dll`, `opencv_flann4.dll` and `opencv_mcc4.dll`
   are shipped.
 
-The full Apache-2.0 text is the `LICENSE` section of the vcpkg `opencv4` copyright file.
+The full Apache-2.0 text ships with the installer as `licenses\Apache-2.0.txt`.
 
 ## Blackmagic DeckLink SDK
 
@@ -314,7 +330,7 @@ libajantv2 repository's `LICENSE` file.
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE.
 
-(The full text is kept in `vcam/LICENSE` in the source tree.)
+(The same MIT text is also kept in `vcam/LICENSE` in the source tree.)
 
 ## MODNet portrait-matting model (M6)
 
@@ -326,7 +342,7 @@ libajantv2 repository's `LICENSE` file.
 - **Ships only when built:** ONNX matte backend (`BC_WITH_ONNX=ON`, M6). Shipped as
   `models/modnet.onnx` when enabled.
 
-Full Apache-2.0 text: <https://www.apache.org/licenses/LICENSE-2.0>.
+Full Apache-2.0 text ships with the installer as `licenses\Apache-2.0.txt`.
 
 ## ONNX Runtime and DirectML (M6)
 
@@ -341,18 +357,42 @@ Standard MIT licence text (Copyright (c) Microsoft Corporation). Full texts:
 <https://github.com/microsoft/onnxruntime/blob/main/LICENSE> and
 <https://github.com/microsoft/DirectML/blob/master/LICENSE>.
 
+## Microsoft Visual C++ Redistributable
+
+- **Version:** `vc_redist.x64.exe` 14.44.35211.0 (from the build machine's Visual Studio install,
+  packed by the installer and run as `/install /quiet /norestart`)
+- **Licence:** Microsoft Software License Terms for the Microsoft Visual C++ Redistributable
+  (redistributable under those terms)
+- **URL:** <https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist>
+- **Shipped as:** `vc_redist.x64.exe` (installed to `{tmp}` and deleted after install)
+
+The runtime installs the MSVC C++ standard-library DLLs BreadCamera's executables depend on. It is
+not covered by the OSS licence texts in `licenses\`; its own terms are the Microsoft licence above.
+
 ---
 
 ## Bundled transitive dependencies
 
 These vcpkg libraries are linked or shipped (`{#BuildDir}\*.dll`) but are not project-level
-choices. Each is used unmodified, under a permissive licence:
+choices. Each is used unmodified; its full licence text ships in `licenses\`:
 
-| Component | Version (vcpkg) | Licence | URL |
+| Component | Version (vcpkg) | Licence | Text shipped as |
 |---|---|---|---|
-| OpenSSL (`libcrypto-3-x64.dll`) | 3.6.5#1 | Apache-2.0 | <https://www.openssl.org/> |
-| Protocol Buffers (`libprotobuf.dll`) | 6.33.4#2 | BSD-3-Clause | <https://protobuf.dev/> |
-| zlib (`z.dll`) | 1.3.2#2 | Zlib | <https://zlib.net/> |
-| Abseil (`abseil_dll.dll`) | 20260107.1#3 | Apache-2.0 | <https://abseil.io/> |
+| OpenSSL (`libcrypto-3-x64.dll`) | 3.6.5#1 | Apache-2.0 | `licenses\Apache-2.0.txt` |
+| Protocol Buffers (`libprotobuf.dll`) | 6.33.4#2 | BSD-3-Clause | `licenses\BSD-3-Clause.txt` |
+| zlib (`z.dll`) | 1.3.2#2 | Zlib | `licenses\zlib.txt` |
+| Abseil (`abseil_dll.dll`) | 20260107.1#3 | Apache-2.0 | `licenses\Apache-2.0.txt` |
 
-The licence texts for these are the corresponding sections of their vcpkg `copyright` files.
+The header/static-only components (WIL, nlohmann-json, ixwebsocket, VCamSample, libomt) carry their
+full MIT/BSD notices inline in this file above; `licenses\` is the same set of texts for the
+shipped components whose licence is not MIT-style.
+
+## Licence files shipped in `licenses\`
+
+| File | Licence |
+|---|---|
+| `Apache-2.0.txt` | Apache License 2.0 |
+| `BSD-3-Clause.txt` | BSD 3-Clause (protobuf/Google text; also the WebView2 loader and UDT) |
+| `LGPL-2.1.txt` | GNU Lesser General Public License 2.1 |
+| `MPL-2.0.txt` | Mozilla Public License 2.0 |
+| `zlib.txt` | zlib licence |
