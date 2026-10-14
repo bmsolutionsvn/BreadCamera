@@ -37,7 +37,14 @@ struct AudioSample {
 //   - a callback must not destroy the Client — ~Client joins the worker, so
 //     deleting the Client from inside its own callback deadlocks.
 // Built only when BC_WITH_LIVECALL=1; otherwise construction reports
-// `lkc-unavailable`.
+// `lkc-unavailable`. An Offline state carries an ErrorInfo whose code is one of:
+//   lkc-config      the token is not a LiveKit access token (JWT);
+//   lkc-auth        the server refused the join (bad/expired/unauthorised token);
+//   lkc-unreachable the room/server could not be reached;
+//   lkc-media       the media connection was lost after a successful join;
+//   lkc-unavailable LiveKit support is not built (BC_WITH_LIVECALL=0).
+// lkc-auth and lkc-config are terminal (the operator re-mints); the others may
+// be retried.
 class Client {
  public:
   Client(std::string url, std::string token);

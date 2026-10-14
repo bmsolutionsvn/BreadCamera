@@ -3,16 +3,24 @@
 #define DOCTEST_CONFIG_DOUBLE_STRINGIFY
 #include <doctest/doctest.h>
 
+// winsock2.h must precede the Windows headers pulled in by gpu/device.h.
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "gpu/device.h"
 #include "io/breadcall_input.h"
@@ -80,6 +88,62 @@ struct Fixture {
   std::unique_ptr<bc::GpuDevice> gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   bc::TexturePool pool{*gpu};
 };
+
+#if BC_WITH_LIVECALL
+// A one-shot TCP listener that accepts the WebSocket handshake and answers with
+// HTTP 401 — how LiveKit rejects a well-formed but expired/unauthorised token.
+// It lets the terminal auth path be tested without a LiveKit server.
+class RejectingHandshakeServer {
+ public:
+  RejectingHandshakeServer() {
+    WSADATA wsa{};
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+    listen_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listen_ == INVALID_SOCKET) return;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_port = 0;
+    if (bind(listen_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
+        listen(listen_, 4) == SOCKET_ERROR) {
+      return;
+    }
+    int len = sizeof(addr);
+    if (getsockname(listen_, reinterpret_cast<sockaddr*>(&addr), &len) == 0) port_ = ntohs(addr.sin_port);
+    thread_ = std::thread([this] { serve(); });
+  }
+  ~RejectingHandshakeServer() { stop(); }
+  RejectingHandshakeServer(const RejectingHandshakeServer&) = delete;
+  RejectingHandshakeServer& operator=(const RejectingHandshakeServer&) = delete;
+
+  int port() const { return static_cast<int>(port_); }
+
+  void stop() {
+    if (listen_ != INVALID_SOCKET) {
+      closesocket(listen_);
+      listen_ = INVALID_SOCKET;
+    }
+    if (thread_.joinable()) thread_.join();
+  }
+
+ private:
+  void serve() {
+    for (int i = 0; i < 4; ++i) {  // allow a couple of connection attempts
+      SOCKET c = accept(listen_, nullptr, nullptr);
+      if (c == INVALID_SOCKET) return;
+      char buf[4096];
+      (void)recv(c, buf, sizeof(buf), 0);  // drain the request headers (best effort)
+      const char* resp = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+      (void)send(c, resp, static_cast<int>(std::strlen(resp)), 0);
+      closesocket(c);
+    }
+  }
+
+  SOCKET listen_ = INVALID_SOCKET;
+  unsigned short port_ = 0;
+  std::thread thread_;
+};
+#endif  // BC_WITH_LIVECALL
 }  // namespace
 
 #if !BC_WITH_LIVECALL
@@ -90,8 +154,8 @@ TEST_CASE("BreadCallInput: reports input-config when LiveKit support is not buil
   bc::BreadCallInput in(*f.gpu, f.pool, "ws://127.0.0.1:7880", kTokenShape, 1);
   Sink sink;
   in.start(sink);
+  REQUIRE(sink.waitFor([&] { return sink.count(bc::SignalState::Offline) > 0; }, 5s));
   in.stop();
-  REQUIRE_FALSE(sink.states.empty());
   CHECK(sink.states.back() == bc::SignalState::Offline);
   auto e = sink.lastError();
   REQUIRE(e);
@@ -103,8 +167,8 @@ TEST_CASE("BreadCallInput: a malformed url reports input-config") {
   bc::BreadCallInput in(*f.gpu, f.pool, "this is not a url", kTokenShape, 1);
   Sink sink;
   in.start(sink);
+  REQUIRE(sink.waitFor([&] { return sink.count(bc::SignalState::Offline) > 0; }, 5s));
   in.stop();
-  REQUIRE_FALSE(sink.states.empty());
   CHECK(sink.states.back() == bc::SignalState::Offline);
   auto e = sink.lastError();
   REQUIRE(e);
@@ -124,13 +188,31 @@ TEST_CASE("BreadCallInput: a bad token reports input-config and does not retry")
   CHECK(sink.count(bc::SignalState::Connecting) == 1);  // terminal: no reconnect
 }
 
+TEST_CASE("BreadCallInput: a well-formed token the server rejects reports terminal input-config") {
+  // The token is a structurally valid JWT, so the failure is the server's
+  // decision (LiveKit checks the token at the WebSocket upgrade): terminal
+  // input-config, not an endless retry.
+  Fixture f;
+  RejectingHandshakeServer server;
+  REQUIRE(server.port() > 0);
+  bc::BreadCallInput in(*f.gpu, f.pool, "ws://127.0.0.1:" + std::to_string(server.port()), kTokenShape, 1);
+  Sink sink;
+  in.start(sink);
+  REQUIRE(sink.waitFor([&] { return sink.count(bc::SignalState::Offline) > 0; }, 10s));
+  in.stop();
+  auto e = sink.lastError();
+  REQUIRE(e);
+  CHECK(e->code == "input-config");
+  CHECK(sink.count(bc::SignalState::Connecting) == 1);  // terminal: no reconnect
+}
+
 TEST_CASE("BreadCallInput: a slot with no guest reports breadcall-no-guest") {
   Fixture f;
   bc::BreadCallInput in(*f.gpu, f.pool, "ws://127.0.0.1:7880", kTokenShape, 0);
   Sink sink;
   in.start(sink);
+  REQUIRE(sink.waitFor([&] { return sink.count(bc::SignalState::Offline) > 0; }, 5s));
   in.stop();
-  REQUIRE_FALSE(sink.states.empty());
   CHECK(sink.states.back() == bc::SignalState::Offline);
   auto e = sink.lastError();
   REQUIRE(e);

@@ -53,6 +53,7 @@ class BreadCallInput final : public Input {
 
   void run();
   void push(Event ev);
+  bool configOk();
   void process(Event&& ev);
   void checkNoGuest();
   void decodeVideo(Event&& ev);

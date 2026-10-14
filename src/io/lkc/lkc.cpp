@@ -337,6 +337,18 @@ std::string jsonStringField(const std::string& json, const std::string& key) {
   }
   return v;
 }
+
+// libdatachannel reports a failed WebSocket (HTTP upgrade) handshake as
+// "WebSocket connection failed" (see impl/websocket.cpp: the WsTransport
+// Failed path). For LiveKit that upgrade is where the token is checked, so a
+// failed upgrade means the server refused an otherwise well-formed credential
+// (bad/expired/unauthorised) — gated separately from a transport failure so the
+// caller can stop retrying (Task 3 review, Finding 1). A TCP/TLS/proxy failure
+// or a connection timeout is "unreachable" and stays recoverable.
+bool wsErrorIsAuthRejection(const std::string& e) {
+  return e.find("WebSocket connection failed") != std::string::npos ||
+         e.find("WebSocket handshake failed") != std::string::npos;
+}
 #endif  // BC_WITH_LIVECALL
 }  // namespace
 
@@ -462,15 +474,20 @@ struct Client::Impl {
     });
     ws_->onError([this](std::string e) {
       dbg("[lkc] ws error: %s", e.c_str());
-      post([this, e] { emitState(SignalState::Offline, ErrorInfo{"lkc-unreachable", e}); });
+      const bool auth = wsErrorIsAuthRejection(e);
+      post([this, e, auth] {
+        emitState(SignalState::Offline, ErrorInfo{auth ? "lkc-auth" : "lkc-unreachable", e});
+      });
     });
     ws_->onClosed([this] {
       post([this] {
         dbg("[lkc] ws closed joined=%d", joined_ ? 1 : 0);
         if (stop_) return;
         const bool up = joined_;
+        // A close before JoinResponse means the server refused the join; with a
+        // well-formed token that is an auth rejection, not a lost room.
         emitState(SignalState::Offline,
-                  ErrorInfo{up ? "lkc-media" : "lkc-config",
+                  ErrorInfo{up ? "lkc-media" : "lkc-auth",
                             up ? "the signalling connection closed"
                                : "the server refused the connection (check the token)"});
       });

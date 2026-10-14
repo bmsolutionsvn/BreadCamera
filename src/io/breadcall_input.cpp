@@ -106,34 +106,9 @@ BreadCallInput::~BreadCallInput() {
 void BreadCallInput::start(InputSink& sink) {
   sink_ = &sink;
   stopping_ = false;
-#if !BC_WITH_LIVECALL
-  sink_->onState(SignalState::Connecting, std::nullopt);
-  sink_->onState(SignalState::Offline,
-                 ErrorInfo{"input-config", "BreadCall support is not built (BC_WITH_LIVECALL=0)"});
-#else
-  if (slot_ < kMinSlot || slot_ > kMaxSlot) {
-    sink_->onState(SignalState::Connecting, std::nullopt);
-    sink_->onState(SignalState::Offline,
-                   ErrorInfo{"breadcall-no-guest",
-                             "no guest in slot " + std::to_string(slot_) + " (slots are 1..8)"});
-    return;
-  }
-  std::string why;
-  if (!urlLooksValid(url_, why)) {
-    sink_->onState(SignalState::Connecting, std::nullopt);
-    sink_->onState(SignalState::Offline,
-                   ErrorInfo{"input-config", "the BreadCall room url is unusable: " + why + ": " + url_});
-    return;
-  }
-  if (!tokenLooksValid(token_)) {
-    sink_->onState(SignalState::Connecting, std::nullopt);
-    sink_->onState(SignalState::Offline,
-                   ErrorInfo{"input-config", "the BreadCall token is not a LiveKit access token (JWT)"});
-    return;
-  }
-  // The worker emits Connecting for this and every retry attempt.
+  // Every callback (state included) runs on this worker, never on start()'s
+  // caller thread, matching InputSink's "called from the input's own thread".
   thread_ = std::thread([this] { run(); });
-#endif
 }
 
 void BreadCallInput::stop() {
@@ -160,7 +135,42 @@ void BreadCallInput::setFailure(ErrorInfo err, bool terminal) {
   sessionDone_ = true;
 }
 
+// Validates the constructor inputs on the worker (so every sink callback comes
+// from the worker thread). Emits Connecting then a terminal Offline for a bad
+// configuration and returns false.
+bool BreadCallInput::configOk() {
+#if !BC_WITH_LIVECALL
+  sink_->onState(SignalState::Connecting, std::nullopt);
+  sink_->onState(SignalState::Offline,
+                 ErrorInfo{"input-config", "BreadCall support is not built (BC_WITH_LIVECALL=0)"});
+  return false;
+#else
+  if (slot_ < kMinSlot || slot_ > kMaxSlot) {
+    sink_->onState(SignalState::Connecting, std::nullopt);
+    sink_->onState(SignalState::Offline,
+                   ErrorInfo{"breadcall-no-guest",
+                             "no guest in slot " + std::to_string(slot_) + " (slots are 1..8)"});
+    return false;
+  }
+  std::string why;
+  if (!urlLooksValid(url_, why)) {
+    sink_->onState(SignalState::Connecting, std::nullopt);
+    sink_->onState(SignalState::Offline,
+                   ErrorInfo{"input-config", "the BreadCall room url is unusable: " + why + ": " + url_});
+    return false;
+  }
+  if (!tokenLooksValid(token_)) {
+    sink_->onState(SignalState::Connecting, std::nullopt);
+    sink_->onState(SignalState::Offline,
+                   ErrorInfo{"input-config", "the BreadCall token is not a LiveKit access token (JWT)"});
+    return false;
+  }
+  return true;
+#endif
+}
+
 void BreadCallInput::run() {
+  if (!configOk()) return;
 #if BC_WITH_LIVECALL
   Backoff backoff;
   while (!stopping_) {
@@ -177,6 +187,11 @@ void BreadCallInput::run() {
       noGuestDeadline_ = {};
       videoDecodeFailures_ = 0;
     }
+    // Drop any decoder/resampler state from the previous session so a rejoin or
+    // a new stream cannot carry stale H.264 reference frames or audio.
+    if (vdec_) avcodec_flush_buffers(vdec_);
+    if (adec_) avcodec_flush_buffers(adec_);
+    if (swr_) swr_free(&swr_);
     auto client = std::make_unique<lkc::Client>(url_, token_);
     client->onState([this](SignalState s, std::optional<ErrorInfo> e) {
       Event ev;
@@ -251,12 +266,13 @@ void BreadCallInput::process(Event&& ev) {
         if (!emittedLive_) noGuestDeadline_ = steady_clock::now() + kNoGuestGrace;
       } else if (ev.state == SignalState::Offline) {
         const std::string code = ev.error ? ev.error->code : std::string();
-        if (code == "lkc-unavailable") {
-          setFailure(ErrorInfo{"input-config", ev.error ? ev.error->message : "BreadCall support is not built"},
+        // lkc-auth (server refused the join: bad/expired/unauthorised token),
+        // lkc-config (not a JWT) and lkc-unavailable (not built) are terminal;
+        // lkc-unreachable / lkc-media stay recoverable (review focus 1).
+        if (code == "lkc-auth" || code == "lkc-config" || code == "lkc-unavailable") {
+          setFailure(ErrorInfo{"input-config", ev.error ? ev.error->message : "cannot join the BreadCall room"},
                      true);
         } else {
-          // lkc-config / lkc-unreachable / lkc-media are all recoverable while the
-          // operator keeps the camera pointed at the room (review focus 1).
           setFailure(ErrorInfo{"input-failed", ev.error ? ev.error->message : "the BreadCall room dropped"},
                      false);
         }
