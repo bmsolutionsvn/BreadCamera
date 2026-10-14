@@ -433,6 +433,8 @@ add_executable(bc_tests
   tests/vcam_output_test.cpp
   # M6 Task 2
   tests/onnx_matte_test.cpp
+  # M6 Task 3
+  tests/e2e_m6_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
