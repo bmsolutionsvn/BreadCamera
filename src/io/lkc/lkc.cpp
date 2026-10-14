@@ -532,15 +532,14 @@ struct Client::Impl {
     cfg.forceMediaTransport = true;  // allocate SRTP before any track exists
     pc_ = std::make_shared<rtc::PeerConnection>(cfg);
     pc_->onLocalDescription([this](rtc::Description d) {
+      // This callback runs on libdatachannel's ThreadPool; touch no shared state
+      // here. Capture only the description and hand the send to the worker.
       const std::string type = d.typeString();
       std::string sdp = std::string(d);
-      // Snapshot the offer id produced by *this* answer at the moment the
-      // description is generated: a later offer's handleSignal must not be able
-      // to change the id an earlier answer carries.
-      const int32_t offerId = latestOfferId_;
       dbg("[lkc] local description %s (%zu bytes)", type.c_str(), sdp.size());
-      post([this, type, sdp = std::move(sdp), offerId] {
-        if (type == "answer") sendSignal(encodeAnswer(sdp, offerId));
+      post([this, type, sdp = std::move(sdp)] {
+        // latestOfferId_ is written and read only on the worker.
+        if (type == "answer") sendSignal(encodeAnswer(sdp, latestOfferId_));
       });
     });
     pc_->onLocalCandidate([this](rtc::Candidate c) {
@@ -613,8 +612,10 @@ struct Client::Impl {
         case 3: {  // offer (server-initiated subscriber PC)
           auto sd = parseSessionDescription(f.data, f.len);
           if (sd.type != "offer") break;
-          // The id of the offer being handled; onLocalDescription snapshots it while
-          // generating this answer, before the async hop to the worker.
+          // Record the id of the offer being answered. LiveKit awaits this
+          // answer before it sends the next offer, so offers do not overlap and
+          // this id is the one the pending answer serves; the posted answer
+          // lambda reads it on the worker (write and read both on the worker).
           latestOfferId_ = sd.id;
           midMedia_ = parseSdpMedia(sd.sdp);
           for (const auto& [mid, sid] : sd.midToTrack)
