@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -30,15 +31,20 @@ class OnnxMatte final : public MatteBackend {
 
  private:
   struct Cam {
+    struct WorkerError {
+      uint64_t token = 0;
+      std::string message;
+    };
     CpuImage pending;
     bool hasPending = false;
     MatteQuality quality = MatteQuality::Quality;
     std::vector<float> smooth;  // previous alpha at the current quality's size
     TextureRef latest;
-    uint64_t generation = 0;    // bumps on forget/quality change; stale results are dropped
+    uint64_t token = 0;  // globally monotonic; stale results are dropped (no ABA on forget+re-add)
+    std::optional<WorkerError> workerError;  // first worker failure for this token; cleared by a later success
   };
   void worker();
-  void infer(const std::string& id, const CpuImage& img, MatteQuality q, uint64_t generation);
+  void infer(const std::string& id, const CpuImage& img, MatteQuality q, uint64_t token);
 
   GpuDevice& gpu_;
   TexturePool& pool_;
@@ -52,6 +58,7 @@ class OnnxMatte final : public MatteBackend {
   std::condition_variable cv_;
   std::map<std::string, Cam> cams_;
   std::atomic<bool> stop_{false};
+  std::atomic<uint64_t> nextToken_{0};  // shared staleness counter: a reused camera id never matches an old result
   std::atomic<double> lastMs_{0};
   std::thread thread_;
 };

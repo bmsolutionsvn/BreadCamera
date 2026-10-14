@@ -49,12 +49,13 @@ TEST_CASE("M6 acceptance: 4x 1080p60 with the ONNX matte, no tick overruns" BC_R
   engine.setMatteBackend(std::move(choice.backend), choice.unavailableReason);
   bc::Show show;
   const char* modes[] = {"blur", "blur", "keyed", "replace"};
+  // Ports sit outside WSL's mirrored reserved range (44620-48715) on the build PC.
   for (int i = 0; i < 4; ++i) {
     bc::CameraConfig c;
     c.id = "cam" + std::to_string(i);
     c.name = c.id;
     c.input.kind = "srt";
-    c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47991 + i}};
+    c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49161 + i}};
     c.outputs.push_back({"out" + std::to_string(i), "fake", false, true, {}});
     c.stages = {{"matte", bc::normalizeStageParams("matte", {{"enabled", true}, {"quality", "performance"}})},
                 {"background", bc::normalizeStageParams("background", {{"mode", modes[i]}})}};
@@ -64,7 +65,7 @@ TEST_CASE("M6 acceptance: 4x 1080p60 with the ONNX matte, no tick overruns" BC_R
   engine.start();
   std::vector<std::unique_ptr<bc::test::TsPusher>> pushers;
   for (int i = 0; i < 4; ++i) {
-    pushers.push_back(std::make_unique<bc::test::TsPusher>(dir.path / "clip.ts", "srt://127.0.0.1:" + std::to_string(47991 + i) + "?mode=caller", true));
+    pushers.push_back(std::make_unique<bc::test::TsPusher>(dir.path / "clip.ts", "srt://127.0.0.1:" + std::to_string(49161 + i) + "?mode=caller", true));
   }
   std::this_thread::sleep_for(10s);
   const auto o0 = engine.stats().overruns;

@@ -155,7 +155,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 ## M6
 - ONNX backend uses DirectML on every vendor; spec §5.1 named TensorRT EP for NVIDIA (Maxine is NVIDIA's primary backend) (`src/engine/onnx_matte.cpp`).
 - MODNet is a portrait model run frame by frame with simple EWMA smoothing: expect more edge flicker than Maxine; a person must judge quality on real cameras (human check).
-- The ONNX mask trails the picture by 1–2 frames because inference is asynchronous (`src/engine/onnx_matte.h`).
-- Worker inference errors keep the previous alpha and are not surfaced as stage errors (`src/engine/onnx_matte.cpp`, `worker`).
+- The ONNX mask trails the picture: a single worker round-robins every camera, so the lag scales with the camera count × the per-camera inference time (e.g. with 4 cameras each waits for the three ahead of it), not a flat "1–2 frames" (`src/engine/onnx_matte.h`).
+- Worker inference errors (M6 review fix wave): resolved — `process()` now surfaces the first worker error (token-scoped, cleared by a later success), so a dead session bypasses and retries per the M2 rules instead of freezing the mask (`src/engine/onnx_matte.cpp`, `worker`/`process`).
 - The M6 acceptance (`tests/e2e_m6_test.cpp`) is deliberately strict and **fails on an integrated GPU**: `OnnxMatte::process` does a synchronous per-camera readback on the tick thread, which trips the engine's 60 %-tick overrun guard, so the matte stage reports `bypassed` (not `active`) and tick overruns rise (build PC, Intel UHD 630: +40 overruns in 20 s; `onnx-cpu` on WARP: +490); candidate fix: move the readback to the worker (`src/engine/onnx_matte.cpp`, `process`).
-- The M6 acceptance's SRT ports 47991–47994 sit inside the WSL-mirrored reserved range on this PC — latent flakiness; pick ports outside it (`tests/e2e_m6_test.cpp`).
+- The M6 acceptance's SRT ports (M6 review fix wave): resolved — moved from 47991–47994 (inside the WSL-mirrored reserved range on this PC) to 49161–49164 (`tests/e2e_m6_test.cpp`).

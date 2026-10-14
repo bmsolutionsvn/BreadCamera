@@ -82,21 +82,27 @@ OnnxMatte::~OnnxMatte() {
 }
 
 void OnnxMatte::process(std::vector<MatteJob*>& jobs) {
+  std::optional<Cam::WorkerError> failed;
   for (auto* job : jobs) {
     const auto d = dimsFor(job->quality);
     auto img = conv_.readback(*conv_.toBgra8(*job->frame, static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h)));
     std::lock_guard l(m_);
     auto& c = cams_[job->cameraId];
-    if (c.quality != job->quality) {
+    if (c.token == 0 || c.quality != job->quality) {
       c.quality = job->quality;
       c.smooth.clear();
-      ++c.generation;
+      c.token = ++nextToken_;
     }
     c.pending = std::move(img);
     c.hasPending = true;
     job->alpha = c.latest ? c.latest : opaque_;
+    if (!failed && c.workerError && c.workerError->token == c.token) failed = c.workerError;
   }
   cv_.notify_one();
+  // A dead session must fail visibly: report the first unresolved worker error so the engine's
+  // stage guard bypasses and retries (M2 rules). The jobs above still reach the worker, so a
+  // later success clears the error and the matte recovers.
+  if (failed) throw std::runtime_error("the matte worker failed: " + failed->message);
 }
 
 void OnnxMatte::forget(const std::string& id) {
@@ -127,20 +133,25 @@ void OnnxMatte::worker() {
       img = std::move(it->second.pending);
       it->second.hasPending = false;
       q = it->second.quality;
-      gen = it->second.generation;
+      gen = it->second.token;
     }
     lastId = id;
     try {
       infer(id, img, q, gen);
-    } catch (const std::exception&) {
-      // A failed inference leaves the previous alpha in place; the stage guard sees no failure
-      // because process() never throws for it. ponytail: surface worker errors as a stage error
-      // if they turn out to happen in practice.
+    } catch (const std::exception& e) {
+      // Keep the first failure for this token; process() surfaces it and a later success
+      // clears it (see infer).
+      std::lock_guard l(m_);
+      auto it = cams_.find(id);
+      if (it != cams_.end() && it->second.token == gen &&
+          (!it->second.workerError || it->second.workerError->token != gen)) {
+        it->second.workerError = Cam::WorkerError{gen, e.what()};
+      }
     }
   }
 }
 
-void OnnxMatte::infer(const std::string& id, const CpuImage& img, MatteQuality q, uint64_t generation) {
+void OnnxMatte::infer(const std::string& id, const CpuImage& img, MatteQuality q, uint64_t token) {
   const auto d = dimsFor(q);
   if (static_cast<int>(img.width) != d.w || static_cast<int>(img.height) != d.h) return;
   const size_t plane = static_cast<size_t>(d.w) * d.h;
@@ -157,14 +168,17 @@ void OnnxMatte::infer(const std::string& id, const CpuImage& img, MatteQuality q
   const char* out[] = {outName_.c_str()};
   const auto t0 = std::chrono::steady_clock::now();
   auto result = session_->Run(Ort::RunOptions{nullptr}, in, &tensor, 1, out, 1);
-  lastMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  // Guard the read below: a model with a different output shape must not be indexed as if it
+  // held one alpha value per pixel.
+  if (result[0].GetTensorTypeAndShapeInfo().GetElementCount() != plane) return;
   const float* alpha = result[0].GetTensorData<float>();
 
   std::vector<uint8_t> bytes(plane);
   {
     std::lock_guard l(m_);
     auto it = cams_.find(id);
-    if (it == cams_.end() || it->second.generation != generation) return;  // forgotten or quality changed meanwhile
+    if (it == cams_.end() || it->second.token != token) return;  // forgotten or quality changed meanwhile
     auto& s = it->second.smooth;
     if (s.size() != plane) s.assign(alpha, alpha + plane);
     for (size_t i = 0; i < plane; ++i) {
@@ -179,6 +193,10 @@ void OnnxMatte::infer(const std::string& id, const CpuImage& img, MatteQuality q
   }
   std::lock_guard l(m_);
   auto it = cams_.find(id);
-  if (it != cams_.end() && it->second.generation == generation) it->second.latest = tex;
+  if (it != cams_.end() && it->second.token == token) {
+    it->second.latest = tex;
+    it->second.workerError.reset();  // a good result supersedes any earlier failure
+    lastMs_ = ms;                    // only an accepted result updates /engine/matteMs
+  }
 }
 }  // namespace bc

@@ -13,12 +13,15 @@
 
 namespace bc {
 MatteBackendChoice makeMatteBackend(GpuDevice& gpu, TexturePool& pool, Converter& conv) {
+  std::string maxineError;
 #if BC_WITH_MAXINE
   if (gpu.isNvidia()) {
     try {
       return {std::make_unique<MaxineMatte>(gpu, pool, conv, MaxineMatte::defaultModelDir()), ""};
     } catch (const std::exception& e) {
-      return {nullptr, std::string("the NVIDIA background removal could not start: ") + e.what()};
+      // The SDK can be present but fail to start (no VFX runtime, missing models). Do not give
+      // up: fall through to ONNX, which the plan also runs on NVIDIA when Maxine is missing.
+      maxineError = std::string("the NVIDIA background removal could not start: ") + e.what();
     }
   }
 #endif
@@ -32,14 +35,18 @@ MatteBackendChoice makeMatteBackend(GpuDevice& gpu, TexturePool& pool, Converter
     try {
       return {std::make_unique<OnnxMatte>(gpu, pool, conv, model), ""};
     } catch (const std::exception& e) {
-      return {nullptr, std::string("background removal is unavailable: ") + e.what()};
+      std::string reason = std::string("background removal is unavailable: ") + e.what();
+      if (!maxineError.empty()) reason = maxineError + "; " + reason;
+      return {nullptr, std::move(reason)};
     }
   }
 #else
   (void)pool;
   (void)conv;
-  return {nullptr, "background removal needs an NVIDIA RTX GPU with the NVIDIA Video Effects SDK; this PC uses " +
-                       gpu.info().adapterName};
+  std::string reason = "background removal needs an NVIDIA RTX GPU with the NVIDIA Video Effects SDK; this PC uses " +
+                       gpu.info().adapterName;
+  if (!maxineError.empty()) reason = maxineError + "; " + reason;
+  return {nullptr, std::move(reason)};
 #endif
 }
 }  // namespace bc
