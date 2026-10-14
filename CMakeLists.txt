@@ -226,6 +226,8 @@ add_library(bc_io STATIC
   src/io/mf_capture_input.cpp
   # C1 Task 1
   src/io/lkc/lkc.cpp
+  # C1 Task 3
+  src/io/breadcall_input.cpp
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
@@ -449,6 +451,8 @@ add_executable(bc_tests
   tests/decklink_test.cpp
   # C1 Task 1
   tests/lkc_test.cpp
+  # C1 Task 3
+  tests/breadcall_input_test.cpp
   # M4b Task 2
   tests/aja_test.cpp
   # M4b Task 3
