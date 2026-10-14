@@ -422,6 +422,16 @@ add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.
 target_include_directories(bc_shell PUBLIC src)
 target_link_libraries(bc_shell PUBLIC bc_core)
 
+# ---- soak / fault-injection tool (M5 Task 3, spec §8.3/§8.4) ----
+# Drives the real breadcamera-engine.exe over the control API with in-process SRT test
+# streams. Links the engine (control API + adapters) and the shell (ProcessLauncher +
+# Supervisor), and compiles the test-media helpers directly into the tool.
+add_executable(bc_soak tools/soak/soak_main.cpp tests/support/test_media.cpp)
+target_include_directories(bc_soak PRIVATE tests)
+target_link_libraries(bc_soak PRIVATE bc_engine bc_shell psapi)
+add_dependencies(bc_soak breadcamera-engine)
+bc_copy_runtime(bc_soak)
+
 add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
 target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
 
