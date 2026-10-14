@@ -1,0 +1,5 @@
+BreadCamera uses FFmpeg libraries under the GNU Lesser General Public License v2.1 or later,
+linked dynamically (avcodec-*.dll, avformat-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll).
+The exact FFmpeg source used for this build is the vcpkg port at the baseline recorded in vcpkg.json.
+On request we provide the complete corresponding source code: contact bmsolutions.vn.
+You may replace these DLLs with your own compatible builds.
