@@ -263,13 +263,19 @@ std::string faultReceiverLoss(Rig& rig) {
 // §8.4: a stage forced to fail → bypassed/errored for that camera only, frames continue.
 std::string faultStage(Rig& rig, EngineClient& e) {
   const auto cam = camId(2);
-  const int64_t before = rig.counts[2].frames;
   e.request("setStage", {{"cameraId", cam}, {"stage", "background"}, {"params", {{"mode", "replace"}, {"image", "C:/definitely/missing.png"}}}});
   const bool flagged = waitFor([&] { return e.at("/cameras/" + cam + "/stages/background/error/code") == "background-image"; }, 4000ms);
-  const bool flowing = rig.counts[2].frames - before > 100;
+  // "Frames continue" must be sampled over a fixed span: the missing-file loadImageBgra throws
+  // immediately, so the error flag lands within ~100 ms and a before/after around the setStage
+  // round-trip spans only a handful of frames even at full rate (the check would always fail).
+  // Sample a clean 2 s window while the failing stage is bypassed instead. Criterion unchanged.
+  const int64_t before = rig.counts[2].frames;
+  std::this_thread::sleep_for(2s);
+  const int64_t flowed = rig.counts[2].frames - before;
+  const bool flowing = flowed > 100;
   e.request("setStage", {{"cameraId", cam}, {"stage", "background"}, {"params", {{"mode", "blur"}, {"image", ""}}}});
   const bool othersOk = e.at("/cameras/" + camId(1) + "/stages/background/error/code").empty();
-  if (!flagged || !flowing || !othersOk) return "stage fault: flagged=" + std::to_string(flagged) + " flowing=" + std::to_string(flowing) + " othersOk=" + std::to_string(othersOk);
+  if (!flagged || !flowing || !othersOk) return "stage fault: flagged=" + std::to_string(flagged) + " flowing=" + std::to_string(flowing) + " frames2s=" + std::to_string(flowed) + " othersOk=" + std::to_string(othersOk);
   return "";
 }
 
