@@ -107,6 +107,23 @@ bool check(Req r, const char*& reason) {
 #else
       return true;
 #endif
+    case Req::LiveCallGuests:
+      // The two-guest acceptance drives real publishers and receiver tokens with
+      // the LiveKit CLI, so it needs a live server (like LiveCall) plus `lk.exe`.
+      reason = "no LiveKit CLI for the two-guest acceptance (set BC_LIVECALL_LK to lk.exe)";
+#if BC_WITH_LIVECALL
+      if (!envSet("BC_LIVECALL_URL") || !envSet("BC_LIVECALL_TOKEN")) return true;
+      {
+        char* buf = nullptr;
+        size_t len = 0;
+        if (_dupenv_s(&buf, &len, "BC_LIVECALL_LK") != 0 || buf == nullptr) return true;
+        std::filesystem::path lk(buf);
+        std::free(buf);
+        return !std::filesystem::exists(lk);
+      }
+#else
+      return true;
+#endif
   }
   return true;
 }

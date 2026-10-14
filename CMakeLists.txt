@@ -453,6 +453,8 @@ add_executable(bc_tests
   tests/lkc_test.cpp
   # C1 Task 3
   tests/breadcall_input_test.cpp
+  # C1 Task 5
+  tests/e2e_c1_test.cpp
   # M4b Task 2
   tests/aja_test.cpp
   # M4b Task 3
