@@ -113,10 +113,10 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
           {page === 'engine' && (
             <>
               <h3>Engine</h3>
-              {Object.values(engine.warnings ?? {})
-                .filter((w) => w)
-                .map((w) => (
-                  <ErrorBlock key={w} severity="warning" message={w} />
+              {Object.entries(engine.warnings ?? {})
+                .filter(([, w]) => w)
+                .map(([name, w]) => (
+                  <ErrorBlock key={name} severity="warning" message={w} />
                 ))}
               <Prop label="GPU">{() => <span className="ro">{engine.gpu ?? '—'}</span>}</Prop>
               <Prop label="Background removal">{() => <span className="ro">{engine.matteBackend || 'None'}</span>}</Prop>

@@ -3,8 +3,8 @@ import { errorText } from '../errors';
 import { Icon } from './Icon';
 
 // Persistent block at the top of the affected panel; never a toast (spec §6.1).
-export function ErrorBlock({ title, message, error, severity = 'danger', label }: { title?: string; message?: string; error?: ErrorInfo; severity?: 'danger' | 'warning' | 'info'; label?: string }) {
-  const text = error ? errorText(error) : null;
+export function ErrorBlock({ title, message, error, source = 'output', severity = 'danger', label }: { title?: string; message?: string; error?: ErrorInfo; source?: 'input' | 'output'; severity?: 'danger' | 'warning' | 'info'; label?: string }) {
+  const text = error ? errorText(error, source) : null;
   const headline = text ? text.headline : title;
   const detail = text ? text.detail : (message ?? '');
   return (

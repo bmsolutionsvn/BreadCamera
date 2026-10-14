@@ -133,7 +133,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
       </div>
       <div className="insp-b">
         <Section title="Input" right={<span className="ro">{health}</span>}>
-          {cs?.input?.error && <ErrorBlock error={cs.input.error} />}
+          {cs?.input?.error && <ErrorBlock error={cs.input.error} source="input" />}
           {cs?.tickError && <ErrorBlock title="Processing failed." message={cs.tickError} />}
           {error && <ErrorBlock message={error} />}
           {kind === 'srt' && (

@@ -21,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -56,6 +57,40 @@ using namespace std::chrono_literals;
 namespace {
 constexpr int kCams = 4;
 constexpr int kPort = 47970;
+
+// Orphan protection (M5 review): if this tool dies abnormally (Ctrl-C, console close, an
+// unhandled exception), kill the engine we launched and drop the temp show dir. Otherwise a
+// stale breadcamera-engine.exe keeps holding Local\BreadCameraEngine and the next run exits 2.
+std::atomic<bc::ProcessLauncher*> g_launcher{nullptr};
+fs::path g_soakDir;
+std::atomic<bool> g_soakDirSet{false};
+
+void orphanCleanup() {
+  if (auto* l = g_launcher.load(); l && l->isRunning()) l->kill();
+  if (g_soakDirSet.load()) {
+    std::error_code ec;
+    fs::remove_all(g_soakDir, ec);
+  }
+}
+
+BOOL WINAPI soakCtrlHandler(DWORD type) {
+  switch (type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+      orphanCleanup();
+      ExitProcess(1);
+    default:
+      return FALSE;
+  }
+}
+
+void soakTerminateHandler() {
+  orphanCleanup();
+  ExitProcess(1);
+}
 
 struct Args {
   int minutes = 30;
@@ -293,11 +328,16 @@ std::string faultEngineKill(bc::ProcessLauncher& launcher, EngineClient& e) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Install the orphan guard before anything can launch or create state (see orphanCleanup).
+  SetConsoleCtrlHandler(soakCtrlHandler, TRUE);
+  std::set_terminate(soakTerminateHandler);
   const Args args = parseArgs(argc, argv);
   ix::initNetSystem();
   Rig rig;
   rig.dir = fs::temp_directory_path() / ("bcam-soak-" + std::to_string(GetCurrentProcessId()));
   fs::create_directories(rig.dir);
+  g_soakDir = rig.dir;
+  g_soakDirSet = true;
   {
     bc::ShowStore store(rig.dir / "shows");
     store.saveNow(buildShow());
@@ -307,11 +347,13 @@ int main(int argc, char** argv) {
   const fs::path engineExe = fs::path(self).parent_path() / "breadcamera-engine.exe";
   if (!fs::exists(engineExe)) {
     std::cerr << "setup: " << engineExe.string() << " not found\n";
+    orphanCleanup();
     return 2;
   }
   const std::string token = bc::randomToken();
   bc::ProcessLauncher launcher(engineExe, L"--port " + std::to_wstring(kPort) + L" --token " + bc::toWide(token) + L" --show-dir \"" +
                                              (rig.dir / "shows").wstring() + L"\" --discovery \"" + (rig.dir / "engine.json").wstring() + L"\"");
+  g_launcher = &launcher;
   bc::Supervisor sup(launcher);
   std::atomic<bool> supervising{true};
   std::thread supThread([&] {
@@ -328,6 +370,7 @@ int main(int argc, char** argv) {
     supervising = false;
     supThread.join();
     launcher.kill();
+    orphanCleanup();
     return 2;
   }
   for (const char* kind : {"ndi", "omt"}) {
@@ -355,6 +398,7 @@ int main(int argc, char** argv) {
   int64_t lastOverruns = -1;
   double baselineWs = 0, lastWs = 0;
   auto baselineAt = start + 10min;
+  bool liveSeen[kCams] = {};  // per-camera liveness floor: each must reach phase `live` once
   while (Clock::now() < end) {
     std::this_thread::sleep_for(10s);
     const double t = std::chrono::duration<double>(Clock::now() - start).count();
@@ -369,7 +413,9 @@ int main(int argc, char** argv) {
       const json c = st.contains("cameras") && st["cameras"].contains(id) ? st["cameras"][id] : json::object();
       const double lat = c.value("latencyMs", 0.0);
       latencies[id].push_back(lat);
-      csv << t << ',' << overruns << ',' << id << ',' << c.value("fps", 0.0) << ',' << lat << ',' << engine.at("/cameras/" + id + "/phase") << ','
+      const std::string phase = engine.at("/cameras/" + id + "/phase");
+      if (phase == "live") liveSeen[i] = true;
+      csv << t << ',' << overruns << ',' << id << ',' << c.value("fps", 0.0) << ',' << lat << ',' << phase << ','
           << engine.at("/cameras/" + id + "/stages/matte/state") << ',' << lastWs << ',' << rig.counts[i].frames << '\n';
     }
     csv.flush();
@@ -382,8 +428,8 @@ int main(int argc, char** argv) {
         case 2: r = faultStage(rig, engine); break;
         case 3:
           r = faultEngineKill(launcher, engine);
-          baselineWs = 0;  // a new process: re-baseline 10 minutes from now
-          baselineAt = Clock::now() + 10min;
+          baselineWs = 0;  // a new process: take the next sample as the baseline so §8.3 still evaluates
+          baselineAt = Clock::now();
           break;
       }
       if (!r.empty()) failures.push_back(r);
@@ -394,6 +440,18 @@ int main(int argc, char** argv) {
   }
 
   if (samples == 0) failures.push_back("no samples collected");
+  // Liveness floor (M5 review #4): answering ping is not proof the pipeline carried a frame.
+  // Every camera must have reached phase `live` and the SRT readers must have received frames;
+  // a run where the pushers never bound is a failed run, not a pass.
+  int64_t totalFrames = 0;
+  for (int i = 0; i < kCams; ++i) {
+    totalFrames += rig.counts[i].frames;
+    if (!liveSeen[i]) failures.push_back(camId(i) + ": never reached phase live during the run");
+    if (rig.pushers[i] && rig.pushers[i]->failed()) failures.push_back("pusher " + camId(i) + " failed: " + rig.pushers[i]->error());
+  }
+  const int64_t livenessFloor = static_cast<int64_t>(kCams) * samples;  // ~1 frame per camera per sample
+  std::cout << "liveness: " << totalFrames << " frames across " << kCams << " SRT readers (floor " << livenessFloor << ")\n";
+  if (totalFrames < livenessFloor) failures.push_back("liveness: only " + std::to_string(totalFrames) + " frames received across the SRT readers (< " + std::to_string(livenessFloor) + " floor)");
   for (auto& [id, v] : latencies) {
     if (v.empty()) continue;
     std::sort(v.begin(), v.end());
@@ -401,8 +459,13 @@ int main(int argc, char** argv) {
     std::cout << id << ": median latency " << median << " ms\n";
     if (median > 50.0) failures.push_back(id + ": median latency " + std::to_string(median) + " ms > 50");
   }
-  if (baselineWs > 0 && lastWs > baselineWs * 1.05) failures.push_back("memory grew from " + std::to_string(baselineWs) + " MB to " + std::to_string(lastWs) + " MB");
-  std::cout << "samples " << samples << ", working set " << baselineWs << " → " << lastWs << " MB, CSV " << args.out << "\n";
+  if (baselineWs > 0) {
+    if (lastWs > baselineWs * 1.05) failures.push_back("memory grew from " + std::to_string(baselineWs) + " MB to " + std::to_string(lastWs) + " MB");
+    std::cout << "memory: evaluated, working set " << baselineWs << " → " << lastWs << " MB (bound 105%)\n";
+  } else {
+    std::cout << "memory: not evaluated (no baseline sample; the run ended before the 10-minute baseline window)\n";
+  }
+  std::cout << "samples " << samples << ", CSV " << args.out << "\n";
 
   for (auto& r : rig.readers) if (r) r->stop();
   for (auto& p : rig.pushers) if (p) p->stop();
@@ -415,5 +478,6 @@ int main(int argc, char** argv) {
 
   for (auto& f : failures) std::cout << "FAIL: " << f << "\n";
   std::cout << (failures.empty() ? "PASS\n" : "FAIL\n");
+  orphanCleanup();
   return failures.empty() ? 0 : 1;
 }
