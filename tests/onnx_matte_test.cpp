@@ -5,6 +5,7 @@
 #if BC_WITH_ONNX
 #include <windows.h>
 
+#include <chrono>
 #include <thread>
 
 #include "engine/onnx_matte.h"
@@ -72,7 +73,11 @@ TEST_CASE("OnnxMatte: quality switch and a forgotten camera are handled" BC_REQU
   }
   job.quality = bc::MatteQuality::Quality;
   bool big = false;
-  for (int i = 0; i < 100 && !big; ++i) {
+  // A single 896x512 MODNet inference can take well over 2 s on an integrated GPU (it is ~1.8 s on an
+  // Intel UHD 630), so poll on a generous wall-clock budget instead of a fixed iteration count. The
+  // expectation itself is unchanged: the result must still reach 896x512.
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (!big && std::chrono::steady_clock::now() < deadline) {
     m.process(ptrs);
     big = job.alpha && job.alpha->width == 896 && job.alpha->height == 512;
     std::this_thread::sleep_for(20ms);
