@@ -36,9 +36,8 @@ namespace {
 struct LumaSink : bc::InputSink {
   explicit LumaSink(bc::Converter& c) : conv(c) {}
   bc::Converter& conv;
-  int sampleAt = 300;  // ~5 s at 60 fps: past the engine's slate/hold, a settled clip frame
+  int sampleAt = 300;  // ~5 s at 60 fps: a settled clip frame after the output goes live
   std::atomic<int> video{0};
-  std::atomic<int> sampledAt{-1};
   std::atomic<double> luma{-1};
 
   void onVideo(bc::VideoFrameIn f) override {
@@ -51,7 +50,6 @@ struct LumaSink : bc::InputSink {
     for (size_t i = 0; i + 3 < img.bgra.size(); i += 4)
       sum += 0.0722 * img.bgra[i] + 0.7152 * img.bgra[i + 1] + 0.2126 * img.bgra[i + 2];  // B G R
     luma = sum / (static_cast<double>(img.width) * img.height);
-    sampledAt = n;
   }
   void onAudio(bc::AudioBlock) override {}
   void onState(bc::SignalState, std::optional<bc::ErrorInfo>) override {}
@@ -60,7 +58,9 @@ struct LumaSink : bc::InputSink {
 struct Result {
   int frames = 0;
   double meanLuma = -1;
-  std::string inputState, stageState, outputState;  // the camera's state mid-run (engine stopped after)
+  // The camera's state mid-run (the engine is stopped afterwards). `phase` is the authoritative
+  // "frames are arriving at the tick" signal (frame_sync: live/holding/slate).
+  std::string inputState, stageState, outputState, phase;
 };
 
 // One full real-transport run: real SRT input -> real Engine -> real SRT output, read back.
@@ -98,6 +98,7 @@ Result runPipeline(const std::filesystem::path& clip, int inPort, int outPort, c
     r.inputState = s["cameras"]["cam"]["input"]["state"];
     r.stageState = s["cameras"]["cam"]["stages"]["color"]["state"];
     r.outputState = s["cameras"]["cam"]["outputs"]["srt-out"]["state"];
+    r.phase = s["cameras"]["cam"]["phase"];
   }
   std::this_thread::sleep_for(3s);
   reader.stop();
@@ -126,21 +127,28 @@ TEST_CASE("real effect acceptance: SRT in -> colour effect -> SRT out, output pi
 
   MESSAGE("effect on:  " << on.frames << " frames read back, mean luma " << on.meanLuma);
   MESSAGE("effect off: " << off.frames << " frames read back, mean luma " << off.meanLuma);
-  MESSAGE("on:   input=" << on.inputState << " stage=" << on.stageState << " output=" << on.outputState);
-  MESSAGE("off:  input=" << off.inputState << " stage=" << off.stageState << " output=" << off.outputState);
+  MESSAGE("on:   input=" << on.inputState << " stage=" << on.stageState << " output=" << on.outputState << " phase=" << on.phase);
+  MESSAGE("off:  input=" << off.inputState << " stage=" << off.stageState << " output=" << off.outputState << " phase=" << off.phase);
 
-  // Both runs are a real transport: frames flow from a live input to a live output.
+  // Both runs are a real transport: frames flow from a live input to a live output, and the
+  // camera's phase is `live` (frames are actually reaching the tick, not the slate).
   CHECK(on.frames > 300);
   CHECK(off.frames > 300);
   CHECK(on.inputState == "live");
   CHECK(off.inputState == "live");
   CHECK(on.outputState == "live");
   CHECK(off.outputState == "live");
+  CHECK(on.phase == "live");
+  CHECK(off.phase == "live");
   // The control run has no effect at all; the measured run really has the colour stage active.
   CHECK(on.stageState == "active");
   CHECK(off.stageState == "off");
   CHECK(on.meanLuma > 0);
   CHECK(off.meanLuma > 0);
+  // The no-stage control must show the clip itself, not the slate: writeTestTs writes a Y ramp of
+  // 16..235 (mean ~125.5), and the slate ({0.05,0.05,0.06} linear) reads ~63 -- well outside the band.
+  CHECK(off.meanLuma >= 110.0);
+  CHECK(off.meanLuma <= 140.0);
   // The clip is a mid-grey ramp, so +2 EV (a 4x linear-light gain) must be clearly brighter. The
   // no-stage control fixes the baseline, so this is a change in the output pixels, not a flag.
   // 30/255 is more than ten times the H.264 round-trip noise (a few counts) and well below the
