@@ -1,7 +1,14 @@
 #include <doctest/doctest.h>
 
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 
+#include <cctype>
+#include <cstdlib>
+#include <string>
+#include <vector>
+
+#include "core/utf8.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/image_io.h"
@@ -16,6 +23,21 @@ std::array<float, 3> apply(const bc::YuvMatrix& m, float y, float cb, float cr) 
     out[r] = m.rows[r][0] * y + m.rows[r][1] * cb + m.rows[r][2] * cr + m.rows[r][3];
   }
   return out;
+}
+
+// Adapter descriptions in native DXGI (EnumAdapters1) order.
+std::vector<std::string> dxgiAdapterNames() {
+  std::vector<std::string> names;
+  ComPtr<IDXGIFactory1> factory;
+  if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return names;
+  for (UINT i = 0;; ++i) {
+    ComPtr<IDXGIAdapter1> a;
+    if (factory->EnumAdapters1(i, &a) == DXGI_ERROR_NOT_FOUND) break;
+    DXGI_ADAPTER_DESC1 d{};
+    a->GetDesc1(&d);
+    names.push_back(bc::toUtf8(d.Description));
+  }
+  return names;
 }
 
 struct Gpu {
@@ -155,4 +177,47 @@ TEST_CASE("Converter: fit scales to the target size and letterboxes another aspe
   CHECK(px(61, 18)[2] < 5);    // right bar: black
   CHECK(px(32, 18)[2] > 250);  // centre: the red picture
   CHECK(px(32, 18)[3] == 255);
+}
+
+TEST_CASE("GpuDevice: BC_GPU_ADAPTER selects the adapter by index or name") {
+  // BC_FORCE_WARP=1 wins over any adapter choice, so the override is unobservable.
+  char* fw = nullptr;
+  size_t fwLen = 0;
+  _dupenv_s(&fw, &fwLen, "BC_FORCE_WARP");
+  const bool forceWarp = fw && std::string(fw) == "1";
+  free(fw);
+  if (forceWarp) return;
+
+  const std::vector<std::string> names = dxgiAdapterNames();
+  REQUIRE_FALSE(names.empty());
+
+  // The adapter chosen with no override (the default preference).
+  _putenv_s("BC_GPU_ADAPTER", "");
+  const std::string defaultName =
+      bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp)->info().adapterName;
+
+  // Select an adapter other than the default one so the choice is observable.
+  size_t other = names.size();
+  for (size_t i = 0; i < names.size(); ++i)
+    if (names[i] != defaultName) { other = i; break; }
+
+  if (other != names.size()) {
+    // By 0-based DXGI index.
+    _putenv_s("BC_GPU_ADAPTER", std::to_string(other).c_str());
+    CHECK(bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp)->info().adapterName == names[other]);
+
+    // By a case-insensitive description substring (the whole name, upper-cased).
+    std::string upper = names[other];
+    for (char& c : upper) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    _putenv_s("BC_GPU_ADAPTER", upper.c_str());
+    CHECK(bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp)->info().adapterName == names[other]);
+  }
+
+  // An unknown value is ignored: a device still creates, on the default adapter.
+  _putenv_s("BC_GPU_ADAPTER", "no-such-adapter-zzz");
+  auto fallback = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  CHECK_FALSE(fallback->info().adapterName.empty());
+  CHECK(fallback->info().adapterName == defaultName);
+
+  _putenv_s("BC_GPU_ADAPTER", "");
 }
