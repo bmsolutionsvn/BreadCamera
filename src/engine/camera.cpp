@@ -246,6 +246,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
   struct Variant {
     TextureRef tex;
     std::shared_ptr<const CpuImage> cpu;
+    bool readbackDone = false;  // the one readback for this size has run this tick
   };
   std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
   // Every size an output uses this tick, so a size a half-rate output skips this tick keeps
@@ -261,14 +262,16 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
     auto& v = variants[{w, h}];
     if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : tools_.conv.fit(*frame, w, h);
-    if (needsCpu) {
+    if (needsCpu && !v.readbackDone) {
       // tryFinish before begin: the slot's previous copy finishes first, then this tick's
-      // begins. A begin while pending would discard the unfinished frame.
+      // begins. A begin while pending would discard the unfinished frame. Once per size per
+      // tick, so two CPU outputs sharing a size get the *same* image, not one a tick apart.
       auto& rb = readbacks_[{w, h}];
       CpuImage done;
       if (rb.slot.tryFinish(tools_.conv, done)) rb.image = std::make_shared<CpuImage>(std::move(done));
       if (!rb.slot.pending()) rb.slot.begin(tools_.conv, *tools_.conv.toBgra8(*v.tex, w, h));
       v.cpu = rb.image;  // may be null on the first ticks: never a synthetic frame
+      v.readbackDone = true;
     }
     return v;
   };

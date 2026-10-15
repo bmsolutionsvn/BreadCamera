@@ -311,9 +311,11 @@ class RecordingFactory final : public bc::AdapterFactory {
   std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
     auto o = std::make_unique<RecordingOutput>(needsCpu_);
     made = o.get();
+    all.push_back(o.get());
     return o;
   }
   RecordingOutput* made = nullptr;
+  std::vector<RecordingOutput*> all;  // in creation (show output) order
 
  private:
   bool needsCpu_;
@@ -417,6 +419,38 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
   camera.reconfigure(cfg);
   tick(1);
   CHECK(camera.readbackSlotCount() == 1);
+  camera.stop();
+}
+
+// Two CPU-consuming outputs at the same size must share ONE readback per tick (spec §4.3): the
+// readback is finished/begun once and both outputs are handed the same CpuImage. Without the
+// per-variant handled flag the second output re-enters the readback block, so the shared slot can
+// advance mid-tick and the two outputs can be handed frames one tick apart.
+TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/true);
+  bc::CameraConfig cfg = cam("a", {out("o1"), out("o2")});  // both the show size, both CPU
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  REQUIRE(factory.all.size() == 2);
+  RecordingOutput* a = factory.all[0];
+  RecordingOutput* b = factory.all[1];
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+
+  bool sawImage = false;
+  for (uint64_t i = 0; i < 120; ++i) {
+    camera.onVideo(solidFrame(r.conv, static_cast<uint8_t>(30 + (i % 5) * 40)));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+    CHECK(a->last == b->last);  // one readback per size per tick: the same image, never a tick apart
+    if (a->last) sawImage = true;
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(sawImage);
+  CHECK(camera.readbackSlotCount() == 1);  // still one slot, not one per output
   camera.stop();
 }
 
