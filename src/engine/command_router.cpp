@@ -190,6 +190,13 @@ void validateOutput(const OutputConfig& o) {
       const auto m = o.params["mode"].get<std::string>();
       if (m != "hx" && m != "full") throw std::invalid_argument("OMT mode must be 'hx' or 'full'");
     }
+    // The codec picks Hx's video codec; plain OMT (full) is codec-less, so a codec on a full
+    // output is accepted and ignored, not rejected (spec A4.3).
+    if (o.params.contains("codec")) {
+      if (!o.params["codec"].is_string()) throw std::invalid_argument("OMT codec must be text");
+      const auto c = o.params["codec"].get<std::string>();
+      if (c != "hevc" && c != "h264") throw std::invalid_argument("OMT codec must be 'hevc' or 'h264'");
+    }
     if (o.params.contains("name")) {
       if (!o.params["name"].is_string()) throw std::invalid_argument("OMT name must be text");
       const auto n = o.params["name"].get<std::string>();

@@ -113,11 +113,16 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
       throw std::invalid_argument("OMT mode must be text");
     if (cfg.params.contains("name") && !cfg.params["name"].is_string())
       throw std::invalid_argument("OMT name must be text");
+    // Same rule as CommandRouter::validateOutput: a hand-edited show file with a
+    // non-string codec is rejected here too; the value is ignored for plain OMT (full).
+    if (cfg.params.contains("codec") && !cfg.params["codec"].is_string())
+      throw std::invalid_argument("OMT codec must be text");
 #if BC_WITH_OMT
     const std::string mode = cfg.params.value("mode", std::string("hx"));
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
     if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
-    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx);
+    const auto codec = cfg.params.value("codec", std::string("hevc")) == "h264" ? omthx::Codec::H264 : omthx::Codec::Hevc;
+    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec);
 #else
     (void)cam;
     throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");

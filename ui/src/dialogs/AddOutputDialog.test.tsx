@@ -38,6 +38,34 @@ test('an OMT output offers a mode and sends its mode and name', () => {
   });
 });
 
+test('an OMT-HX output offers a codec and sends the one chosen', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  expect(screen.getByLabelText('Codec')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Codec'), { target: { value: 'h264' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params).toMatchObject({ mode: 'hx', codec: 'h264', name: 'BreadCamera - A' });
+});
+
+test('a plain OMT output hides the codec and sends no codec', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'full' } });
+  expect(screen.queryByLabelText('Codec')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params.codec).toBeUndefined();
+});
+
 test('a virtual camera output picks the first free number and has no format choice', () => {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);

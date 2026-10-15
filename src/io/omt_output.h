@@ -12,7 +12,7 @@ namespace bc {
 // Open Media Transport sender (spec A4.3), plain OMT or OMT-HX, alpha when the frame has it.
 class OmthOutput final : public QueuedOutput {
  public:
-  OmthOutput(std::string name, omthx::Mode mode);
+  OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec = omthx::Codec::Hevc);
   ~OmthOutput() override { stop(); }
   bool needsCpu() const override { return true; }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
@@ -27,6 +27,7 @@ class OmthOutput final : public QueuedOutput {
  private:
   std::string name_;
   omthx::Mode mode_;
+  omthx::Codec codec_;
   std::unique_ptr<omthx::Sender> send_;
   std::vector<float> planar_;
   omthx::VideoFormat format_;

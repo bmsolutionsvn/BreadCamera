@@ -40,6 +40,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   const [kind, setKind] = useState<Kind>('ndi');
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
   const [omtMode, setOmtMode] = useState<'hx' | 'full'>('hx');
+  const [omtCodec, setOmtCodec] = useState<'hevc' | 'h264'>('hevc');
   const [omtName, setOmtName] = useState(`BreadCamera - ${camera.name}`);
   const [srtMode, setSrtMode] = useState<'caller' | 'listener'>('caller');
   const [srtHost, setSrtHost] = useState('');
@@ -100,7 +101,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   async function submit() {
     let params: Record<string, unknown>;
     if (kind === 'ndi') params = { name: ndiName };
-    else if (kind === 'omt') params = { mode: omtMode, name: omtName };
+    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, name: omtName } : { mode: omtMode, name: omtName };
     else if (kind === 'srt') {
       params = { mode: srtMode, port: srtPortNum, latencyMs: Number(srtLatency) || 120, bitrateKbps: Number(bitrate) || 8000 };
       if (srtMode === 'caller' && srtHost) params.host = srtHost;
@@ -155,11 +156,21 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
           <Prop label="Mode">
             {(id) => (
               <select id={id} className="ctl" value={omtMode} onChange={(e) => setOmtMode(e.target.value as 'hx' | 'full')}>
-                <option value="hx">OMT-HX (HEVC)</option>
+                <option value="hx">OMT-HX (HEVC or H.264)</option>
                 <option value="full">OMT (plain, VMX)</option>
               </select>
             )}
           </Prop>
+          {omtMode === 'hx' && (
+            <Prop label="Codec">
+              {(id) => (
+                <select id={id} className="ctl" value={omtCodec} onChange={(e) => setOmtCodec(e.target.value as 'hevc' | 'h264')}>
+                  <option value="hevc">HEVC (H.265)</option>
+                  <option value="h264">H.264</option>
+                </select>
+              )}
+            </Prop>
+          )}
           <Prop label="Name">
             {(id) => <input id={id} className="ctl" value={omtName} onChange={(e) => setOmtName(e.target.value)} />}
           </Prop>

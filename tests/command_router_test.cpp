@@ -363,4 +363,16 @@ TEST_CASE("output kind omt validates its params") {
   CHECK_THROWS_AS(
       bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"name", 5}}}),
       std::invalid_argument);
+  // An hx output picks HEVC or H.264; anything else is refused.
+  CHECK_NOTHROW(bc::validateOutput(
+      bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}, {"codec", "h264"}}}));
+  CHECK_THROWS_WITH_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}, {"codec", "vp9"}}}),
+      "OMT codec must be 'hevc' or 'h264'", std::invalid_argument);
+  CHECK_THROWS_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"codec", 5}}}),
+      std::invalid_argument);
+  // Plain OMT (full) is codec-less, but a codec on a full output is accepted and ignored.
+  CHECK_NOTHROW(bc::validateOutput(
+      bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"codec", "h264"}}}));
 }
