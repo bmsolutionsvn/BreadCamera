@@ -28,7 +28,7 @@ interface AjaDevice {
   name: string;
 }
 
-type Kind = 'ndi' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
+type Kind = 'ndi' | 'omt' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
 
 const SIZES: Record<string, [number, number]> = { same: [0, 0], '1280x720': [1280, 720], '960x540': [960, 540] };
 
@@ -39,6 +39,8 @@ const FIXED_FORMAT_NOTE = 'SDI and the virtual camera use a fixed format: 1080p 
 export function AddOutputDialog({ client, camera, n, onClose }: { client: EngineClient; camera: { id: string; name: string }; n: number; onClose: () => void }) {
   const [kind, setKind] = useState<Kind>('ndi');
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
+  const [omtMode, setOmtMode] = useState<'hx' | 'full'>('hx');
+  const [omtName, setOmtName] = useState(`BreadCamera - ${camera.name}`);
   const [srtMode, setSrtMode] = useState<'caller' | 'listener'>('caller');
   const [srtHost, setSrtHost] = useState('');
   const [srtPort, setSrtPort] = useState('9000');
@@ -98,6 +100,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   async function submit() {
     let params: Record<string, unknown>;
     if (kind === 'ndi') params = { name: ndiName };
+    else if (kind === 'omt') params = { mode: omtMode, name: omtName };
     else if (kind === 'srt') {
       params = { mode: srtMode, port: srtPortNum, latencyMs: Number(srtLatency) || 120, bitrateKbps: Number(bitrate) || 8000 };
       if (srtMode === 'caller' && srtHost) params.host = srtHost;
@@ -137,6 +140,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
         {(id) => (
           <select id={id} className="ctl" value={kind} onChange={(e) => chooseKind(e.target.value as Kind)}>
             <option value="ndi">NDI</option>
+            <option value="omt">OMT (Open Media Transport)</option>
             <option value="srt">SRT (H.264 over SRT)</option>
             <option value="fullscreen">Fullscreen on a monitor</option>
             <option value="decklink">DeckLink SDI</option>
@@ -146,6 +150,21 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
         )}
       </Prop>
       {kind === 'ndi' && <Prop label="NDI source name">{(id) => <input id={id} className="ctl" value={ndiName} onChange={(e) => setNdiName(e.target.value)} />}</Prop>}
+      {kind === 'omt' && (
+        <>
+          <Prop label="Mode">
+            {(id) => (
+              <select id={id} className="ctl" value={omtMode} onChange={(e) => setOmtMode(e.target.value as 'hx' | 'full')}>
+                <option value="hx">OMT-HX (HEVC)</option>
+                <option value="full">OMT (plain, VMX)</option>
+              </select>
+            )}
+          </Prop>
+          <Prop label="Name">
+            {(id) => <input id={id} className="ctl" value={omtName} onChange={(e) => setOmtName(e.target.value)} />}
+          </Prop>
+        </>
+      )}
       {kind === 'srt' && (
         <>
           <Prop label="Mode">
