@@ -11,7 +11,8 @@ class ReadbackSlot {
   bool pending() const { return pending_; }
 
   // Issues the staging CopyResource for rgba8, reusing the slot's staging texture when the
-  // size and format match. Does not block.
+  // size and format match. Does not block. A re-begin discards any unfinished frame: call
+  // tryFinish (or abandon the slot) before starting another.
   void begin(Converter& conv, const GpuTexture& rgba8);
 
   // If the GPU has finished the copy, fills out, clears pending and returns true. If it is

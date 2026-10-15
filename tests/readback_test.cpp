@@ -50,6 +50,7 @@ TEST_CASE("ReadbackSlot: begin then tryFinish yields the frame") {
   CHECK(img.width == 8);
   CHECK(img.height == 8);
   REQUIRE(img.bgra.size() == 8u * 8u * 4u);
+  // solid({0.214, ...}) is linear 0.214 -> sRGB ~134 (rounded); allow the encoder's tolerance.
   for (size_t i = 0; i < img.bgra.size(); i += 4) {
     CHECK(std::abs(img.bgra[i] - 134) <= 2);
     CHECK(std::abs(img.bgra[i + 1] - 134) <= 2);
