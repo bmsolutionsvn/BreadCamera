@@ -465,6 +465,8 @@ add_executable(bc_tests
   tests/onnx_matte_test.cpp
   # M6 Task 3
   tests/e2e_m6_test.cpp
+  # real-e2e Task 1
+  tests/e2e_real_effects_test.cpp
   # bcam-readback Task 1
   tests/readback_test.cpp
 )
