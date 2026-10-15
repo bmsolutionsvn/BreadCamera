@@ -93,6 +93,17 @@ void checkVcamFree(const Show& show, const OutputConfig& o) {
       }
 }
 
+// A capture device belongs to one camera only, so the second camera that asks for the same
+// device is refused (spec §4.2). Needs the whole show, so it is not part of validateInput.
+void checkDeviceFree(const Show& show, const InputConfig& in, const std::string& selfCameraId) {
+  if (in.kind != "uvc") return;
+  const auto device = in.params.value("device", std::string());
+  for (auto& c : show.cameras)
+    if (c.id != selfCameraId && c.input.kind == "uvc" && c.input.params.value("device", std::string()) == device) {
+      throw CmdError("invalid", "device " + device + " is already used by camera " + c.name);
+    }
+}
+
 PreviewSize sizeArg(const json& args) {
   auto s = parsePreviewSize(args.value("size", std::string("small")));
   if (!s) throw CmdError("invalid", "size must be small or large");
@@ -346,12 +357,14 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     c.id = newId();
     c.name = name(args);
     c.input = inputFrom(obj(args, "input"));
+    checkDeviceFree(next, c.input, c.id);
     next.cameras.push_back(c);
     result = {{"id", c.id}};
   } else if (cmd == "updateCamera") {
     auto& c = findCam(str(args, "id"));
     if (args.contains("name")) c.name = name(args);
     if (args.contains("input")) c.input = inputFrom(obj(args, "input"), c.input.params);
+    checkDeviceFree(next, c.input, c.id);
   } else if (cmd == "removeCamera") {
     const auto camId = str(args, "id");
     findCam(camId);

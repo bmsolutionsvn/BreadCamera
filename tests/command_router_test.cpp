@@ -376,3 +376,25 @@ TEST_CASE("output kind omt validates its params") {
   CHECK_NOTHROW(bc::validateOutput(
       bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"codec", "h264"}}}));
 }
+
+TEST_CASE("CommandRouter: a capture device cannot belong to two cameras") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto addCam = [&](std::string name, json input) {
+    return call(r, {{"cmd", "addCamera"}, {"args", {{"name", name}, {"input", input}}}});
+  };
+  const json camLink = {{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}};
+  auto a = addCam("Camera A", camLink)["result"]["id"];
+  auto dup = addCam("Camera B", camLink);
+  CHECK(dup["error"]["code"] == "invalid");
+  CHECK(dup["error"]["message"].get<std::string>().find("Camera A") != std::string::npos);
+  CHECK(r.show().cameras.size() == 1);
+  auto b = addCam("Camera B", {{"kind", "uvc"}, {"params", {{"device", "FaceTime HD"}}}})["result"]["id"];
+  REQUIRE(r.show().cameras.size() == 2);
+  CHECK(addCam("Camera C", kSrt)["ok"] == true);
+  auto move = call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"input", camLink}}}});
+  CHECK(move["error"]["code"] == "invalid");
+  CHECK(move["error"]["message"].get<std::string>().find("Camera A") != std::string::npos);
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"input", {{"kind", "uvc"}, {"params", {{"device", "FaceTime HD"}}}}}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"name", "Renamed"}}}})["ok"] == true);
+}

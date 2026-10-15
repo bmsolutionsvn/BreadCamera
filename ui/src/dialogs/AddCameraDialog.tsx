@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { EngineClient } from '../api/client';
+import { useEngine } from '../api/useEngine';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -46,6 +47,10 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const [token, setToken] = useState('');
   const [slot, setSlot] = useState(1);
   const [serverError, setServerError] = useState('');
+  const snap = useEngine(client);
+  const usedBy = new Map<string, string>();
+  for (const c of snap.show?.cameras ?? [])
+    if (c.input.kind === 'uvc' && c.input.params.device) usedBy.set(String(c.input.params.device), c.name);
 
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
   const refreshDevices = () =>
@@ -167,8 +172,8 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
               <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>
                 <option value="">Choose a device…</option>
                 {devices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
+                  <option key={d.id} value={d.id} disabled={usedBy.has(d.id)}>
+                    {usedBy.has(d.id) ? d.name + ' (Already used by ' + usedBy.get(d.id) + ')' : d.name}
                   </option>
                 ))}
               </select>

@@ -56,3 +56,30 @@ test('a built-in or USB camera is picked by device id', async () => {
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addCamera');
   expect(add.args.input).toEqual({ kind: 'uvc', params: { device: deviceId } });
 });
+
+test('a capture device another camera uses is disabled and named', async () => {
+  const usedId = '\\\\?\\usb#vid_0fd9';
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  FakeWs.last.receive({
+    type: 'snapshot',
+    state: {},
+    show: {
+      schemaVersion: 1,
+      settings: { rate: '60000/1001', resolution: '1920x1080', holdMs: 5000, slatePath: '' },
+      cameras: [{ id: 'a', name: 'Camera A', input: { kind: 'uvc', params: { device: usedId } }, outputs: [] }],
+    },
+  });
+  render(<AddCameraDialog client={c} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Input type'), { target: { value: 'uvc' } });
+  const list = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'listCaptureDevices');
+  FakeWs.last.receive({ id: list.id, ok: true, result: [
+    { name: 'Cam Link 4K', id: usedId },
+    { name: 'FaceTime HD', id: '\\\\?\\usb#vid_04f2' },
+  ] });
+  const used = await screen.findByRole('option', { name: 'Cam Link 4K (Already used by Camera A)' });
+  expect((used as HTMLOptionElement).disabled).toBe(true);
+  expect(screen.getByRole('option', { name: 'FaceTime HD' })).not.toBeDisabled();
+});
