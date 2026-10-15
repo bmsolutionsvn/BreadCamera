@@ -199,6 +199,7 @@ add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
+  src/gpu/readback.cpp
   src/gpu/image_io.cpp
   src/gpu/compositor.cpp
   # M3 Task 3
@@ -464,6 +465,8 @@ add_executable(bc_tests
   tests/onnx_matte_test.cpp
   # M6 Task 3
   tests/e2e_m6_test.cpp
+  # bcam-readback Task 1
+  tests/readback_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
