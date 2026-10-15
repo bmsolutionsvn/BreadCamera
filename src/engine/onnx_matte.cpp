@@ -85,7 +85,6 @@ void OnnxMatte::process(std::vector<MatteJob*>& jobs) {
   std::optional<Cam::WorkerError> failed;
   for (auto* job : jobs) {
     const auto d = dimsFor(job->quality);
-    auto img = conv_.readback(*conv_.toBgra8(*job->frame, static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h)));
     std::lock_guard l(m_);
     auto& c = cams_[job->cameraId];
     if (c.token == 0 || c.quality != job->quality) {
@@ -93,8 +92,16 @@ void OnnxMatte::process(std::vector<MatteJob*>& jobs) {
       c.smooth.clear();
       c.token = ++nextToken_;
     }
-    c.pending = std::move(img);
-    c.hasPending = true;
+    // The frame readback is off the tick (spec §5.1 fallback): begin this tick's cheap staging
+    // copy, and hand the worker the image of the *previous* copy if the GPU has finished it. The
+    // tick never maps the frame — a missing or slow copy simply means the worker waits a tick longer.
+    auto tex = conv_.toBgra8(*job->frame, static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h));
+    CpuImage done;
+    if (c.slot.tryFinish(conv_, done)) {
+      c.pending = std::move(done);
+      c.hasPending = true;
+    }
+    if (!c.slot.pending()) c.slot.begin(conv_, *tex);
     job->alpha = c.latest ? c.latest : opaque_;
     if (!failed && c.workerError && c.workerError->token == c.token) failed = c.workerError;
   }

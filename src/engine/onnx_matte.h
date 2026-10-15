@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "engine/matte.h"
+#include "gpu/readback.h"
 
 namespace Ort {
 struct Env;
@@ -35,6 +36,7 @@ class OnnxMatte final : public MatteBackend {
       uint64_t token = 0;
       std::string message;
     };
+    ReadbackSlot slot;  // the frame's staging copy is finished and begun off the tick
     CpuImage pending;
     bool hasPending = false;
     MatteQuality quality = MatteQuality::Quality;

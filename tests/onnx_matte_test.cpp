@@ -63,6 +63,47 @@ TEST_CASE("OnnxMatte: opaque until the first result, then a model-size matte per
   MESSAGE("inference " << m.lastInferenceMs() << " ms per camera (448x256)");
 }
 
+// The matte frame readback happens off the tick: process() only starts the GPU-side staging copy
+// and hands the worker nothing until a later tick finishes that copy. A synchronous readback would map
+// the frame and hand the worker this tick's pixels immediately, so the "the tick never mapped" check
+// below is the one that fails before the async change (and the poll then confirms the model-size result).
+TEST_CASE("OnnxMatte: the readback is off the tick, the worker reaches the model size" BC_REQUIRES(bc::test::Req::Onnx)) {
+  Rig r;
+  bc::OnnxMatte m(*r.gpu, r.pool, r.conv, modelPath());
+  auto frame = r.conv.solid(1920, 1080, {0.3f, 0.25f, 0.2f, 1});
+  bc::MatteJob job{"a", frame, bc::MatteQuality::Performance, nullptr};
+  std::vector<bc::MatteJob*> ptrs{&job};
+
+  // The tick only begins the copy: it must neither hand the worker this tick's pixels nor require a
+  // model-size alpha this tick (the old synchronous readback did both — it mapped the frame and fed the
+  // worker, which then finished within the 27.5 ms observed inference while the tick was still running).
+  m.process(ptrs);
+  REQUIRE(job.alpha);
+  CHECK(job.alpha->width == 16);        // opaque until the first finished readback
+  CHECK(job.alpha->height == 16);
+  // The worker has not been handed this tick's pixels, so no inference can run after just one tick.
+  // Poll the counter on a generous wall-clock budget *without* calling process again: with the readback off
+  // the tick it stays at zero (a later tick's tryFinish is what feeds the worker); a synchronous readback
+  // hands the worker this tick's frame immediately, so it turns non-zero within the model's inference time.
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (m.lastInferenceMs() == 0.0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(20ms);
+  }
+  CHECK(m.lastInferenceMs() == 0.0);    // the worker was never handed this tick's frame
+
+  // Poll: later ticks finish the copy off the tick, hand it to the worker, and the model-size alpha
+  // appears — the tick itself never maps the frame.
+  bool updated = false;
+  for (int i = 0; i < 100 && !updated; ++i) {
+    std::this_thread::sleep_for(20ms);
+    job.alpha = nullptr;
+    m.process(ptrs);
+    updated = job.alpha && job.alpha->width == 448 && job.alpha->height == 256;
+  }
+  CHECK(updated);
+  CHECK(m.lastInferenceMs() > 0);
+}
+
 TEST_CASE("OnnxMatte: a broken session surfaces a worker error" BC_REQUIRES(bc::test::Req::Onnx)) {
   // An 87-byte valid ONNX file (Identity, input/output int64[1]): the session loads, but every
   // Run with our float image tensor throws. It stands in for a session that has gone bad at
