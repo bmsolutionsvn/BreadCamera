@@ -273,6 +273,153 @@ TEST_CASE("Engine: input health is published") {
   CHECK(r.state.snapshot()["engine"]["resolution"] == "64x36");
 }
 
+// bcam-readback Task 2: the frame readback happens off the tick. A CPU-consuming output is
+// handed the newest *completed* readback (one tick behind at most), never a black/synthetic
+// frame — on the first ticks it is simply handed none.
+//
+// A synchronous output records the frame the camera hands it *on the tick thread*, so a test
+// can assert exactly what was submitted this tick (FakeOutput's worker thread is racy here).
+namespace {
+class RecordingOutput final : public bc::Output {
+ public:
+  explicit RecordingOutput(bool needsCpu) : needsCpu_(needsCpu) {}
+  bool needsCpu() const override { return needsCpu_; }
+  void start() override {}
+  void submit(bc::OutFrame f) override {
+    last = std::move(f.bgra);
+    ++submitted;
+  }
+  void stop() override {}
+  bc::OutputStatus status() const override { return {}; }
+  std::shared_ptr<const bc::CpuImage> last;
+  int submitted = 0;
+
+ private:
+  bool needsCpu_;
+};
+
+class NoInput final : public bc::Input {
+ public:
+  void start(bc::InputSink&) override {}
+  void stop() override {}
+};
+
+class RecordingFactory final : public bc::AdapterFactory {
+ public:
+  explicit RecordingFactory(bool needsCpu) : needsCpu_(needsCpu) {}
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoInput>(); }
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+    auto o = std::make_unique<RecordingOutput>(needsCpu_);
+    made = o.get();
+    return o;
+  }
+  RecordingOutput* made = nullptr;
+
+ private:
+  bool needsCpu_;
+};
+
+// A solid BGRA frame of one colour, to push straight into a Camera (no input thread).
+bc::VideoFrameIn solidFrame(bc::Converter& conv, uint8_t red) {
+  std::vector<uint8_t> px(64 * 36 * 4);
+  for (size_t p = 0; p < px.size(); p += 4) {
+    px[p + 0] = 0;
+    px[p + 1] = 0;
+    px[p + 2] = red;
+    px[p + 3] = 255;
+  }
+  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, 0};
+}
+}  // namespace
+
+TEST_CASE("Camera: the frame readback is off the tick, never black") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/true);
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+
+  // Two colours: the first readback must deliver A, and later ticks must keep advancing to B
+  // (the slot is not stuck on the first frame). A synchronous readback would hand tick 0 its
+  // own frame, so the tick-0 check below is the one that fails before the async change.
+  bool sawA = false, sawB = false;
+  for (uint64_t i = 0; i < 160; ++i) {
+    const uint8_t red = i < 40 ? 60 : 220;
+    camera.onVideo(solidFrame(r.conv, red));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+    if (i == 0) CHECK(factory.made->last == nullptr);  // the copy begins this tick; nothing done yet
+    if (factory.made->last) {
+      const int got = factory.made->last->bgra[2];
+      CHECK(got > 10);  // never a black/synthetic frame
+      if (!sawA && std::abs(got - 60) <= 4) {
+        CHECK(factory.made->last->width == 64);
+        CHECK(factory.made->last->height == 36);
+        CHECK(factory.made->last->bgra.size() == 64u * 36u * 4u);
+        sawA = true;
+      }
+      if (std::abs(got - 220) <= 4) sawB = true;
+    }
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(sawA);  // the first readback completed with the right pixels
+  CHECK(sawB);  // and the readback keeps up: later frames are delivered too
+  camera.stop();
+}
+
+TEST_CASE("Camera: no CPU output means no readback slot and no frame copy") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  for (uint64_t i = 0; i < 10; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+  }
+  CHECK(camera.readbackSlotCount() == 0);
+  CHECK(factory.made->last == nullptr);  // a non-CPU output is never handed a CPU image
+  camera.stop();
+}
+
+TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/true);
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&](uint64_t i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+    std::this_thread::sleep_for(3ms);
+  };
+  tick(0);
+  CHECK(camera.readbackSlotCount() == 1);
+
+  // A different output size: the old slot is dropped and a new one takes its place.
+  cfg.outputs = {out("o2")};
+  cfg.outputs[0].width = 32;
+  cfg.outputs[0].height = 18;
+  camera.reconfigure(cfg);
+  tick(1);
+  CHECK(camera.readbackSlotCount() == 1);
+  camera.stop();
+}
+
 TEST_CASE("Factory: a non-string NDI name is rejected with the router's message") {
   Rig r;
   bc::DefaultAdapterFactory factory(*r.gpu, r.pool);

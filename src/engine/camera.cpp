@@ -3,6 +3,7 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
 
 #include "core/lut.h"
 #include "core/utf8.h"
@@ -238,18 +239,37 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
 
-  // One frame (and one readback) per distinct output size this tick (spec §4.3).
+  // One frame (and one readback) per distinct output size this tick (spec §4.3). The readback
+  // is asynchronous: finish the previous copy if the GPU is done, start this tick's copy, and
+  // hand the output the newest *completed* image (one tick behind at most). The tick never
+  // maps the frame.
   struct Variant {
     TextureRef tex;
     std::shared_ptr<const CpuImage> cpu;
   };
   std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
+  // Every size an output uses this tick, so a size a half-rate output skips this tick keeps
+  // its slot and cached image.
+  std::set<std::pair<uint32_t, uint32_t>> needed;
+  for (const auto& s : outputs_) {
+    if (!s.out) continue;
+    needed.insert({s.cfg.width > 0 ? static_cast<uint32_t>(s.cfg.width) : frame->width,
+                   s.cfg.height > 0 ? static_cast<uint32_t>(s.cfg.height) : frame->height});
+  }
   auto variant = [&](const OutputConfig& c, bool needsCpu) -> Variant& {
     const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
     const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
     auto& v = variants[{w, h}];
     if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : tools_.conv.fit(*frame, w, h);
-    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(tools_.conv.readback(*tools_.conv.toBgra8(*v.tex, w, h)));
+    if (needsCpu) {
+      // tryFinish before begin: the slot's previous copy finishes first, then this tick's
+      // begins. A begin while pending would discard the unfinished frame.
+      auto& rb = readbacks_[{w, h}];
+      CpuImage done;
+      if (rb.slot.tryFinish(tools_.conv, done)) rb.image = std::make_shared<CpuImage>(std::move(done));
+      if (!rb.slot.pending()) rb.slot.begin(tools_.conv, *tools_.conv.toBgra8(*v.tex, w, h));
+      v.cpu = rb.image;  // may be null on the first ticks: never a synthetic frame
+    }
     return v;
   };
   for (auto& s : outputs_) {
@@ -270,6 +290,16 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     auto& v = variant(s.cfg, s.out->needsCpu());
     const Rate half{sched.rate().num, sched.rate().den * 2};
     s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, hasAlpha});
+  }
+
+  // Release the slot and cached image for any size no output uses any more (a reconfigured
+  // or removed output), so nothing is held or read back from a released texture.
+  for (auto it = readbacks_.begin(); it != readbacks_.end();) {
+    if (needed.count(it->first)) {
+      ++it;
+    } else {
+      it = readbacks_.erase(it);
+    }
   }
 
   std::lock_guard l(statsMutex_);

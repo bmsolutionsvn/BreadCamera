@@ -1,10 +1,13 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/audio_delay.h"
@@ -19,6 +22,7 @@
 #include "engine/gpu_tools.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
+#include "gpu/readback.h"
 
 namespace bc {
 struct CameraStats {
@@ -68,6 +72,9 @@ class Camera final : public InputSink {
   TextureRef lastFrame() const { return lastFrame_; }
   void publishStatus();
   CameraStats stats() const;
+  // bcam-readback: the live per-size readback slots (0 when no output needs CPU). Diagnostic
+  // and test hook for the "no CPU output does no readback work" contract.
+  size_t readbackSlotCount() const { return readbacks_.size(); }
 
   void onVideo(VideoFrameIn frame) override;
   void onAudio(AudioBlock audio) override;
@@ -83,6 +90,13 @@ class Camera final : public InputSink {
     std::unique_ptr<Output> out;
     std::optional<ErrorInfo> createError;
     std::vector<float> carryAudio;  // half-rate audio from the odd tick
+  };
+  // One in-flight readback plus the newest completed image, per output size that a
+  // CPU-consuming output uses. image is null until the first copy finishes (never a
+  // synthetic frame).
+  struct ReadbackState {
+    ReadbackSlot slot;
+    std::shared_ptr<const CpuImage> image;
   };
   void startInput();
   void startOutput(OutputSlot& slot);
@@ -127,5 +141,9 @@ class Camera final : public InputSink {
   bool gradeDirty_ = true;
   std::optional<std::chrono::steady_clock::time_point> tickArrival_;
   FeedPhase tickPhase_ = FeedPhase::NoSignal;
+  // Per (width,height): the readback in flight and the last completed frame. Entries are
+  // dropped on the tick when no output needs that size (also covers reconfigure), and on
+  // destruction. Empty when no output needs CPU, so such a camera does no readback work.
+  std::map<std::pair<uint32_t, uint32_t>, ReadbackState> readbacks_;
 };
 }  // namespace bc
