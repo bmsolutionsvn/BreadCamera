@@ -150,7 +150,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The 8-hour soak (`scripts/soak.ps1 -Hours 8 -Faults`) is queued as its own night run; M5 carries the 30-minute evidence.
 - Fresh-install check is a human gate: `docs/superpowers/manual-checks/m5-fresh-install.md`.
 - Engine error messages stay as detail lines under the plain headlines (`ui/src/errors.ts`).
-- The spec §8.3 soak does not pass on this PC: tick overruns and per-camera median latency > 50 ms (≈3 fps to the SRT outputs) on the default Intel UHD 630 adapter — the same Converter::readback hotspot as M1/M2 (§9); criteria unchanged, the 8-hour run stays queued (scripts/soak.ps1, .superpowers/sdd/2026-10-08-m5-hardening/task-3-report.md).
+- The spec §8.3 soak does not pass on this PC: tick overruns and per-camera median latency > 50 ms (≈3 fps to the SRT outputs) on the then-default Intel UHD 630 adapter — the same Converter::readback hotspot as M1/M2 (§9); criteria unchanged, the 8-hour run stays queued (scripts/soak.ps1, .superpowers/sdd/2026-10-08-m5-hardening/task-3-report.md).
 
 ## M6
 - ONNX backend uses DirectML on every vendor; spec §5.1 named TensorRT EP for NVIDIA (Maxine is NVIDIA's primary backend) (`src/engine/onnx_matte.cpp`).

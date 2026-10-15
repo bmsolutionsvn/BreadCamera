@@ -33,11 +33,22 @@ std::vector<std::string> dxgiAdapterNames() {
   for (UINT i = 0;; ++i) {
     ComPtr<IDXGIAdapter1> a;
     if (factory->EnumAdapters1(i, &a) == DXGI_ERROR_NOT_FOUND) break;
+    if (!a) break;  // any other failure may leave the out-param null
     DXGI_ADAPTER_DESC1 d{};
     a->GetDesc1(&d);
     names.push_back(bc::toUtf8(d.Description));
   }
   return names;
+}
+
+// The first run of digits in an adapter description ("1650" in "… GTX 1650"), or "" —
+// the sort of numeric value that must never be read as a description substring.
+std::string firstDigitRun(const std::string& s) {
+  size_t i = 0;
+  while (i < s.size() && !std::isdigit(static_cast<unsigned char>(s[i]))) ++i;
+  size_t j = i;
+  while (j < s.size() && std::isdigit(static_cast<unsigned char>(s[j]))) ++j;
+  return s.substr(i, j - i);
 }
 
 struct Gpu {
@@ -218,6 +229,42 @@ TEST_CASE("GpuDevice: BC_GPU_ADAPTER selects the adapter by index or name") {
   auto fallback = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   CHECK_FALSE(fallback->info().adapterName.empty());
   CHECK(fallback->info().adapterName == defaultName);
+
+  _putenv_s("BC_GPU_ADAPTER", "");
+}
+
+TEST_CASE("GpuDevice: an out-of-range adapter index is ignored") {
+  // BC_FORCE_WARP=1 wins over any adapter choice, so the override is unobservable.
+  char* fw = nullptr;
+  size_t fwLen = 0;
+  _dupenv_s(&fw, &fwLen, "BC_FORCE_WARP");
+  const bool forceWarp = fw && std::string(fw) == "1";
+  free(fw);
+  if (forceWarp) return;
+
+  _putenv_s("BC_GPU_ADAPTER", "");
+  const std::string defaultName =
+      bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp)->info().adapterName;
+
+  // An all-digits value is an index, so an out-of-range one (99999, or "630" on a two-GPU
+  // box) is ignored with a warning — never silently substring-matched onto a description
+  // full of digits. The device still creates, on the default adapter.
+  _putenv_s("BC_GPU_ADAPTER", "99999");
+  auto dev = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  CHECK_FALSE(dev->info().adapterName.empty());
+  CHECK(dev->info().adapterName == defaultName);
+
+  // Pin the substring case: every non-default adapter's own model number is out of range
+  // and would select that adapter under the old digit-substring fallback.
+  const std::vector<std::string> names = dxgiAdapterNames();
+  for (const std::string& name : names) {
+    if (name == defaultName) continue;
+    const std::string digits = firstDigitRun(name);
+    if (digits.empty() || std::strtoul(digits.c_str(), nullptr, 10) < names.size()) continue;
+    _putenv_s("BC_GPU_ADAPTER", digits.c_str());
+    auto other = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+    CHECK(other->info().adapterName == defaultName);
+  }
 
   _putenv_s("BC_GPU_ADAPTER", "");
 }
