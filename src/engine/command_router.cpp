@@ -363,8 +363,10 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   } else if (cmd == "updateCamera") {
     auto& c = findCam(str(args, "id"));
     if (args.contains("name")) c.name = name(args);
-    if (args.contains("input")) c.input = inputFrom(obj(args, "input"), c.input.params);
-    checkDeviceFree(next, c.input, c.id);
+    if (args.contains("input")) {
+      c.input = inputFrom(obj(args, "input"), c.input.params);
+      checkDeviceFree(next, c.input, c.id);  // only a (re)set can clash; a rename never does
+    }
   } else if (cmd == "removeCamera") {
     const auto camId = str(args, "id");
     findCam(camId);

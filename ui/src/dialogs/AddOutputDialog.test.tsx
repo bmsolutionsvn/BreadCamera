@@ -36,6 +36,7 @@ test('an OMT output offers a mode and sends its mode and name', () => {
     params: { mode: 'hx', name: 'BreadCamera - A' },
     format: { width: 0, height: 0, halfRate: false },
   });
+  expect(add.args.output.params.codec).toBe('hevc');  // the default codec is sent for OMT-HX
 });
 
 test('an OMT-HX output offers a codec and sends the one chosen', () => {

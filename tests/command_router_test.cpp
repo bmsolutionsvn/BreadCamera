@@ -398,3 +398,27 @@ TEST_CASE("CommandRouter: a capture device cannot belong to two cameras") {
   CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"input", {{"kind", "uvc"}, {"params", {{"device", "FaceTime HD"}}}}}}}})["ok"] == true);
   CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"name", "Renamed"}}}})["ok"] == true);
 }
+
+TEST_CASE("CommandRouter: a hand-edited show can rename a camera that shares a device") {
+  bc::CameraConfig a;
+  a.id = "a";
+  a.name = "Camera A";
+  a.input.kind = "uvc";
+  a.input.params = {{"device", "Cam Link 4K"}};
+  bc::CameraConfig b;
+  b.id = "b";
+  b.name = "Camera B";
+  b.input.kind = "uvc";
+  b.input.params = {{"device", "Cam Link 4K"}};
+  bc::Show show;
+  show.cameras.push_back(a);
+  show.cameras.push_back(b);
+  FakeFx fx;
+  bc::CommandRouter r(std::move(show), fx);
+  // The hand-edited show already holds two cameras on one device; a rename must still work.
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", "b"}, {"name", "Renamed"}}}})["ok"] == true);
+  CHECK(r.show().cameras[1].name == "Renamed");
+  // Renaming b and moving it onto the other camera's device is still refused.
+  auto move = call(r, {{"cmd", "updateCamera"}, {"args", {{"id", "b"}, {"name", "Renamed again"}, {"input", {{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}}}}}});
+  CHECK(move["error"]["code"] == "invalid");
+}
