@@ -533,6 +533,46 @@ TEST_CASE("Camera: an input size change never publishes the previous size's imag
   camera.stop();
 }
 
+// The colour stage can be bypassed across an input renegotiation (guard backoff), so the graded
+// texture left over from the previous size must not be reused once the input changes size: on a
+// repeat tick the old-size graded frame would otherwise be published. The removed Camera::setFormat
+// reset lastGraded_ on every size change; the reuse branch must now check the size itself.
+TEST_CASE("Camera: a size change never reuses the previous size's graded frame") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.stages = {{"color", bc::normalizeStageParams("color", {{"enabled", true}, {"saturation", 0.5}})}};
+  // A long hold keeps the renegotiated frame in the sync's Holding window, so the repeat tick
+  // below still outputs it (a Slate phase would drop it and hide the bug).
+  bc::SyncPolicy policy;
+  policy.hold = 60000ms;
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, policy);
+  camera.start();
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+
+  // 1. A fresh 64x36 frame is graded: lastGraded_ is 64x36 and gradeDirty_ clears.
+  camera.onVideo(solidFrame(r.conv, 120, 64, 36));
+  const auto t0 = Clock::now();
+  camera.beginTick(t0, slate);
+  REQUIRE(camera.tickFrame()->width == 64);
+  REQUIRE(camera.tickFrame()->height == 36);
+
+  // 2. The colour stage bypasses (as on a failure) and will retry 5 s later.
+  camera.colorGuard().failed("test: force colour bypass", t0);
+
+  // 3. The input renegotiates to 32x18 while the colour stage is bypassed: the new frame is
+  //    converted (lastSize_ moves to 32x18) but the 64x36 graded texture is left in place.
+  camera.onVideo(solidFrame(r.conv, 120, 32, 18));
+  camera.beginTick(t0 + 1s, slate);
+
+  // 4. The guard retries on a repeat tick (no fresh frame). It must grade the 32x18 frame; before
+  //    the fix the reuse branch serves the stale 64x36 texture, so the tick publishes the old size.
+  camera.beginTick(t0 + 6s, slate);
+  CHECK(camera.tickFrame()->width == 32);
+  CHECK(camera.tickFrame()->height == 18);
+  camera.stop();
+}
+
 // D2: with no picture the camera shows the slate at its own frame size, not a show size. Before any
 // frame is seen it uses the fallback (1280x720); after a frame it uses that frame's size.
 TEST_CASE("Camera: with no picture the slate is fitted to the camera's own size") {

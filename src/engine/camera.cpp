@@ -204,7 +204,10 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   tickFrame_ = tickRaw_;
   const bool colorOn = colorParams_.value("enabled", false);
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
-    if (!pick.fresh && !gradeDirty_ && lastGraded_) {
+    // A size change does not dirty the grade, so the reuse must also match the current frame's
+    // size: the colour stage can be bypassed across a renegotiation and leave a stale texture.
+    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == lastConverted_->width &&
+        lastGraded_->height == lastConverted_->height) {
       tickFrame_ = lastGraded_;
     } else {
       const auto t0 = Clock::now();
