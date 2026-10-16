@@ -5,6 +5,8 @@ Status: approved (2026-10-08). Amended 2026-10-08 for the build machine (§7.2) 
 Amended 2026-10-08 after the UI mockup review (owner): English-only UI with Unicode names, native pro-tool
 layout with a docked Inspector (§6.4), effects as per-camera add-ins (§5.4), one-time chart calibration instead
 of reference matching (§5.3), show resolution and per-output frame rate (§3.2, §4.3), three-state input health (§6.1).
+Amended 2026-10-16: the show-wide resolution is removed — each camera's frame is its input's size (§1.2, §1.3, §3.2;
+`docs/superpowers/specs/2026-10-16-per-camera-size-design.md`).
 Reference mockups: `docs/design/mockups/index.html`; Multiview brief: `docs/design/multiview.md`.
 
 ## 1. Purpose
@@ -50,7 +52,7 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 | Background removal | NVIDIA Maxine VFX SDK AI Green Screen, plus an ONNX fallback behind the same interface |
 | Colour | One-time calibration per camera against a colour chart (printed ColorChecker Classic 24, or a tablet showing the same chart), then locked |
 | UI | Native Windows pro-tool layout: title bar with menus, toolbar, Multiview with a docked Inspector, status bar. English only; names the operator types (cameras, outputs, shows) can be in any language |
-| Show format | One show-wide frame rate and resolution; every output sends the frame size, at the show rate or half the frame rate |
+| Show format | One show-wide frame rate; every output sends the frame size (each camera's frame is its input's size), at the show rate or half the frame rate |
 | Stack | C++20 engine. UI in React + `@bmsolutionsvn/design` hosted in WebView2 |
 | Process model | Headless engine process plus a UI shell process that supervises it |
 
@@ -58,8 +60,9 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 
 - Standalone tool: no Kinde login and no billing in v1.
 - Windows 11 is required, because the virtual camera uses `MFCreateVirtualCamera`.
-- Every camera runs at a single show-wide frame rate (50, 59.94 or 60) and
-  resolution (1280×720 or 1920×1080).
+- Every camera runs at a single show-wide frame rate (50, 59.94 or 60). The
+  frame size is each camera's input size; there is no show-wide resolution
+  (removed 2026-10-16; `docs/superpowers/specs/2026-10-16-per-camera-size-design.md`).
 
 ## 2. Architecture
 
@@ -121,8 +124,9 @@ Input ─▶ Decode ─▶ To RGBA ─▶ Color ─▶ Matte ─▶ Background �
 
 - A compute shader converts NV12, P010, UYVY or BGRA into RGBA16F, in linear
   BT.709.
-- The same pass scales to the show resolution. An input of another size or
-  aspect is scaled to fit and letterboxed; it is never stretched.
+- The frame keeps the input's size (no scale to a show size). An input whose
+  aspect differs from a fixed-size target (the no-picture slate, a Multiview
+  cell) is fitted and letterboxed; a picture is never stretched.
 
 **Stages**
 
@@ -340,7 +344,7 @@ result is locked; the operator calibrates again only if the lighting changes.
   - add or remove a camera, input or output (with its output format);
   - add or remove a stage on a camera, and set stage parameters;
   - colour calibration: find the chart, set corners, capture, undo, clear;
-  - set the show format (frame rate, resolution);
+  - set the show rate;
   - save or load a show.
 - When a client connects, the engine pushes a full state snapshot. After that
   it sends patches.
@@ -437,7 +441,7 @@ Multiview strip and colour rules are in `docs/design/multiview.md`.
 
 **Dialogs**
 
-- Settings (Show: frame rate, resolution, hold time, slate; Engine: GPU,
+- Settings (Show: frame rate, hold time, slate; Engine: GPU,
   matte backend, preview encoder; About).
 - Add camera, Add output (type, keyed or composited, name, resolution, frame
   rate), Add effect.

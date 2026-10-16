@@ -8,6 +8,13 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The preview shares that image and H.264-encodes it **off the tick** on a worker thread, at the frame size; the wire `small`/`large` size is ignored (D7). Past `kMaxPreviewEncoders` visible cameras, a tile is skipped with a `/engine/warnings/preview` state warning instead of disabling every preview (D9) (`src/engine/preview_service.cpp`).
 - The whole WebView preview path is throwaway: it buys sharpness and fewer overruns until it is superseded by the planned native zero-copy Multiview (project 3; project 2 removes the show-wide size/rate) (`docs/superpowers/specs/2026-10-16-one-size-per-camera-design.md`).
 
+## Per-camera size (2026-10-16)
+- The show has **no wide resolution any more**: each camera's frame is its **input's** size. `ShowSettings::width`/`height` and `Camera::setFormat` are gone; `beginTick` keeps `toLinear(input)` at its own size. A legacy `settings.resolution` is ignored on load, `showToJson` stops emitting it, and `Show::kSchemaVersion` stays 1 (`src/core/show.h`, `src/engine/camera.cpp`; spec §1.2, §1.3, §3.2; design D1, D7).
+- The one shared slate is now a **source**: each camera fits it to its own frame size, but only on the no-picture path (cached by size; fallback 1280×720 before any frame) (D2) (`src/engine/engine.cpp`, `src/engine/camera.cpp`).
+- **SRT re-opens its encoders when the frame size changes** mid-show (unlike NDI/OMT, which set the size per frame, it bakes the size at open — the latent bug project 2a is the first to expose). The re-open logs the known **benign non-monotonic-DTS warning** when it happens (D6) (`src/io/srt_output.cpp`).
+- The **preview caps its H.264 encode at 1280×720** (downscaled with swscale on the off-tick worker), so a 4K camera is no longer a 4K encode per visible tile (D8) (`src/engine/preview_service.cpp`).
+- **Calibration keeps its fixed 960×540 capture** — it does not capture at the camera's native size, which at 4K would be 15 blocking 4K readbacks under the tick lock (D5) (`src/engine/color_calibration_service.cpp`).
+
 ## M4a
 - M4a Task 2 review: flipped NDI video (negative `line_stride_in_bytes`) is skipped once with `{code:"ndi-format"}` — we request `NDIlib_recv_color_format_BGRX_BGRA`, not the `_flipped` variant; if a flipped source appears, request `_flipped` or flip on the GPU (`src/io/ndi_input.cpp`).
 - M4a Task 2 review: `tests/ndi_input_test.cpp` uses fixed sleeps (4 s / 3 s / 5 s); poll a condition instead if the build box is loaded.
