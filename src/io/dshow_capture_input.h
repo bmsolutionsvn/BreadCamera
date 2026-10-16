@@ -2,6 +2,7 @@
 #include <guiddef.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <thread>
@@ -39,6 +40,7 @@ class DShowCaptureInput final : public Input {
   int width_ = 0;
   int height_ = 0;
   int stride_ = 0;
+  std::size_t need_ = 0;  // the bytes one full sample must hold (NV12 includes its chroma)
   bool bottomUp_ = false;
   bool bt709_ = false;
 };

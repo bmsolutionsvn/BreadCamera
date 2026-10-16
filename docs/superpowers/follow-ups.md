@@ -17,6 +17,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - The filter graph runs **clock-free** (`IMediaFilter::SetSyncSource(nullptr)`) — OBS Virtual Camera delivers a single sample then stalls on a reference clock, and one live source has no A/V pair to synchronise; a device that needs the graph clock may run less smoothly (`src/io/dshow_capture_input.cpp`).
 - The DirectShow id is the moniker display name (`dshow:<display name>`); a device uninstalled and reinstalled gets a new id, orphaning it in saved shows (`src/io/dshow_devices.cpp`).
 - DirectShow capture is video only (no audio), like the MF path (`src/io/dshow_capture_input.cpp`).
+- The MJPEG→forced-RGB32 fallback and `stop()` mid-fallback are exercised only on a PC with a physical MJPG webcam; no deterministic test drives the retry branch (`tests/dshow_capture_test.cpp`).
+- Row padding is assumed away: `dshowRowBytes`/`dshowFrameBytes` compute the packed stride (the observed devices are packed); a driver that pads a raw row would skew the picture (`src/io/dshow_format.cpp`).
 
 ## M4b
 - DeckLink, AJA and the virtual camera are **untested on hardware**; the owner's checklist is `docs/superpowers/manual-checks/m4b-hardware.md`.

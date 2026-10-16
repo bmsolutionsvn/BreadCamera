@@ -82,6 +82,13 @@ TEST_CASE("dshowRowBytes: per-subtype row size (NV12 is the luma stride, not 1.5
   CHECK(bc::dshowRowBytes(kMjpg, 1920) == 0);
 }
 
+TEST_CASE("dshowFrameBytes: NV12 includes its interleaved chroma plane") {
+  CHECK(bc::dshowFrameBytes(kRgb32, 1920, 1080, 1920 * 4) == static_cast<size_t>(1920) * 1080 * 4);
+  CHECK(bc::dshowFrameBytes(kNv12, 1920, 1080, 1920) == static_cast<size_t>(1920) * 1080 * 3 / 2);
+  CHECK(bc::dshowFrameBytes(kYuy2, 1920, 1080, 1920 * 2) == static_cast<size_t>(1920) * 1080 * 2);
+  CHECK(bc::dshowFrameBytes(kMjpg, 1920, 1080, 1920) == 0);
+}
+
 TEST_CASE("dshowSubtypeSupported: recognises the raw set, rejects MJPG") {
   CHECK(bc::dshowSubtypeSupported(kRgb32));
   CHECK(bc::dshowSubtypeSupported(kNv12));

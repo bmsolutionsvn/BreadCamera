@@ -236,6 +236,9 @@ void DShowCaptureInput::runOnce(bool forceRgb32) {
   bottomUp_ = rgb && hRaw > 0;  // a positive DIB height is bottom-up for RGB; YUV is top-down
   stride_ = dshowRowBytes(subtype_, width_);
   if (stride_ <= 0) throw std::runtime_error("the device's video format is not supported");
+  // The guard must cover the whole sample, chroma plane included (biSizeImage is authoritative).
+  need_ = bmi->biSizeImage ? static_cast<std::size_t>(bmi->biSizeImage)
+                           : dshowFrameBytes(subtype_, width_, height_, stride_);
   bt709_ = height_ >= 720;
 
   if (FAILED(grabber->SetBufferSamples(FALSE))) throw std::runtime_error("cannot configure the SampleGrabber");
@@ -267,7 +270,7 @@ void DShowCaptureInput::runOnce(bool forceRgb32) {
       frame.swap(cb_->buf);
       cb_->pending = false;
     }
-    if (frame.size() < static_cast<size_t>(stride_) * height_) continue;  // a short sample; wait for the next
+    if (frame.size() < need_) continue;  // a short sample; wait for the next
     std::vector<uint8_t> bgra = dshowToBgra8(subtype_, frame.data(), width_, height_, stride_, bottomUp_, bt709_);
     VideoFrameIn f;
     f.layout = PixelLayout::BGRA8;

@@ -41,6 +41,19 @@ int dshowRowBytes(const GUID& subtype, int width) {
   }
 }
 
+std::size_t dshowFrameBytes(const GUID& subtype, int width, int height, int rowBytes) {
+  (void)width;
+  const std::size_t rows = static_cast<std::size_t>(rowBytes) * height;
+  switch (formatFor(subtype)) {
+    case AV_PIX_FMT_NV12: return rows * 3 / 2;  // luma + interleaved chroma
+    case AV_PIX_FMT_BGRA:
+    case AV_PIX_FMT_BGR24:
+    case AV_PIX_FMT_YUYV422:
+    case AV_PIX_FMT_UYVY422: return rows;
+    default: return 0;
+  }
+}
+
 std::vector<uint8_t> dshowToBgra8(const GUID& subtype, const uint8_t* src, int width, int height,
                                   int stride, bool bottomUp, bool bt709) {
   const AVPixelFormat from = formatFor(subtype);
