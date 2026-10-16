@@ -29,6 +29,11 @@ class PreviewService {
   // Consumer GPUs limit concurrent encoder sessions, and a full-size preview per visible tile can
   // exhaust them; beyond this many watched cameras the excess tiles are skipped (D9).
   static constexpr size_t kMaxPreviewEncoders = 4;
+  // A preview never encodes larger than this (D8): the shared image is the camera's input size, so a
+  // 4K camera would otherwise H.264-encode 4K per visible tile. A larger frame is downscaled to fit
+  // this box (aspect kept) on the encoder worker, never on the tick.
+  static constexpr int kPreviewCapWidth = 1280;
+  static constexpr int kPreviewCapHeight = 720;
   PreviewService(StateStore& state, PreviewHub& hub, SendFn send);
   ~PreviewService();
   PreviewService(const PreviewService&) = delete;

@@ -132,6 +132,52 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
   avcodec_free_context(&ctx);
 }
 
+// D8: the shared image is one readback for every tile, but its size is now the camera's input size
+// (Task 1), so a 4K camera would H.264-encode 4K per visible tile. The preview caps its encode size
+// at 1280x720, downscaling the shared image on the encoder worker (off the tick) and opening the
+// encoder at the capped size.
+TEST_CASE("the preview caps its encode size at 1280x720" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::mutex mu;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
+  hub.subscribe("c1", {"a"}, PreviewSize::Small);
+  auto img = std::make_shared<const bc::CpuImage>(
+      bc::CpuImage{3840, 2160, std::vector<uint8_t>(3840 * 2160 * 4, 128)});
+  for (uint64_t t = 0; t < 40; ++t) {
+    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
+    svc.drain();
+  }
+  std::vector<uint8_t> msg;
+  {
+    std::lock_guard l(mu);
+    REQUIRE_FALSE(sent["c1"].empty());
+    msg = sent["c1"].front();
+  }
+
+  // The first packet decodes at the cap, not the 4K frame size.
+  const size_t idLen = msg[2] | (msg[3] << 8);
+  std::vector<uint8_t> annexB(msg.begin() + 4 + idLen + 8, msg.end());
+  const AVCodec* dec = avcodec_find_decoder(AV_CODEC_ID_H264);
+  AVCodecContext* ctx = avcodec_alloc_context3(dec);
+  REQUIRE(avcodec_open2(ctx, dec, nullptr) == 0);
+  AVPacket* pkt = av_packet_alloc();
+  AVFrame* frame = av_frame_alloc();
+  pkt->data = annexB.data();
+  pkt->size = static_cast<int>(annexB.size());
+  REQUIRE(avcodec_send_packet(ctx, pkt) >= 0);
+  REQUIRE(avcodec_receive_frame(ctx, frame) >= 0);
+  CHECK(frame->width == 1280);
+  CHECK(frame->height == 720);
+  av_frame_free(&frame);
+  av_packet_free(&pkt);
+  avcodec_free_context(&ctx);
+}
+
 TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;

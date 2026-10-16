@@ -1,16 +1,38 @@
 #include "engine/preview_service.h"
 
+extern "C" {
+#include <libswscale/swscale.h>
+}
+
+#include <algorithm>
 #include <chrono>
 #include <exception>
 #include <iterator>
+#include <stdexcept>
 #include <utility>
 
 namespace bc {
+namespace {
+// The preview encode cap (D8): a frame larger than 1280x720 is downscaled to a same-aspect size that
+// fits the box, with even dimensions (H.264 encoders require them).
+std::pair<int, int> cappedPreviewSize(uint32_t w, uint32_t h) {
+  const double scale = std::min(1.0, std::min(static_cast<double>(PreviewService::kPreviewCapWidth) / w,
+                                            static_cast<double>(PreviewService::kPreviewCapHeight) / h));
+  const int cw = std::max(2, static_cast<int>(w * scale) & ~1);
+  const int ch = std::max(2, static_cast<int>(h * scale) & ~1);
+  return {cw, ch};
+}
+}  // namespace
+
 // Per-camera encoder plus its worker thread and one-slot queue. onTick writes the newest CpuImage
 // and returns; the worker encodes and sends. w/h/enc/failed are touched only by the worker, the
-// queue flags under m.
+// queue flags under m. sws/capped form a reusable BGRA->BGRA downscaler for the D8 cap, also
+// worker-only.
 struct PreviewService::EncoderSlot {
   explicit EncoderSlot(std::string camera) : id(std::move(camera)) {}
+  ~EncoderSlot() {
+    if (sws) sws_freeContext(sws);
+  }
   std::string id;
   std::thread worker;
   std::mutex m;
@@ -25,6 +47,9 @@ struct PreviewService::EncoderSlot {
   uint32_t w = 0, h = 0;
   std::unique_ptr<PreviewEncoder> enc;
   std::atomic<bool> done{false};
+  SwsContext* sws = nullptr;
+  uint32_t swsW = 0, swsH = 0;
+  CpuImage capped;  // destination for the downscale, reused frame to frame
 };
 
 PreviewService::PreviewService(StateStore& state, PreviewHub& hub, SendFn send)
@@ -85,15 +110,41 @@ void PreviewService::run(EncoderSlot* s) {
     }
     if (img) {
       try {
-        // Encode at the frame size, not the wire size (D7). Reopen only if the size changed.
-        if (!s->enc || s->w != img->width || s->h != img->height) {
-          s->enc = std::make_unique<PreviewEncoder>(static_cast<int>(img->width), static_cast<int>(img->height), 30);
-          s->w = img->width;
-          s->h = img->height;
+        // Cap the encode size (D8). The shared image is the camera's input size (Task 1), so a 4K
+        // camera would otherwise encode 4K per visible tile. A frame larger than 1280x720 is
+        // downscaled here on the worker (never the tick); at or below the cap it is encoded as-is.
+        const CpuImage* frame = img.get();
+        if (img->width > static_cast<uint32_t>(kPreviewCapWidth) ||
+            img->height > static_cast<uint32_t>(kPreviewCapHeight)) {
+          const auto [cw, ch] = cappedPreviewSize(img->width, img->height);
+          if (s->swsW != img->width || s->swsH != img->height || s->capped.width != static_cast<uint32_t>(cw) ||
+              s->capped.height != static_cast<uint32_t>(ch)) {
+            sws_freeContext(s->sws);
+            s->sws = sws_getContext(static_cast<int>(img->width), static_cast<int>(img->height), AV_PIX_FMT_BGRA,
+                                    cw, ch, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+            if (!s->sws) throw std::runtime_error("cannot create the preview downscaler");
+            s->swsW = img->width;
+            s->swsH = img->height;
+            s->capped.width = static_cast<uint32_t>(cw);
+            s->capped.height = static_cast<uint32_t>(ch);
+          }
+          s->capped.bgra.resize(static_cast<size_t>(cw) * ch * 4);
+          const uint8_t* src[1] = {img->bgra.data()};
+          const int srcStride[1] = {static_cast<int>(img->width) * 4};
+          uint8_t* dst[1] = {s->capped.bgra.data()};
+          const int dstStride[1] = {cw * 4};
+          sws_scale(s->sws, src, srcStride, 0, static_cast<int>(img->height), dst, dstStride);
+          frame = &s->capped;
+        }
+        // Encode at the (capped) frame size, not the wire size (D7). Reopen only if the size changed.
+        if (!s->enc || s->w != frame->width || s->h != frame->height) {
+          s->enc = std::make_unique<PreviewEncoder>(static_cast<int>(frame->width), static_cast<int>(frame->height), 30);
+          s->w = frame->width;
+          s->h = frame->height;
           state_.set("/engine/previewEncoder", s->enc->encoderName());
         }
         if (forceKey) s->enc->forceKeyframe();
-        for (auto& pkt : s->enc->encode(*img, ptsUs)) {
+        for (auto& pkt : s->enc->encode(*frame, ptsUs)) {
           const auto msg = encodePreviewMessage(s->id, pkt);
           // The wire size is ignored (D7), so send to every client watching this camera.
           std::vector<std::string> clients = hub_.clientsFor(s->id, PreviewSize::Small);
