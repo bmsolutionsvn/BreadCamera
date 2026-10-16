@@ -9,9 +9,11 @@
 #include <thread>
 #include <vector>
 
+#include "engine/adapter_factory.h"
 #include "gpu/device.h"
 #include "io/dshow_capture_input.h"
 #include "io/dshow_devices.h"
+#include "io/mf_capture_input.h"
 #include "support/requires.h"
 
 using namespace std::chrono_literals;
@@ -89,4 +91,19 @@ TEST_CASE("DShowCaptureInput: a capture device delivers frames" BC_REQUIRES(bc::
     }
   }
   std::fprintf(stderr, "[skip] no DirectShow device delivered frames\n");
+}
+
+TEST_CASE("makeInput: a dshow: device id builds a DirectShow input") {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool(*gpu);
+  bc::DefaultAdapterFactory f(*gpu, pool);
+  bc::InputConfig cfg;
+  cfg.kind = "uvc";
+  cfg.params = {{"device", "dshow:@device:sw:no-such"}};
+  auto in = f.makeInput(cfg);
+  CHECK(dynamic_cast<bc::DShowCaptureInput*>(in.get()) != nullptr);
+
+  cfg.params = {{"device", "\\\\?\\usb#vid_0408"}};
+  auto mf = f.makeInput(cfg);
+  CHECK(dynamic_cast<bc::MfCaptureInput*>(mf.get()) != nullptr);
 }

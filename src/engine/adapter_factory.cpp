@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "core/utf8.h"
+#include "io/dshow_capture_input.h"
 #include "io/ffmpeg_input.h"
 #include "io/fullscreen_output.h"
 #include "io/mf_capture_input.h"
@@ -48,8 +49,12 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
   if (cfg.kind == "uvc") {
     if (!cfg.params.contains("device") || !cfg.params["device"].is_string())
       throw std::invalid_argument("device is required");
-    return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params["device"].get<std::string>(), cfg.params.value("width", 0),
-                                            cfg.params.value("height", 0), cfg.params.value("fps", 0));
+    const std::string device = cfg.params["device"].get<std::string>();
+    // A DirectShow-only camera (OBS Virtual Camera) is listed as "dshow:<display name>";
+    // everything else stays on the Media Foundation path.
+    if (device.rfind("dshow:", 0) == 0) return std::make_unique<DShowCaptureInput>(gpu_, pool_, device.substr(6));
+    return std::make_unique<MfCaptureInput>(gpu_, pool_, device, cfg.params.value("width", 0), cfg.params.value("height", 0),
+                                            cfg.params.value("fps", 0));
   }
   if (cfg.kind == "decklink") {
 #if BC_WITH_DECKLINK
