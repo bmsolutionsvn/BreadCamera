@@ -74,6 +74,14 @@ TEST_CASE("dshowToBgra8: YUY2 neutral maps to grey") {
   CHECK(out[0] <= 132);
 }
 
+TEST_CASE("dshowRowBytes: per-subtype row size (NV12 is the luma stride, not 1.5x)") {
+  CHECK(bc::dshowRowBytes(kRgb32, 1920) == 1920 * 4);
+  CHECK(bc::dshowRowBytes(kRgb24, 1920) == 1920 * 3);
+  CHECK(bc::dshowRowBytes(kNv12, 1920) == 1920);
+  CHECK(bc::dshowRowBytes(kYuy2, 1920) == 1920 * 2);
+  CHECK(bc::dshowRowBytes(kMjpg, 1920) == 0);
+}
+
 TEST_CASE("dshowSubtypeSupported: recognises the raw set, rejects MJPG") {
   CHECK(bc::dshowSubtypeSupported(kRgb32));
   CHECK(bc::dshowSubtypeSupported(kNv12));

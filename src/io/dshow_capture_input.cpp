@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <dshow.h>  // GUIDs are defined once in dshow_devices.cpp (no initguid here)
+#include <dvdmedia.h>  // VIDEOINFOHEADER2 (a FORMAT_VideoInfo2 connection)
 #include <wrl/client.h>
 
 #include <chrono>
@@ -13,6 +14,7 @@
 
 #include "core/backoff.h"
 #include "io/dshow_devices.h"
+#include "io/dshow_format.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -47,6 +49,7 @@ struct ComInit {
   }
   HRESULT hr_;
 };
+struct NeedsRgbFallback {};  // the connected subtype is not convertible; retry forcing RGB32
 }  // namespace
 
 // Delivers each sample to the run loop through a condition variable. A SampleGrabber sample is
@@ -136,7 +139,14 @@ void DShowCaptureInput::run() {
   while (!stopping_) {
     sink_->onState(SignalState::Connecting, std::nullopt);
     try {
-      runOnce();
+      try {
+        runOnce(false);
+      } catch (const NeedsRgbFallback&) {
+        if (stopping_) break;
+        // The source negotiated a format we cannot convert (e.g. MJPEG). Force RGB32, which
+        // physical webcams stream.
+        runOnce(true);
+      }
       if (stopping_) break;
       throw std::runtime_error("the device stopped sending frames");
     } catch (const std::exception& e) {
@@ -149,7 +159,7 @@ void DShowCaptureInput::run() {
   sink_->onState(SignalState::Offline, std::nullopt);
 }
 
-void DShowCaptureInput::runOnce() {
+void DShowCaptureInput::runOnce(bool forceRgb32) {
   cb_->reset();
   ComInit com;
   ComPtr<IMoniker> moniker;
@@ -174,11 +184,15 @@ void DShowCaptureInput::runOnce() {
     throw std::runtime_error("the SampleGrabber filter is not available");
   ComPtr<ISampleGrabber> grabber;
   if (FAILED(grabberFilter.As(&grabber))) throw std::runtime_error("cannot use the SampleGrabber filter");
-  AM_MEDIA_TYPE mt{};
-  mt.majortype = MEDIATYPE_Video;
-  mt.subtype = MEDIASUBTYPE_RGB32;
-  mt.formattype = FORMAT_VideoInfo;
-  if (FAILED(grabber->SetMediaType(&mt))) throw std::runtime_error("cannot set the RGB32 media type");
+  // Default: let RenderStream connect the source's native format (OBS Virtual Camera only streams
+  // natively). RGB32 is forced only on the fallback attempt.
+  if (forceRgb32) {
+    AM_MEDIA_TYPE mt{};
+    mt.majortype = MEDIATYPE_Video;
+    mt.subtype = MEDIASUBTYPE_RGB32;
+    mt.formattype = FORMAT_VideoInfo;
+    if (FAILED(grabber->SetMediaType(&mt))) throw std::runtime_error("cannot set the RGB32 media type");
+  }
   if (FAILED(graph->AddFilter(grabberFilter.Get(), L"Grabber"))) throw std::runtime_error("cannot add the grabber filter");
   // The SampleGrabber is a pass-through (input and output pins), so the graph needs a real
   // renderer downstream of it or nothing flows: capture -> grabber -> null.
@@ -200,17 +214,37 @@ void DShowCaptureInput::runOnce() {
       if (mt->pUnk) mt->pUnk->Release();
     }
   } freeMt{&connected};
-  if (connected.formattype != FORMAT_VideoInfo || !connected.pbFormat)
-    throw std::runtime_error("the device's video format is not supported");
-  const auto* vih = reinterpret_cast<const VIDEOINFOHEADER*>(connected.pbFormat);
-  const int hRaw = static_cast<int>(vih->bmiHeader.biHeight);
-  width_ = static_cast<int>(vih->bmiHeader.biWidth);
+  if (!connected.pbFormat) throw std::runtime_error("the device's video format is not supported");
+  const BITMAPINFOHEADER* bmi = nullptr;
+  if (connected.formattype == FORMAT_VideoInfo)
+    bmi = &reinterpret_cast<const VIDEOINFOHEADER*>(connected.pbFormat)->bmiHeader;
+  else if (connected.formattype == FORMAT_VideoInfo2)
+    bmi = &reinterpret_cast<const VIDEOINFOHEADER2*>(connected.pbFormat)->bmiHeader;
+  if (!bmi) throw std::runtime_error("the device's video format is not supported");
+
+  const int hRaw = static_cast<int>(bmi->biHeight);
+  width_ = static_cast<int>(bmi->biWidth);
   height_ = std::abs(hRaw);
-  bottomUp_ = hRaw > 0;  // a positive DIB height is bottom-up
   if (width_ <= 0 || height_ <= 0) throw std::runtime_error("the device reports no picture size");
+
+  subtype_ = connected.subtype;
+  if (!dshowSubtypeSupported(subtype_)) {
+    if (!forceRgb32) throw NeedsRgbFallback{};
+    throw std::runtime_error("the device's video format is not supported");
+  }
+  const bool rgb = IsEqualGUID(subtype_, MEDIASUBTYPE_RGB32) || IsEqualGUID(subtype_, MEDIASUBTYPE_RGB24);
+  bottomUp_ = rgb && hRaw > 0;  // a positive DIB height is bottom-up for RGB; YUV is top-down
+  stride_ = dshowRowBytes(subtype_, width_);
+  if (stride_ <= 0) throw std::runtime_error("the device's video format is not supported");
+  bt709_ = height_ >= 720;
 
   if (FAILED(grabber->SetBufferSamples(FALSE))) throw std::runtime_error("cannot configure the SampleGrabber");
   if (FAILED(grabber->SetCallback(cb_, 0))) throw std::runtime_error("cannot set the frame callback");  // 0 = SampleCB (1 = BufferCB)
+
+  // A reference clock makes OBS Virtual Camera deliver one sample then stall; a single live source
+  // has no A/V pair to synchronise, so run the graph clock-free.
+  ComPtr<IMediaFilter> mediaFilter;
+  if (SUCCEEDED(graph.As(&mediaFilter))) mediaFilter->SetSyncSource(nullptr);
 
   ComPtr<IMediaControl> control;
   if (FAILED(graph.As(&control))) throw std::runtime_error("cannot control the filter graph");
@@ -233,14 +267,8 @@ void DShowCaptureInput::runOnce() {
       frame.swap(cb_->buf);
       cb_->pending = false;
     }
-    if (frame.size() < static_cast<size_t>(pitch) * height_) continue;  // a short sample; wait for the next
-    const uint8_t* src = frame.data();
-    if (bottomUp_) {
-      flip_.resize(static_cast<size_t>(pitch) * height_);
-      for (int y = 0; y < height_; ++y)
-        std::memcpy(&flip_[static_cast<size_t>(y) * pitch], frame.data() + static_cast<size_t>(height_ - 1 - y) * pitch, pitch);
-      src = flip_.data();
-    }
+    if (frame.size() < static_cast<size_t>(stride_) * height_) continue;  // a short sample; wait for the next
+    std::vector<uint8_t> bgra = dshowToBgra8(subtype_, frame.data(), width_, height_, stride_, bottomUp_, bt709_);
     VideoFrameIn f;
     f.layout = PixelLayout::BGRA8;
     f.fullRange = true;
@@ -248,7 +276,7 @@ void DShowCaptureInput::runOnce() {
     f.tex = pool_.acquire(width_, height_, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     {
       auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, src, pitch, 0);
+      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.data(), pitch, 0);
     }
     if (!live) {
       live = true;

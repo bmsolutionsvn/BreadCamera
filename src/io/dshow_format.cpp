@@ -30,6 +30,17 @@ bool isRgb(AVPixelFormat f) { return f == AV_PIX_FMT_BGRA || f == AV_PIX_FMT_BGR
 
 bool dshowSubtypeSupported(const GUID& subtype) { return formatFor(subtype) != AV_PIX_FMT_NONE; }
 
+int dshowRowBytes(const GUID& subtype, int width) {
+  switch (formatFor(subtype)) {
+    case AV_PIX_FMT_BGRA: return width * 4;
+    case AV_PIX_FMT_BGR24: return width * 3;
+    case AV_PIX_FMT_NV12: return width;  // luma stride; the interleaved chroma shares it
+    case AV_PIX_FMT_YUYV422:
+    case AV_PIX_FMT_UYVY422: return width * 2;
+    default: return 0;
+  }
+}
+
 std::vector<uint8_t> dshowToBgra8(const GUID& subtype, const uint8_t* src, int width, int height,
                                   int stride, bool bottomUp, bool bt709) {
   const AVPixelFormat from = formatFor(subtype);

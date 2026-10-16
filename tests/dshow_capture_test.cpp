@@ -1,6 +1,7 @@
 #define DOCTEST_CONFIG_DOUBLE_STRINGIFY
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <mutex>
@@ -143,4 +144,30 @@ TEST_CASE("DShowCaptureInput: a device that enumerates but never delivers report
   }
   in.stop();
   CHECK(offline);
+}
+
+TEST_CASE("DShowCaptureInput: a raw-format device delivers frames" BC_REQUIRES(bc::test::Req::DShowDevice)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool(*gpu);
+  // The first device that delivers through the new native path wins; an idle device is skipped.
+  int best = 0;
+  for (const auto& dev : bc::listDShowDevices()) {
+    bc::DShowCaptureInput in(*gpu, pool, dev.displayName);
+    Sink sink;
+    in.start(sink);
+    for (int i = 0; i < 20; ++i) {
+      {
+        std::lock_guard l(sink.m);
+        if (sink.video > 10) break;
+      }
+      std::this_thread::sleep_for(100ms);
+    }
+    in.stop();
+    std::lock_guard l(sink.m);
+    best = std::max(best, sink.video);
+    std::string why;
+    if (!sink.errors.empty() && sink.errors.back()) why = " (" + sink.errors.back()->message + ")";
+    std::fprintf(stderr, "[dshow-native] %s: %d frame(s)%s\n", dev.name.c_str(), sink.video, why.c_str());
+  }
+  CHECK(best > 10);
 }

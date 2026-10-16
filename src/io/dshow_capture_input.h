@@ -1,4 +1,6 @@
 #pragma once
+#include <guiddef.h>
+
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -23,7 +25,7 @@ class DShowCaptureInput final : public Input {
  private:
   struct GrabberCB;
   void run();
-  void runOnce();
+  void runOnce(bool forceRgb32);
 
   GpuDevice& gpu_;
   TexturePool& pool_;
@@ -31,11 +33,13 @@ class DShowCaptureInput final : public Input {
   InputSink* sink_ = nullptr;
   std::atomic<bool> stopping_{false};
   std::thread thread_;
-  std::vector<uint8_t> flip_;
   GrabberCB* cb_ = nullptr;
   // Set once per runOnce from the connected media type.
+  GUID subtype_{};
   int width_ = 0;
   int height_ = 0;
+  int stride_ = 0;
   bool bottomUp_ = false;
+  bool bt709_ = false;
 };
 }  // namespace bc
