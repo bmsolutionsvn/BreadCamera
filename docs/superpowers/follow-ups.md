@@ -13,6 +13,8 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 
 ## DirectShow camera input (2026-10-16)
 - DirectShow capture (`src/io/dshow_capture_input.cpp`) uses the deprecated in-box SampleGrabber filter (`qedit.h`-era) and does not negotiate resolution or frame rate — the device default is used. Replace with a custom `IMemInputPin` sink filter if SampleGrabber is withdrawn.
+- Capture negotiates the source's **native** format and converts RGB32/RGB24/NV12/YUY2/UYVY to BGRA8 through FFmpeg `swscale` (`src/io/dshow_format.cpp`); forcing RGB32 breaks OBS Virtual Camera, which only streams NV12. A native format outside that set (MJPEG and friends) is retried once forcing RGB32 (`src/io/dshow_capture_input.cpp`).
+- The filter graph runs **clock-free** (`IMediaFilter::SetSyncSource(nullptr)`) — OBS Virtual Camera delivers a single sample then stalls on a reference clock, and one live source has no A/V pair to synchronise; a device that needs the graph clock may run less smoothly (`src/io/dshow_capture_input.cpp`).
 - The DirectShow id is the moniker display name (`dshow:<display name>`); a device uninstalled and reinstalled gets a new id, orphaning it in saved shows (`src/io/dshow_devices.cpp`).
 - DirectShow capture is video only (no audio), like the MF path (`src/io/dshow_capture_input.cpp`).
 
