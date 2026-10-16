@@ -101,6 +101,39 @@ test('window buttons post to the shell', () => {
   delete (window as unknown as { chrome?: unknown }).chrome;
 });
 
+function subscribed(): string[] {
+  const msgs = FakeWs.last.sent
+    .map((s) => JSON.parse(s) as { cmd: string; args: { cameraIds: string[] } })
+    .filter((m) => m.cmd === 'subscribePreview');
+  return msgs.length ? msgs[msgs.length - 1].args.cameraIds : [];
+}
+
+test('clicking a tile focuses one camera; Esc returns to the grid', () => {
+  render(<Workspace client={client()} />);
+  expect(subscribed()).toEqual(['a', 'b']);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Grid' })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(subscribed()).toEqual(['a', 'b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(2);
+});
+
+test('the Grid button and clicking the focused picture both return to the grid', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+  expect(subscribed()).toEqual(['a', 'b']);
+
+  fireEvent.click(screen.getByRole('option', { name: /CAM 1/ }));
+  expect(subscribed()).toEqual(['a']);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 1/ }));
+  expect(subscribed()).toEqual(['a', 'b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(2);
+});
+
 test('losing the engine shows the restart block and every pill goes Offline', () => {
   const c = client();
   render(<Workspace client={c} />);

@@ -35,6 +35,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const cameras = snap.show?.cameras ?? [];
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('auto');
   const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit' | 'settings'>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -70,9 +71,15 @@ export function Workspace({ client }: { client: EngineClient }) {
   const holdMs = snap.show?.settings?.holdMs ?? 5000;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && calib.state && !dialog) {
-        calib.cancel();
-        return;
+      if (e.key === 'Escape') {
+        if (calib.state && !dialog) {
+          calib.cancel();
+          return;
+        }
+        if (focused) {
+          setFocused(null);
+          return;
+        }
       }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
@@ -90,7 +97,7 @@ export function Workspace({ client }: { client: EngineClient }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [calib.state, calib.cancel, calib.start, cam, dialog]);
+  }, [calib.state, calib.cancel, calib.start, cam, dialog, focused]);
 
   const calibIndex = cameras.findIndex((c) => c.id === calib.state?.cameraId);
   const calibCam = calibIndex >= 0 ? cameras[calibIndex] : undefined;
@@ -122,6 +129,8 @@ export function Workspace({ client }: { client: EngineClient }) {
             now={now}
             selected={selected}
             onSelect={select}
+            focused={focused}
+            onFocus={setFocused}
             layout={layout}
             onLayout={setLayout}
             offline={offline}
