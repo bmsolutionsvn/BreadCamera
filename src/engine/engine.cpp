@@ -17,7 +17,6 @@ Engine::Engine(GpuTools tools, StateStore& state, AdapterFactory& factory)
   std::lock_guard l(mutex_);
   loadSlate();
   state_.set("/engine/rate", settings_.rate.str());
-  state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));
   state_.set("/engine/overruns", 0);
 }
 
@@ -38,19 +37,21 @@ Engine::~Engine() {
 }
 
 void Engine::loadSlate() {
+  // The slate is a *source*: each camera fits it to its own frame size on the no-picture path.
   state_.set("/engine/warnings/slate", "");
   if (!settings_.slatePath.empty()) {
     try {
       auto img = loadImageBgra(settings_.slatePath);
       auto up = tools_.conv.uploadBgra8(img.bgra.data(), img.width, img.height, img.width * 4);
-      slate_ = tools_.conv.fit(*tools_.conv.toLinear(*up, PixelLayout::BGRA8, true), settings_.width, settings_.height);
+      slate_ = tools_.conv.toLinear(*up, PixelLayout::BGRA8, true);
       return;
     } catch (const std::exception& e) {
       state_.set("/engine/warnings/slate", std::string("slate image could not be loaded: ") + e.what() +
                                                "; using the built-in slate");
     }
   }
-  slate_ = tools_.conv.solid(settings_.width, settings_.height, {0.05f, 0.05f, 0.06f, 1.0f});
+  // A base size; the camera fits this to its own frame size when it has no picture.
+  slate_ = tools_.conv.solid(1280, 720, {0.05f, 0.05f, 0.06f, 1.0f});
 }
 
 void Engine::apply(const Show& show) {
@@ -60,17 +61,12 @@ void Engine::apply(const Show& show) {
     std::lock_guard l(mutex_);
     if (!settingsApplied_ || !(show.settings == settings_)) {
       const bool slateChanged = !settingsApplied_ || show.settings.slatePath != settings_.slatePath;
-      const bool sizeChanged = !settingsApplied_ || show.settings.width != settings_.width ||
-                               show.settings.height != settings_.height;
       rateChanged_ = rateChanged_ || !(show.settings.rate == settings_.rate);
       settings_ = show.settings;
       settingsApplied_ = true;
-      if (slateChanged || sizeChanged) loadSlate();
+      if (slateChanged) loadSlate();
       state_.set("/engine/rate", settings_.rate.str());
-      state_.set("/engine/resolution", resolutionStr(settings_.width, settings_.height));
       for (auto& c : cameras_) c->setPolicy(policy());
-      if (sizeChanged)
-        for (auto& c : cameras_) c->setFormat(settings_.width, settings_.height);
     }
     std::map<std::string, std::unique_ptr<Camera>> existing;
     for (auto& c : cameras_) existing.emplace(c->config().id, std::move(c));
@@ -83,7 +79,6 @@ void Engine::apply(const Show& show) {
         existing.erase(it);
       } else {
         auto cam = std::make_unique<Camera>(cfg, factory_, tools_, state_, policy());
-        cam->setFormat(settings_.width, settings_.height);
         cam->start();
         cameras_.push_back(std::move(cam));
       }

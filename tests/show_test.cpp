@@ -91,22 +91,25 @@ TEST_CASE("Show: newId gives 8 lowercase hex chars and differs") {
   CHECK(a != b);
 }
 
-TEST_CASE("Show: resolution and output rate round-trip, and old files load with defaults") {
+TEST_CASE("Show: output rate round-trips, and old files load with defaults") {
   auto s = sampleShow();
-  s.settings.width = 1280;
-  s.settings.height = 720;
   s.cameras[0].outputs[0].halfRate = true;
   auto j = bc::showToJson(s, bc::SecretMode::Plain);
-  CHECK(j["settings"]["resolution"] == "1280x720");
+  CHECK_FALSE(j["settings"].contains("resolution"));  // a show has no resolution any more
   CHECK(j["cameras"][0]["outputs"][0]["format"] == nlohmann::json{{"halfRate", true}});
   CHECK(bc::showFromJson(j) == s);
 
-  j["settings"].erase("resolution");
   j["cameras"][0]["outputs"][0].erase("format");
   auto old = bc::showFromJson(j);
-  CHECK(old.settings.width == 1920);
-  CHECK(old.settings.height == 1080);
   CHECK_FALSE(old.cameras[0].outputs[0].halfRate);
+}
+
+TEST_CASE("a legacy show resolution is ignored on load") {
+  auto j = nlohmann::json::parse(
+      R"({"schemaVersion":1,"settings":{"rate":"60/1","resolution":"3840x2160"},
+          "cameras":[]})");
+  bc::Show s = bc::showFromJson(j);  // must not throw: the legacy resolution is ignored
+  CHECK(s.settings.rate == bc::Rate{60, 1});
 }
 
 TEST_CASE("a show file with a legacy per-output size still loads at the frame size") {
@@ -123,11 +126,8 @@ TEST_CASE("a show file with a legacy per-output size still loads at the frame si
   CHECK(s.cameras[0].outputs[0].halfRate);  // the rate is kept; the size is gone
 }
 
-TEST_CASE("Show: an unsupported show resolution is rejected, but an output size is ignored") {
+TEST_CASE("Show: a legacy output size is ignored") {
   auto j = bc::showToJson(sampleShow(), bc::SecretMode::Plain);
-  j["settings"]["resolution"] = "3840x2160";
-  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
-  j["settings"]["resolution"] = "1920x1080";
   // A legacy per-output size is ignored, not an error (one frame size per camera).
   j["cameras"][0]["outputs"][0]["format"] = {{"width", 800}, {"height", 600}, {"halfRate", false}};
   CHECK_NOTHROW(bc::showFromJson(j));

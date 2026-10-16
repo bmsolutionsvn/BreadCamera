@@ -81,7 +81,7 @@ class Engine {
   ShowSettings settings_;
   bool settingsApplied_ = false;
   bool rateChanged_ = true;
-  TextureRef slate_;
+  TextureRef slate_;  // slate *source*; each camera fits it to its own size when it has no picture
   std::vector<std::unique_ptr<Camera>> cameras_;
   std::map<std::string, std::string> lastPhase_;
   FrameTapFn tap_;

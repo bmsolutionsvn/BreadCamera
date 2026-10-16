@@ -441,12 +441,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
       if (!r) throw CmdError("invalid", "rate must be 50/1, 60000/1001 or 60/1");
       next.settings.rate = *r;
     }
-    if (args.contains("resolution")) {
-      auto res = parseShowResolution(str(args, "resolution"));
-      if (!res) throw CmdError("invalid", "resolution must be 1280x720 or 1920x1080");
-      next.settings.width = res->first;
-      next.settings.height = res->second;
-    }
+    // A legacy "resolution" is ignored, not validated (there is no show-wide size any more, D3).
     if (args.contains("holdMs")) {
       if (!args["holdMs"].is_number_integer()) throw CmdError("bad-request", "holdMs must be a whole number");
       const int h = args["holdMs"].get<int>();

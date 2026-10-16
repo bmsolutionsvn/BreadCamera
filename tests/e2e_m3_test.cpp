@@ -44,8 +44,6 @@ TEST_CASE("M3 acceptance: printed card and tablet calibration through the GPU" B
   bc::ColorCalibrationService svc(engine, dir.path / "luts");
 
   bc::Show show;
-  show.settings.width = 960;
-  show.settings.height = 540;
   show.cameras = {chartCam("card", {1.25f, 1.0f, 0.7f}), chartCam("t1", {1.2f, 1.0f, 0.8f}), chartCam("t2", {0.8f, 1.0f, 1.25f})};
   engine.apply(show);
   engine.start();

@@ -39,8 +39,6 @@ struct CameraConfig {
 
 struct ShowSettings {
   Rate rate{60, 1};
-  int width = 1920;   // show format (spec §1.3): 1280x720 or 1920x1080
-  int height = 1080;
   int holdMs = 5000;
   std::string slatePath;  // empty = built-in slate
   bool operator==(const ShowSettings&) const = default;
@@ -70,7 +68,5 @@ nlohmann::json cameraToJson(const CameraConfig& cam, SecretMode mode);
 CameraConfig cameraFromJson(const nlohmann::json& j);  // throws ShowError
 nlohmann::json outputToJson(const OutputConfig& out);
 OutputConfig outputFromJson(const nlohmann::json& j);  // throws ShowError
-std::optional<std::pair<int, int>> parseShowResolution(std::string_view s);  // "1280x720" | "1920x1080"
-std::string resolutionStr(int w, int h);
 std::string newId();
 }  // namespace bc

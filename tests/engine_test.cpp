@@ -44,11 +44,10 @@ bc::OutputConfig out(const std::string& id, json params = json::object(), const 
   return {id, kind, false, true, std::move(params)};
 }
 
-// Small show format so the tests stay cheap; the engine fits every frame to it.
+// No show-wide frame size any more: every camera's frame is its input's size. The fake input
+// is 64x36 by default, so the tests stay cheap.
 bc::Show testShow() {
   bc::Show s;
-  s.settings.width = 64;
-  s.settings.height = 36;
   return s;
 }
 
@@ -161,24 +160,28 @@ TEST_CASE("Engine: apply adds, reconfigures and removes cameras") {
   CHECK(r.state.snapshot()["cameras"].empty());
 }
 
-TEST_CASE("Engine: an input changing size mid-stream still leaves at the show size, without a gap") {
+TEST_CASE("Camera: the frame keeps the input's size") {
   Rig r;
-  bc::Show show = testShow();
-  show.cameras.push_back(cam("a", {out("o1")}));
+  bc::Show show;  // no show-wide size: the frame is the input's size
+  show.cameras.push_back(cam("a", {out("o1")}, {{"width", 640}, {"height", 360}}));
   r.engine.apply(show);
   r.engine.start();
-  std::this_thread::sleep_for(300ms);
-  r.factory.input("a")->width = 32;
-  r.factory.input("a")->height = 18;
   std::this_thread::sleep_for(500ms);
   auto seen = r.factory.output("o1")->seen();
   REQUIRE_FALSE(seen.empty());
-  CHECK(seen.front().width == 64);
-  CHECK(seen.back().width == 64);
+  CHECK(seen.back().width == 640);  // the frame is the input's size, not a show size
+  REQUIRE(r.factory.output("o1")->lastImage() != nullptr);
+  CHECK(r.factory.output("o1")->lastImage()->height == 360);
+
+  // A mid-show input size change moves the camera's frame size with it, with no gap.
+  r.factory.input("a")->width = 320;
+  r.factory.input("a")->height = 180;
+  std::this_thread::sleep_for(500ms);
+  seen = r.factory.output("o1")->seen();
+  CHECK(seen.back().width == 320);
   CHECK(maxGap(seen) < 50ms);
   // Review Focus #2: the switch itself must not crash the tick or wedge the frame.
   CHECK_FALSE(r.state.snapshot()["cameras"]["a"].contains("tickError"));
-  CHECK(seen.back().firstPixel[2] > 100);  // still the picture, never an all-zero frame
 }
 
 namespace {
@@ -276,7 +279,7 @@ TEST_CASE("Engine: every output sends the one frame size, and a half-rate output
   r.engine.start();
   auto t0 = Clock::now();
   std::this_thread::sleep_for(1600ms);
-  CHECK(r.factory.output("full")->seen().back().width == 64);  // one frame size: the show size
+  CHECK(r.factory.output("full")->seen().back().width == 64);  // one frame size: the input's size
   auto halfSeen = r.factory.output("half")->seen();
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
   CHECK(n >= 27);
@@ -300,7 +303,7 @@ TEST_CASE("Engine: input health is published") {
   r.factory.input("a")->paused = false;
   std::this_thread::sleep_for(1200ms);
   CHECK(health() == "degraded");  // the pause was a stutter less than 10 s ago
-  CHECK(r.state.snapshot()["engine"]["resolution"] == "64x36");
+  CHECK_FALSE(r.state.snapshot()["engine"].contains("resolution"));  // no show-wide size
 }
 
 // bcam-readback Task 2: the frame readback happens off the tick. A CPU-consuming output is
@@ -352,15 +355,15 @@ class RecordingFactory final : public bc::AdapterFactory {
 };
 
 // A solid BGRA frame of one colour, to push straight into a Camera (no input thread).
-bc::VideoFrameIn solidFrame(bc::Converter& conv, uint8_t red) {
-  std::vector<uint8_t> px(64 * 36 * 4);
+bc::VideoFrameIn solidFrame(bc::Converter& conv, uint8_t red, uint32_t w = 64, uint32_t h = 36) {
+  std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
   for (size_t p = 0; p < px.size(); p += 4) {
     px[p + 0] = 0;
     px[p + 1] = 0;
     px[p + 2] = red;
     px[p + 3] = 255;
   }
-  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, 0};
+  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, 0};
 }
 }  // namespace
 
@@ -368,7 +371,6 @@ TEST_CASE("Camera: the frame readback is off the tick, never black") {
   Rig r;
   RecordingFactory factory(/*needsCpu=*/true);
   bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   REQUIRE(factory.made != nullptr);
   bc::TickSchedule sched{bc::Rate{60, 1}};
@@ -407,7 +409,6 @@ TEST_CASE("Camera: no CPU output means no readback slot and no frame copy") {
   Rig r;
   RecordingFactory factory(/*needsCpu=*/false);
   bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   REQUIRE(factory.made != nullptr);
   bc::TickSchedule sched{bc::Rate{60, 1}};
@@ -428,7 +429,6 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
   RecordingFactory factory(/*needsCpu=*/true);
   bc::CameraConfig cfg = cam("a", {out("o1")});
   bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   bc::TickSchedule sched{bc::Rate{60, 1}};
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
@@ -463,9 +463,8 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
 TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
   Rig r;
   RecordingFactory factory(/*needsCpu=*/true);
-  bc::CameraConfig cfg = cam("a", {out("o1"), out("o2")});  // both the show size, both CPU
+  bc::CameraConfig cfg = cam("a", {out("o1"), out("o2")});  // both CPU, both the input's size
   bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   REQUIRE(factory.all.size() == 2);
   RecordingOutput* a = factory.all[0];
@@ -488,20 +487,19 @@ TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
   camera.stop();
 }
 
-// One frame size per camera: after a show-resolution change the one readback slot still holds the
-// previous size's completed image. That stale image must not be published for a tick while the
+// One frame size per camera: when the input changes size mid-show the one readback slot still holds
+// the previous size's completed image. That stale image must not be published for a tick while the
 // first new-size copy is in flight (spec §4.3).
-TEST_CASE("Camera: a resolution change never publishes the previous size's image") {
+TEST_CASE("Camera: an input size change never publishes the previous size's image") {
   Rig r;
   RecordingFactory factory(/*needsCpu=*/true);
   bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   REQUIRE(factory.made != nullptr);
   bc::TickSchedule sched{bc::Rate{60, 1}};
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
-  auto tick = [&](uint64_t i) {
-    camera.onVideo(solidFrame(r.conv, 120));
+  auto tick = [&](uint64_t i, uint32_t w, uint32_t h) {
+    camera.onVideo(solidFrame(r.conv, 120, w, h));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
     camera.endTick(i, sched, now, nullptr);
@@ -511,22 +509,21 @@ TEST_CASE("Camera: a resolution change never publishes the previous size's image
   bool sawOld = false;
   uint64_t i = 0;
   for (; i < 60 && !sawOld; ++i) {
-    tick(i);
+    tick(i, 64, 36);
     if (factory.made->last && factory.made->last->width == 64 && factory.made->last->height == 36) sawOld = true;
     std::this_thread::sleep_for(3ms);
   }
   REQUIRE(sawOld);
 
-  // Change the show resolution. The cached 64x36 image must not be published again: the first
-  // tick after the change is handed nothing, not the old size.
-  camera.setFormat(32, 18);
-  tick(i);
+  // The input changes size. The cached 64x36 image must not be published again: the first tick
+  // after the change is handed nothing, not the old size.
+  tick(i, 32, 18);
   CHECK(factory.made->last == nullptr);
   std::this_thread::sleep_for(3ms);
 
   // Later ticks may deliver the new-size image, never an old-size one.
   for (++i; i < 90; ++i) {
-    tick(i);
+    tick(i, 32, 18);
     if (factory.made->last) {
       CHECK(factory.made->last->width == 32);
       CHECK(factory.made->last->height == 18);
@@ -536,13 +533,35 @@ TEST_CASE("Camera: a resolution change never publishes the previous size's image
   camera.stop();
 }
 
+// D2: with no picture the camera shows the slate at its own frame size, not a show size. Before any
+// frame is seen it uses the fallback (1280x720); after a frame it uses that frame's size.
+TEST_CASE("Camera: with no picture the slate is fitted to the camera's own size") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/true);
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.start();
+  // The slate source is a different size from the camera, so a fit must happen.
+  auto slateSource = r.conv.solid(320, 180, {0.05f, 0.05f, 0.06f, 1.0f});
+
+  // No frame yet: the slate is fitted to the fallback 1280x720.
+  camera.beginTick(Clock::now(), slateSource);
+  CHECK(camera.tickFrame()->width == 1280);
+  CHECK(camera.tickFrame()->height == 720);
+
+  // A frame at 640x360 moves the camera's size; the slate is then fitted to it.
+  camera.onVideo(solidFrame(r.conv, 120, 640, 360));
+  camera.beginTick(Clock::now(), slateSource);
+  CHECK(camera.tickFrame()->width == 640);
+  CHECK(camera.tickFrame()->height == 360);
+  camera.stop();
+}
+
 // D5: a camera whose only output is GPU-only (never needsCpu) must still run one readback when a
 // visible preview wants its image, so the frame tap can hand the preview a CpuImage.
 TEST_CASE("GPU-only camera: a visible preview forces one readback") {
   Rig r;
   RecordingFactory factory(/*needsCpu=*/false);
   bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
-  camera.setFormat(64, 36);
   camera.start();
   REQUIRE(factory.made != nullptr);
   bc::TickSchedule sched{bc::Rate{60, 1}};

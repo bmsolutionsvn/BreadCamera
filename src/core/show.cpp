@@ -146,7 +146,6 @@ json showToJson(const Show& s, SecretMode mode) {
   return {{"schemaVersion", Show::kSchemaVersion},
           {"settings",
            {{"rate", s.settings.rate.str()},
-            {"resolution", resolutionStr(s.settings.width, s.settings.height)},
             {"holdMs", s.settings.holdMs},
             {"slatePath", s.settings.slatePath}}},
           {"cameras", cams}};
@@ -163,10 +162,7 @@ Show showFromJson(const json& j) {
     auto rate = parseShowRate(settings.value("rate", std::string("60/1")));
     if (!rate) throw ShowError("settings.rate must be 50/1, 60000/1001 or 60/1");
     s.settings.rate = *rate;
-    auto res = parseShowResolution(settings.value("resolution", std::string("1920x1080")));
-    if (!res) throw ShowError("settings.resolution must be 1280x720 or 1920x1080");
-    s.settings.width = res->first;
-    s.settings.height = res->second;
+    // A legacy settings.resolution is ignored, not an error: a show has no frame size any more.
     s.settings.holdMs = settings.value("holdMs", 5000);
     if (s.settings.holdMs < 0 || s.settings.holdMs > 60000) throw ShowError("settings.holdMs must be 0..60000");
     s.settings.slatePath = settings.value("slatePath", std::string());
@@ -181,14 +177,6 @@ Show showFromJson(const json& j) {
     throw ShowError(e.what());
   }
 }
-
-std::optional<std::pair<int, int>> parseShowResolution(std::string_view s) {
-  if (s == "1280x720") return std::pair{1280, 720};
-  if (s == "1920x1080") return std::pair{1920, 1080};
-  return std::nullopt;
-}
-
-std::string resolutionStr(int w, int h) { return std::to_string(w) + "x" + std::to_string(h); }
 
 std::string newId() {
   static thread_local std::mt19937 rng{std::random_device{}()};

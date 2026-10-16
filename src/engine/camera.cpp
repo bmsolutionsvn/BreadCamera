@@ -173,21 +173,34 @@ void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
   state_.set(path("/input/error"), errorToJson(e));
 }
 
-TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
+TextureRef Camera::fittedSlate(const TextureRef& source) {
+  if (!source) return source;
+  if (source->width == lastSize_.w && source->height == lastSize_.h) return source;
+  const bool staleSrc = slateFitSrc_.lock().get() != source.get();
+  if (!slateFit_ || staleSrc || slateFit_->width != lastSize_.w || slateFit_->height != lastSize_.h) {
+    slateFit_ = tools_.conv.fit(*source, lastSize_.w, lastSize_.h);
+    slateFitSrc_ = source;
+  }
+  return slateFit_;
+}
+
+TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
   auto pick = sync_.pick(now);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
-      auto lin = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
-      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : tools_.conv.fit(*lin, width_, height_);
+      // The frame is the input's own size: there is no show-wide frame size to scale to.
+      lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
+      lastSize_.w = lastConverted_->width;
+      lastSize_.h = lastConverted_->height;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
-  tickRaw_ = lastConverted_ ? lastConverted_ : slate;
+  tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
   tickFrame_ = tickRaw_;
   const bool colorOn = colorParams_.value("enabled", false);
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {

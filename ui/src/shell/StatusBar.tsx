@@ -1,6 +1,6 @@
 import type { EngineSnapshot } from '../api/client';
 import { Icon } from '../components/Icon';
-import { rateLabel, sizeLabel } from '../state/labels';
+import { rateLabel } from '../state/labels';
 
 export function StatusBar({ snap }: { snap: EngineSnapshot }) {
   const e = snap.state.engine ?? {};
@@ -15,7 +15,7 @@ export function StatusBar({ snap }: { snap: EngineSnapshot }) {
         {open ? 'Engine running' : <span className="w">Engine restarting…</span>}
       </span>
       <span>
-        <b>{rateLabel(e.rate)}</b> fps · <b>{sizeLabel(e.resolution)}</b>
+        <b>{rateLabel(e.rate)}</b> fps
       </span>
       <span>GPU {e.gpu ?? '—'}</span>
       <span className={e.overruns ? 'w' : ''}>

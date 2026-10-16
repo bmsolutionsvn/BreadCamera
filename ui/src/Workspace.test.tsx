@@ -54,6 +54,13 @@ test('strips show input health, names and every output state', () => {
   expect(screen.getAllByText('Khách mời').length).toBeGreaterThan(0);
 });
 
+test('the status bar no longer shows a show-wide resolution', () => {
+  render(<Workspace client={client()} />);
+  const bar = screen.getByLabelText('Status bar');
+  expect(within(bar).getByText('59.94')).toBeInTheDocument();  // the rate stays
+  expect(within(bar).queryByText(/1920×1080/)).toBeNull();     // the size label is gone
+});
+
 test('the first camera is selected; arrow keys and clicks move the Inspector', () => {
   render(<Workspace client={client()} />);
   const insp = screen.getByRole('complementary', { name: 'Inspector' });

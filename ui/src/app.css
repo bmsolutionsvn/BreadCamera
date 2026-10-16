@@ -68,7 +68,8 @@ svg.i { flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-
 .tile { display: flex; flex-direction: column; background: var(--bm-surface); min-width: 0; overflow: hidden; }
 .tile.sel { outline: 1px solid var(--bm-brand); outline-offset: 1px; }
 .pic { aspect-ratio: 16 / 9; background: #000; overflow: hidden; }
-.pic canvas { display: block; width: 100%; height: 100%; }
+/* A non-16:9 camera is letterboxed into the 16:9 cell (D4). */
+.pic canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
 /* One camera, full size (docs/design/multiview.md §6). */
 .wall.focus { width: 100%; height: 100%; grid-template-columns: 1fr; }
 .tile.focus { min-height: 0; cursor: zoom-out; }

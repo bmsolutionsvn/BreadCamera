@@ -177,12 +177,12 @@ TEST_CASE("CommandRouter: preview commands reach the effects, bad arguments do n
   CHECK(fx.keyIds.size() == 1);  // failures never fire an effect
 }
 
-TEST_CASE("CommandRouter: show resolution is validated, and an output size is ignored") {
+TEST_CASE("CommandRouter: a legacy show resolution is ignored, and an output size is ignored") {
   FakeFx fx;
   bc::CommandRouter r(bc::Show{}, fx);
-  REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
-  CHECK(r.show().settings.width == 1280);
-  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["error"]["code"] == "invalid");
+  // A legacy resolution is ignored, not validated: there is no show-wide size any more (D3).
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["ok"] == true);
   auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
   auto ok = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 960}, {"height", 540}, {"halfRate", true}}}}}}}});
   REQUIRE(ok["ok"] == true);

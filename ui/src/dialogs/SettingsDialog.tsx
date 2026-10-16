@@ -12,19 +12,14 @@ const RATES = [
   ['60000/1001', '59.94'],
   ['60/1', '60'],
 ] as const;
-const SIZES = [
-  ['1280x720', '1280×720'],
-  ['1920x1080', '1920×1080'],
-] as const;
 type Page = 'show' | 'engine' | 'about';
 
 // Settings is a dialog, not a page (spec §6.4).
 export function SettingsDialog({ client, onClose }: { client: EngineClient; onClose: () => void }) {
   const { show, state } = useEngine(client);
-  const s = { rate: '60/1', resolution: '1920x1080', holdMs: 5000, slatePath: '', ...show?.settings };
+  const s = { rate: '60/1', holdMs: 5000, slatePath: '', ...show?.settings };
   const [page, setPage] = useState<Page>('show');
   const [rate, setRate] = useState(s.rate);
-  const [resolution, setResolution] = useState(s.resolution ?? '1920x1080');
   const [hold, setHold] = useState(String(s.holdMs / 1000));
   const [slate, setSlate] = useState(s.slatePath);
   const [confirm, setConfirm] = useState(false);
@@ -33,12 +28,11 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
 
   const holdMs = Math.round(Number(hold) * 1000);
   const holdError = !Number.isFinite(holdMs) || holdMs < 0 || holdMs > 60000 ? 'Hold is 0 to 60 seconds' : '';
-  const formatChanged = rate !== s.rate || resolution !== (s.resolution ?? '1920x1080');
+  const formatChanged = rate !== s.rate;
 
   async function save() {
     const args: Record<string, unknown> = {};
     if (rate !== s.rate) args.rate = rate;
-    if (resolution !== (s.resolution ?? '1920x1080')) args.resolution = resolution;
     if (holdMs !== s.holdMs) args.holdMs = holdMs;
     if (slate !== s.slatePath) args.slatePath = slate;
     if (Object.keys(args).length === 0) return onClose();
@@ -83,17 +77,6 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
                 {(id) => (
                   <select id={id} className="ctl mono" value={rate} onChange={(e) => setRate(e.target.value)}>
                     {RATES.map(([v, l]) => (
-                      <option key={v} value={v}>
-                        {l}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </Prop>
-              <Prop label="Resolution" hint="Every camera is processed at this format. Each output sends this frame size, at the show rate or half the frame rate.">
-                {(id) => (
-                  <select id={id} className="ctl mono" value={resolution} onChange={(e) => setResolution(e.target.value)}>
-                    {SIZES.map(([v, l]) => (
                       <option key={v} value={v}>
                         {l}
                       </option>

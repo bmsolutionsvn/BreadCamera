@@ -44,16 +44,9 @@ class Camera final : public InputSink {
   void stop();
   void reconfigure(const CameraConfig& cfg);
   void setPolicy(SyncPolicy p) { sync_.setPolicy(p); }
-  // The show's frame size; called from the tick thread's lock (Engine holds mutex_).
-  void setFormat(uint32_t w, uint32_t h) {
-    width_ = w;
-    height_ = h;
-    lastConverted_.reset();
-    lastGraded_.reset();
-    gradeDirty_ = true;
-  }
-  // First half (tick thread): newest frame → linear texture, or the slate. Never null.
-  TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slate);
+  // First half (tick thread): newest frame → linear texture at its own size, or the slate fitted
+  // to the camera's size. Never null.
+  TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slateSource);
   // This tick's linear frame, between the halves.
   TextureRef tickFrame() const { return tickFrame_; }
   // This tick's frame before any stage (the slate when there is no picture).
@@ -105,6 +98,9 @@ class Camera final : public InputSink {
   void startInput();
   void startOutput(OutputSlot& slot);
   void loadStageParams();
+  // The slate source fitted to the camera's last frame size, cached per (source, size). Only runs
+  // on the no-picture path, so it costs nothing while the camera is live.
+  TextureRef fittedSlate(const TextureRef& source);
   std::string path(const std::string& rest) const { return "/cameras/" + cfg_.id + rest; }
 
   CameraConfig cfg_;
@@ -118,7 +114,12 @@ class Camera final : public InputSink {
   TextureRef lastConverted_;
   TextureRef lastFrame_;
   std::chrono::milliseconds audioDelaySet_{-1};
-  uint32_t width_ = 1920, height_ = 1080;
+  // The camera's own frame size: the last converted input's size, or 1280x720 before any frame.
+  struct {
+    uint32_t w = 1280, h = 720;
+  } lastSize_;
+  std::weak_ptr<GpuTexture> slateFitSrc_;  // the source the fitted slate was made from
+  TextureRef slateFit_;                    // the slate source fitted to lastSize_
   std::atomic<SignalState> inputState_{SignalState::Connecting};
   std::optional<std::chrono::steady_clock::time_point> lastFresh_;
   std::chrono::steady_clock::time_point lastStutter_{};

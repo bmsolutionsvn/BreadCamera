@@ -47,7 +47,6 @@ export interface StateTree {
   engine?: {
     gpu?: string;
     rate?: string;
-    resolution?: string;
     overruns?: number;
     previewEncoder?: string;
     matteBackend?: string;
@@ -75,7 +74,7 @@ export interface CameraConfig {
 }
 export interface ShowJson {
   schemaVersion?: number;
-  settings?: { rate: string; resolution?: string; holdMs: number; slatePath: string };
+  settings?: { rate: string; holdMs: number; slatePath: string };
   cameras: CameraConfig[];
 }
 export interface PatchOp {
