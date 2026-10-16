@@ -107,3 +107,40 @@ TEST_CASE("makeInput: a dshow: device id builds a DirectShow input") {
   auto mf = f.makeInput(cfg);
   CHECK(dynamic_cast<bc::MfCaptureInput*>(mf.get()) != nullptr);
 }
+
+TEST_CASE("DShowCaptureInput: a device that enumerates but never delivers reports offline" BC_REQUIRES(bc::test::Req::DShowDevice)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool(*gpu);
+  // Find a device that enumerates but sends nothing (an idle NDI Webcam, a stopped OBS Virtual
+  // Camera) — the stall/unplug case; if every device delivers, this PC cannot exercise it.
+  std::string stalled;
+  for (const auto& dev : bc::listDShowDevices()) {
+    bc::DShowCaptureInput in(*gpu, pool, dev.displayName);
+    Sink sink;
+    in.start(sink);
+    std::this_thread::sleep_for(1200ms);
+    in.stop();
+    std::lock_guard l(sink.m);
+    if (sink.video == 0) {
+      stalled = dev.displayName;
+      break;
+    }
+  }
+  if (stalled.empty()) {
+    std::fprintf(stderr, "[skip] every DirectShow device delivered frames\n");
+    return;
+  }
+  // Such a device must go Offline with capture-failed (and then retry), not sit Live forever.
+  bc::DShowCaptureInput in(*gpu, pool, stalled);
+  Sink sink;
+  in.start(sink);
+  bool offline = false;
+  for (int i = 0; i < 40 && !offline; ++i) {
+    std::this_thread::sleep_for(100ms);
+    std::lock_guard l(sink.m);
+    for (auto& e : sink.errors)
+      if (e && e->code == "capture-failed") offline = true;
+  }
+  in.stop();
+  CHECK(offline);
+}

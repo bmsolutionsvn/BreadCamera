@@ -5,6 +5,7 @@
 #include <dshow.h>  // GUIDs are defined once in dshow_devices.cpp (no initguid here)
 #include <wrl/client.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -217,11 +218,17 @@ void DShowCaptureInput::runOnce() {
 
   const UINT pitch = static_cast<UINT>(width_) * 4;
   bool live = false;
+  bool stalled = false;
   while (!stopping_) {
     std::vector<uint8_t> frame;
     {
       std::unique_lock l(cb_->m);
-      cb_->cv.wait(l, [&] { return cb_->pending || cb_->done || stopping_.load(); });
+      // A live device delivers well within this; a timeout means it stalled or was unplugged,
+      // which must surface as offline + retry, never a silent freeze on the last frame (spec §4.2).
+      if (!cb_->cv.wait_for(l, std::chrono::seconds(2), [&] { return cb_->pending || cb_->done || stopping_.load(); })) {
+        stalled = true;
+        break;
+      }
       if (cb_->done || stopping_) break;
       frame.swap(cb_->buf);
       cb_->pending = false;
@@ -250,5 +257,7 @@ void DShowCaptureInput::runOnce() {
     sink_->onVideo(std::move(f));
   }
   control->Stop();
+  graph->Abort();  // a filter that will not stop on its own must not hang teardown
+  if (stalled) throw std::runtime_error("the device stopped sending frames");
 }
 }  // namespace bc
