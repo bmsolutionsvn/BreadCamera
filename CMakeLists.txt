@@ -227,6 +227,7 @@ add_library(bc_io STATIC
   src/io/mf_capture_input.cpp
   # DirectShow camera input (OBS Virtual Camera)
   src/io/dshow_devices.cpp
+  src/io/dshow_format.cpp
   src/io/dshow_capture_input.cpp
   # C1 Task 1
   src/io/lkc/lkc.cpp
@@ -411,6 +412,7 @@ add_executable(bc_tests
   # DirectShow camera input
   tests/dshow_devices_test.cpp
   tests/dshow_capture_test.cpp
+  tests/dshow_format_test.cpp
   # Task 2..14 test files
   # Task 9
   tests/engine_test.cpp
