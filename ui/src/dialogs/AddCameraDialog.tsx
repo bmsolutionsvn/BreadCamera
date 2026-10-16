@@ -139,7 +139,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
           <select id={id} className="ctl" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
             <option value="srt">SRT (BreadCall feeds, encoders)</option>
             <option value="ndi">NDI</option>
-            <option value="uvc">USB or built-in camera</option>
+            <option value="uvc">Device camera</option>
             <option value="decklink">DeckLink (SDI/HDMI)</option>
             <option value="aja">AJA (experimental)</option>
             <option value="breadcall">BreadCall guest</option>
@@ -166,7 +166,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
         </Prop>
       )}
       {kind === 'uvc' && (
-        <Prop label="Device" hint={errors.device || 'USB and built-in cameras are video only, no audio.'}>
+        <Prop label="Device" hint={errors.device || 'Device cameras are video only, no audio.'}>
           {(id) => (
             <div className="row-btns">
               <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>

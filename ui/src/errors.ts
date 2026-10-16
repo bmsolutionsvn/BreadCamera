@@ -23,7 +23,7 @@ const HEADLINES: Record<string, string> = {
   'ndi-audio-rate': 'NDI audio is not 48 kHz and is ignored.',
   'ndi-format': 'The NDI source sends a video format we cannot use.',
   'decklink-no-signal': 'No signal on the DeckLink input.',
-  'capture-failed': 'The camera could not be opened (USB or built-in).',
+  'capture-failed': 'The camera could not be opened.',
   'breadcall-no-guest': 'No guest is in this BreadCall slot yet.',
 };
 

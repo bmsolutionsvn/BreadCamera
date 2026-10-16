@@ -181,7 +181,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
             </Prop>
           )}
           {kind === 'uvc' && (
-            <Prop label="Device" hint="USB and built-in cameras are video only, no audio.">
+            <Prop label="Device" hint="Device cameras are video only, no audio.">
               {(id) => (
                 <div className="row-btns">
                   <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>

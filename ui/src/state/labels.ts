@@ -4,7 +4,7 @@ const IN: Record<string, [string, string]> = {
   ndi: ['NDI', 'NDI input'],
   decklink: ['SDI', 'DeckLink input'],
   aja: ['AJA', 'AJA input'],
-  uvc: ['USB', 'USB or built-in camera'],
+  uvc: ['CAM', 'Device camera'],
 };
 const OUT: Record<string, [string, string]> = {
   ndi: ['NDI', 'NDI output'],

@@ -83,3 +83,10 @@ test('a capture device another camera uses is disabled and named', async () => {
   expect((used as HTMLOptionElement).disabled).toBe(true);
   expect(screen.getByRole('option', { name: 'FaceTime HD' })).not.toBeDisabled();
 });
+
+test('the capture input type is called "Device camera"', () => {
+  const c = client();
+  render(<AddCameraDialog client={c} onClose={() => {}} />);
+  expect(screen.getByRole('option', { name: 'Device camera' })).toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: 'USB or built-in camera' })).toBeNull();
+});
