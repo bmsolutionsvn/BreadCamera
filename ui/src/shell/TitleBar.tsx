@@ -21,7 +21,7 @@ export function TitleBar() {
         <button aria-label={maximized ? 'Restore' : 'Maximise'} onClick={() => win('maximize')}>
           <Icon name={maximized ? 'restore' : 'max'} size={12} />
         </button>
-        <button className="close" aria-label="Close to tray (outputs keep running)" onClick={() => win('close')}>
+        <button className="close" aria-label="Quit BreadCamera" onClick={() => win('close')}>
           <Icon name="close" size={12} />
         </button>
       </div>

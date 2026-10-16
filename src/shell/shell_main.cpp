@@ -106,7 +106,12 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       return 0;
     case WM_CLOSE:
-      ShowWindow(hwnd, SW_HIDE);  // outputs keep running; quit is explicit (spec §2)
+      // The X, Alt+F4 and taskbar Close all confirm, then fully quit — the window never hides
+      // to the tray (spec §2, revised). With no page to confirm in, quit straight away.
+      if (g.quitting) return 0;
+      showWindow();
+      if (g.webview) g.webview->PostWebMessageAsJson(L"{\"type\":\"confirmQuit\"}");
+      else quitAll();
       return 0;
     case WM_TRAY:
       if (LOWORD(lp) == WM_RBUTTONUP) showTrayMenu();

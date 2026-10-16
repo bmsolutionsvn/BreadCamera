@@ -97,6 +97,8 @@ test('window buttons post to the shell', () => {
   render(<Workspace client={client()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Minimise' }));
   expect(postMessage).toHaveBeenCalledWith('{"type":"window","action":"minimize"}');
+  fireEvent.click(screen.getByRole('button', { name: 'Quit BreadCamera' }));
+  expect(postMessage).toHaveBeenCalledWith('{"type":"window","action":"close"}');
   delete (window as unknown as { chrome?: unknown }).chrome;
 });
 
