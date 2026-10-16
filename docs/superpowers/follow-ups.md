@@ -2,6 +2,12 @@
 
 Deliberate shortcuts and open items. One line each, with where it lives.
 
+## One size per camera (2026-10-16)
+- The per-output size is gone: every output sends the one composited frame size — no per-output resize, no `fit`. A legacy per-output `width`/`height` in an old show file is ignored, not an error (`src/core/show.h`, `src/core/show.cpp`; spec §4.3).
+- Exactly **one readback per camera per tick**, shared by every CPU output *and* the preview: the frame tap now carries the `CpuImage` beside the texture (`src/engine/camera.cpp`, `src/engine/engine.h`). A camera whose outputs are all GPU-only (e.g. Fullscreen) still reads back once when a visible preview wants it — `Engine` consults the `PreviewHub` through `setPreviewWanted` before the readback decision (design D5).
+- The preview shares that image and H.264-encodes it **off the tick** on a worker thread, at the frame size; the wire `small`/`large` size is ignored (D7). Past `kMaxPreviewEncoders` visible cameras, a tile is skipped with a `/engine/warnings/preview` state warning instead of disabling every preview (D9) (`src/engine/preview_service.cpp`).
+- The whole WebView preview path is throwaway: it buys sharpness and fewer overruns until it is superseded by the planned native zero-copy Multiview (project 3; project 2 removes the show-wide size/rate) (`docs/superpowers/specs/2026-10-16-one-size-per-camera-design.md`).
+
 ## M4a
 - M4a Task 2 review: flipped NDI video (negative `line_stride_in_bytes`) is skipped once with `{code:"ndi-format"}` — we request `NDIlib_recv_color_format_BGRX_BGRA`, not the `_flipped` variant; if a flipped source appears, request `_flipped` or flip on the GPU (`src/io/ndi_input.cpp`).
 - M4a Task 2 review: `tests/ndi_input_test.cpp` uses fixed sleeps (4 s / 3 s / 5 s); poll a condition instead if the build box is loaded.
@@ -56,7 +62,7 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - Fullscreen output stretches, no letterbox (`src/io/fullscreen_output.h`).
 - `Converter::fit` is plain bilinear; add a box pre-filter if 1080p → 540p outputs shimmer (`src/gpu/shaders/fit_linear.hlsl`).
 - After a tick overrun a half-rate output can wait one extra tick (`src/engine/camera.cpp`).
-- Preview encoding runs on the tick thread (`src/engine/preview_service.h`).
+- Preview encoding runs on the tick thread (`src/engine/preview_service.h`). **Fixed** 2026-10-16 (one size per camera): the preview encodes off the tick on a worker, sharing the camera's single readback; the path is superseded by project 3 (native Multiview).
 - WebSocket sends happen under the client-map lock (`src/engine/control_server.cpp`).
 - Task 3: minor (deferred): `src/core/show_store.cpp:71` — `CopyFileW` return ignored; a failed LKG copy still reports success.
 - Task 3: minor (deferred): `src/core/show_store.cpp:67-70` — main replaced before parse-back validation (invalid in-memory Show reaches disk first).

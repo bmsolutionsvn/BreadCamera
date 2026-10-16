@@ -24,6 +24,6 @@ struct SrtOutputOptions {
   int bitrateKbps = 8000;
 };
 // Same connection keys as the input (spec §4.2) plus bitrateKbps. The size comes from the frames
-// (the per-output format, spec §4.3). Throws std::invalid_argument.
+// (the frame size, spec §4.3). Throws std::invalid_argument.
 SrtOutputOptions srtOutputOptionsFromParams(const nlohmann::json& params);
 }  // namespace bc

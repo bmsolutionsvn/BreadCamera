@@ -90,7 +90,7 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
                   </select>
                 )}
               </Prop>
-              <Prop label="Resolution" hint="Every camera is processed at this format. Each output can send a smaller size or half the frame rate.">
+              <Prop label="Resolution" hint="Every camera is processed at this format. Each output sends this frame size, at the show rate or half the frame rate.">
                 {(id) => (
                   <select id={id} className="ctl mono" value={resolution} onChange={(e) => setResolution(e.target.value)}>
                     {SIZES.map(([v, l]) => (

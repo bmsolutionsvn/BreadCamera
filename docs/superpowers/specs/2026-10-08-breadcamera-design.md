@@ -4,7 +4,7 @@ Date: 2026-10-08
 Status: approved (2026-10-08). Amended 2026-10-08 for the build machine (§7.2) and M0 result (§7.1).
 Amended 2026-10-08 after the UI mockup review (owner): English-only UI with Unicode names, native pro-tool
 layout with a docked Inspector (§6.4), effects as per-camera add-ins (§5.4), one-time chart calibration instead
-of reference matching (§5.3), show resolution and per-output format (§3.2, §4.3), three-state input health (§6.1).
+of reference matching (§5.3), show resolution and per-output frame rate (§3.2, §4.3), three-state input health (§6.1).
 Reference mockups: `docs/design/mockups/index.html`; Multiview brief: `docs/design/multiview.md`.
 
 ## 1. Purpose
@@ -50,7 +50,7 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 | Background removal | NVIDIA Maxine VFX SDK AI Green Screen, plus an ONNX fallback behind the same interface |
 | Colour | One-time calibration per camera against a colour chart (printed ColorChecker Classic 24, or a tablet showing the same chart), then locked |
 | UI | Native Windows pro-tool layout: title bar with menus, toolbar, Multiview with a docked Inspector, status bar. English only; names the operator types (cameras, outputs, shows) can be in any language |
-| Show format | One show-wide frame rate and resolution; each output may send a smaller size or half the frame rate |
+| Show format | One show-wide frame rate and resolution; every output sends the frame size, at the show rate or half the frame rate |
 | Stack | C++20 engine. UI in React + `@bmsolutionsvn/design` hosted in WebView2 |
 | Process model | Headless engine process plus a UI shell process that supervises it |
 
@@ -216,12 +216,12 @@ Every camera can have several outputs. Each output sends one of two things:
 | SDI | DeckLink, AJA (experimental) | ✅ key+fill | Fill and key go out on two SDI ports |
 | Fullscreen | Borderless D3D11 swapchain on a chosen monitor | ❌ | LED walls, projectors, confidence monitors |
 
-**Output format.** By default an output sends the show format. Each output
-may override it:
+**Output format.** Every output sends the frame size, from the one composited
+frame the camera produced for the tick.
 
-- **Resolution:** same as show, 1280×720 or 960×540 (never larger than the
-  show). The scale is one GPU pass per distinct size, shared by every output
-  of that camera that uses the same size.
+- **Resolution:** the show size. There is no per-output size and no
+  per-output scale — an output cannot ask for a smaller frame (removed
+  2026-10-16; see `docs/superpowers/specs/2026-10-16-one-size-per-camera-design.md`).
 - **Frame rate:** same as show, or **half** (every second tick, e.g. 29.97
   from 59.94). No other rate conversion is offered, because it judders.
 
@@ -511,7 +511,7 @@ These run locally on an RTX machine.
 - Golden-image comparisons, with a tolerance, for:
   - the RGBA conversion;
   - the LUT;
-  - output scaling and half-rate output;
+  - half-rate output;
   - blur;
   - choke and feather.
 - A matte smoke test on a sample clip.
