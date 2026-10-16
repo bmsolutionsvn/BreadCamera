@@ -488,6 +488,54 @@ TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
   camera.stop();
 }
 
+// One frame size per camera: after a show-resolution change the one readback slot still holds the
+// previous size's completed image. That stale image must not be published for a tick while the
+// first new-size copy is in flight (spec §4.3).
+TEST_CASE("Camera: a resolution change never publishes the previous size's image") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/true);
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&](uint64_t i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+  };
+
+  // Run until the 64x36 image has been read back and handed to the output.
+  bool sawOld = false;
+  uint64_t i = 0;
+  for (; i < 60 && !sawOld; ++i) {
+    tick(i);
+    if (factory.made->last && factory.made->last->width == 64 && factory.made->last->height == 36) sawOld = true;
+    std::this_thread::sleep_for(3ms);
+  }
+  REQUIRE(sawOld);
+
+  // Change the show resolution. The cached 64x36 image must not be published again: the first
+  // tick after the change is handed nothing, not the old size.
+  camera.setFormat(32, 18);
+  tick(i);
+  CHECK(factory.made->last == nullptr);
+  std::this_thread::sleep_for(3ms);
+
+  // Later ticks may deliver the new-size image, never an old-size one.
+  for (++i; i < 90; ++i) {
+    tick(i);
+    if (factory.made->last) {
+      CHECK(factory.made->last->width == 32);
+      CHECK(factory.made->last->height == 18);
+    }
+    std::this_thread::sleep_for(3ms);
+  }
+  camera.stop();
+}
+
 // D5: a camera whose only output is GPU-only (never needsCpu) must still run one readback when a
 // visible preview wants its image, so the frame tap can hand the preview a CpuImage.
 TEST_CASE("GPU-only camera: a visible preview forces one readback") {

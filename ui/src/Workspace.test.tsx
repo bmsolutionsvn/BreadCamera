@@ -120,6 +120,20 @@ test('clicking a tile focuses one camera; Esc returns to the grid', () => {
   expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(2);
 });
 
+test('Escape closes a dialog opened while focused, keeping the focus view', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  // Open a dialog from the focused view, like a user would (Ctrl+, opens Settings).
+  fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+  expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+  // One Escape closes the dialog and nothing else: the focused view must stay focused.
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  expect(subscribed()).toEqual(['b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(1);
+});
+
 test('the Grid button and clicking the focused picture both return to the grid', () => {
   render(<Workspace client={client()} />);
   fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));

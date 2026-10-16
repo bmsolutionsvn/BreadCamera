@@ -184,3 +184,38 @@ TEST_CASE("preview cap warns instead of disabling every preview" BC_REQUIRES(bc:
   // ...and the warning is set rather than every preview being blanked.
   CHECK(state.snapshot().contains(nlohmann::json::json_pointer("/engine/warnings/preview")));
 }
+
+// D9: one camera whose encoder cannot open must be dropped on its own — the other cameras keep
+// encoding and a warning is set. (The old broken_ flag blanked every preview on the first open
+// failure; the cap test above only covers the skip-and-warn path, not this isolation.)
+TEST_CASE("preview: one camera failing to open keeps the others encoding" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::mutex mu;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
+  // A zero-sized image opens no encoder: PreviewEncoder throws, which must drop only this tile.
+  auto bad = std::make_shared<const bc::CpuImage>(bc::CpuImage{0, 0, {}});
+  auto good = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+
+  // First only the camera whose encoder cannot open. It fails and is dropped; a warning is set.
+  hub.subscribe("c1", {"bad"}, PreviewSize::Small);
+  for (uint64_t t = 0; t < 8; t += 2) {
+    svc.onTick(t, {bc::FrameTap{"bad", nullptr, bad}});
+    svc.drain();
+  }
+  // Now a healthy camera starts streaming: the earlier failure must not blank it. (Under the old
+  // global broken_ flag no later camera would ever encode, so the check below would fail.)
+  hub.subscribe("c0", {"good"}, PreviewSize::Small);
+  for (uint64_t t = 8; t < 48; t += 2) {
+    svc.onTick(t, {bc::FrameTap{"bad", nullptr, bad}, bc::FrameTap{"good", nullptr, good}});
+    svc.drain();
+  }
+  std::lock_guard l(mu);
+  CHECK_FALSE(sent["c0"].empty());   // the good camera keeps encoding
+  CHECK(sent.count("c1") == 0);      // the failed tile sends nothing
+  CHECK(state.snapshot().contains(nlohmann::json::json_pointer("/engine/warnings/preview")));
+}

@@ -76,7 +76,7 @@ export function Workspace({ client }: { client: EngineClient }) {
           calib.cancel();
           return;
         }
-        if (focused) {
+        if (focused && !dialog) {
           setFocused(null);
           return;
         }

@@ -260,6 +260,10 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     if (readback_->slot.tryFinish(tools_.conv, done)) readback_->image = std::make_shared<CpuImage>(std::move(done));
     if (!readback_->slot.pending())
       readback_->slot.begin(tools_.conv, *tools_.conv.toBgra8(*frame, frame->width, frame->height));
+    // A resolution change leaves the slot holding the previous size's completed image. Drop it so
+    // the old size is never published while the first new-size copy is in flight (spec §4.3).
+    if (readback_->image && (readback_->image->width != frame->width || readback_->image->height != frame->height))
+      readback_->image.reset();
     cpu = readback_->image;  // may be null on the first ticks: never a synthetic frame
   } else {
     // No CPU consumer this tick (neither a CPU output nor a visible preview): release the slot
