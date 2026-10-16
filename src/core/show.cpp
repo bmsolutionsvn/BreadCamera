@@ -75,7 +75,7 @@ json outputToJson(const OutputConfig& o) {
           {"keyed", o.keyed},
           {"enabled", o.enabled},
           {"params", o.params},
-          {"format", {{"width", o.width}, {"height", o.height}, {"halfRate", o.halfRate}}}};
+          {"format", {{"halfRate", o.halfRate}}}};
 }
 
 OutputConfig outputFromJson(const json& j) {
@@ -91,10 +91,8 @@ OutputConfig outputFromJson(const json& j) {
     if (!o.params.is_object()) throw ShowError("output params must be an object");
     auto f = j.value("format", json::object());
     if (!f.is_object()) throw ShowError("output format must be an object");
-    o.width = f.value("width", 0);
-    o.height = f.value("height", 0);
+    // A legacy per-output width/height is ignored, not an error: one frame size per camera.
     o.halfRate = f.value("halfRate", false);
-    if (!isOutputSize(o.width, o.height)) throw ShowError("output size must be same as show, 1280x720 or 960x540");
     return o;
   } catch (const nlohmann::json::exception& e) {
     throw ShowError(e.what());
@@ -191,10 +189,6 @@ std::optional<std::pair<int, int>> parseShowResolution(std::string_view s) {
 }
 
 std::string resolutionStr(int w, int h) { return std::to_string(w) + "x" + std::to_string(h); }
-
-bool isOutputSize(int w, int h) {
-  return (w == 0 && h == 0) || (w == 1280 && h == 720) || (w == 960 && h == 540);
-}
 
 std::string newId() {
   static thread_local std::mt19937 rng{std::random_device{}()};

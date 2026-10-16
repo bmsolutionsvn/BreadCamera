@@ -112,10 +112,8 @@ PreviewSize sizeArg(const json& args) {
 
 void formatFrom(const json& f, OutputConfig& o) {
   if (!f.is_object()) throw CmdError("bad-request", "format must be an object");
-  o.width = f.value("width", 0);
-  o.height = f.value("height", 0);
+  // One frame size per camera: a legacy width/height is ignored, not validated (spec §4.3).
   o.halfRate = f.value("halfRate", false);
-  if (!isOutputSize(o.width, o.height)) throw CmdError("invalid", "output size must be same as show, 1280x720 or 960x540");
 }
 
 std::string strParam(const json& p, const char* key, size_t minLen, size_t maxLen, const char* what) {
@@ -217,19 +215,19 @@ void validateOutput(const OutputConfig& o) {
   }
   if (o.kind == "decklink") {
     intParam(o.params, "device", 0, 15, "DeckLink card");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   if (o.kind == "aja") {
     intParam(o.params, "device", 0, 7, "AJA card");
     intParam(o.params, "channel", 1, 8, "AJA channel");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   if (o.kind == "vcam") {
     intParam(o.params, "index", 1, 4, "virtual camera number");
     if (o.params.contains("name")) strParam(o.params, "name", 1, 80, "virtual camera name");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   throw std::invalid_argument("unknown output kind '" + o.kind + "'");

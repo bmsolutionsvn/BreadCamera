@@ -26,9 +26,8 @@ export function Section({ title, right, children }: { title: string; right?: Rea
 }
 
 function formatLabel(o: CameraConfig['outputs'][number]) {
-  const f = o.format;
-  const size = f && f.width ? `${f.width}×${f.height}` : 'same as show';
-  return `${o.keyed ? 'Keyed' : 'Composited'} · ${size}${f?.halfRate ? ' · half rate' : ''}`;
+  // One frame size per camera: every output sends the show size (spec §4.3).
+  return `${o.keyed ? 'Keyed' : 'Composited'} · same as show${o.format?.halfRate ? ' · half rate' : ''}`;
 }
 
 // The selected camera: Input, (M2: Effects via children), Outputs (spec §6.4).

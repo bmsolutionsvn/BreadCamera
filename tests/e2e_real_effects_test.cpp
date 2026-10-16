@@ -83,7 +83,7 @@ Result runPipeline(const std::filesystem::path& clip, int inPort, int outPort, c
   c.input.kind = "srt";
   c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", inPort}};
   if (colorParams) c.stages["color"] = *colorParams;  // CameraConfig::stages is keyed by stage kind
-  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", outPort}}, 1280, 720});
+  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", outPort}}});
   show.cameras.push_back(c);
   engine.apply(show);
   engine.start();

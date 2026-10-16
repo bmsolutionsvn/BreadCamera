@@ -181,14 +181,47 @@ TEST_CASE("Engine: an input changing size mid-stream still leaves at the show si
   CHECK(seen.back().firstPixel[2] > 100);  // still the picture, never an all-zero frame
 }
 
+namespace {
+// An output that throws on submit while armed, to drive the engine's tickError path. (The old
+// trigger — a per-output size over the D3D11 texture cap — is gone with the per-output size.)
+class ThrowingOutput final : public bc::Output {
+ public:
+  std::atomic<bool> armed{true};
+  bool needsCpu() const override { return false; }
+  void start() override {}
+  void submit(bc::OutFrame) override {
+    if (armed) throw std::runtime_error("boom");
+  }
+  void stop() override {}
+  bc::OutputStatus status() const override { return {}; }
+};
+
+class NoFrameInput final : public bc::Input {
+ public:
+  void start(bc::InputSink&) override {}
+  void stop() override {}
+};
+
+class ThrowingFactory final : public bc::AdapterFactory {
+ public:
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoFrameInput>(); }
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+    auto o = std::make_unique<ThrowingOutput>();
+    out = o.get();
+    return o;
+  }
+  ThrowingOutput* out = nullptr;
+};
+}  // namespace
+
 TEST_CASE("Engine: tickError is set by a throwing tick and cleared by the next clean tick") {
   Rig r;
+  ThrowingFactory factory;
+  bc::Engine engine{bc::GpuTools{r.conv, r.comp, r.grader}, r.state, factory};
   bc::Show show = testShow();
-  auto broken = out("o1");
-  broken.width = 32768;  // over the D3D11 texture cap: every tick's variant() throws
-  show.cameras.push_back(cam("a", {broken}));
-  r.engine.apply(show);
-  r.engine.start();
+  show.cameras.push_back(cam("a", {out("o1")}));
+  engine.apply(show);
+  engine.start();
   std::this_thread::sleep_for(300ms);
   auto tickError = [&] {
     auto snap = r.state.snapshot();
@@ -196,11 +229,12 @@ TEST_CASE("Engine: tickError is set by a throwing tick and cleared by the next c
     return snap.contains(p) ? snap.at(p).get<std::string>() : std::string{};
   };
   CHECK_FALSE(tickError().empty());  // the engine reports the throwing tick
-  // Heal the same camera: a deliverable output size again, next tick is clean.
-  show.cameras[0].outputs = {out("o1")};
-  r.engine.apply(show);
+  // Heal the same camera: a clean tick clears the error.
+  REQUIRE(factory.out != nullptr);
+  factory.out->armed = false;
   std::this_thread::sleep_for(300ms);
   CHECK(tickError().empty());  // a clean tick clears it; it must not stick forever
+  engine.stop();
 }
 
 TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a warning") {
@@ -232,21 +266,17 @@ TEST_CASE("Engine: a bad output config is reported and the camera keeps running"
   CHECK(r.factory.output("good")->delivered > 30);
 }
 
-TEST_CASE("Engine: an output can send a smaller size, and a half-rate output gets every second tick with all the audio") {
+TEST_CASE("Engine: every output sends the one frame size, and a half-rate output gets every second tick with all the audio") {
   Rig r;
   bc::Show show = testShow();
-  auto smallOut = out("small");
-  smallOut.width = 32;
-  smallOut.height = 18;
   auto half = out("half");
   half.halfRate = true;
-  show.cameras.push_back(cam("a", {out("full"), smallOut, half}));
+  show.cameras.push_back(cam("a", {out("full"), half}));
   r.engine.apply(show);
   r.engine.start();
   auto t0 = Clock::now();
   std::this_thread::sleep_for(1600ms);
-  CHECK(r.factory.output("full")->seen().back().width == 64);
-  CHECK(r.factory.output("small")->seen().back().width == 32);
+  CHECK(r.factory.output("full")->seen().back().width == 64);  // one frame size: the show size
   auto halfSeen = r.factory.output("half")->seen();
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
   CHECK(n >= 27);
@@ -412,13 +442,17 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
   tick(0);
   CHECK(camera.readbackSlotCount() == 1);
 
-  // A different output size: the old slot is dropped and a new one takes its place.
+  // Reconfigure the output set: still one slot (one frame size per camera).
   cfg.outputs = {out("o2")};
-  cfg.outputs[0].width = 32;
-  cfg.outputs[0].height = 18;
   camera.reconfigure(cfg);
   tick(1);
   CHECK(camera.readbackSlotCount() == 1);
+
+  // No CPU output left: the slot is dropped, so a GPU-only camera holds nothing.
+  cfg.outputs = {};
+  camera.reconfigure(cfg);
+  tick(2);
+  CHECK(camera.readbackSlotCount() == 0);
   camera.stop();
 }
 

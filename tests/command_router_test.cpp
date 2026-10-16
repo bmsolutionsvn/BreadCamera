@@ -177,7 +177,7 @@ TEST_CASE("CommandRouter: preview commands reach the effects, bad arguments do n
   CHECK(fx.keyIds.size() == 1);  // failures never fire an effect
 }
 
-TEST_CASE("CommandRouter: show resolution and output format are validated") {
+TEST_CASE("CommandRouter: show resolution is validated, and an output size is ignored") {
   FakeFx fx;
   bc::CommandRouter r(bc::Show{}, fx);
   REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
@@ -186,12 +186,21 @@ TEST_CASE("CommandRouter: show resolution and output format are validated") {
   auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
   auto ok = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 960}, {"height", 540}, {"halfRate", true}}}}}}}});
   REQUIRE(ok["ok"] == true);
-  auto& o = r.show().cameras[0].outputs[0];
-  CHECK(o.width == 960);
-  CHECK(o.halfRate);
-  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["error"]["code"] == "invalid");
+  CHECK(r.show().cameras[0].outputs[0].halfRate);
+  // A legacy per-output size is ignored, not rejected (one frame size per camera).
+  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["ok"] == true);
   REQUIRE(call(r, {{"cmd", "updateOutput"}, {"args", {{"cameraId", cam}, {"id", ok["result"]["id"]}, {"format", {{"width", 0}, {"height", 0}, {"halfRate", false}}}}}})["ok"] == true);
-  CHECK(r.show().cameras[0].outputs[0].width == 0);
+  CHECK_FALSE(r.show().cameras[0].outputs[0].halfRate);
+}
+
+TEST_CASE("validateOutput ignores a per-output size") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
+  // A fixed-format output (the virtual camera) used to refuse any per-output size; a legacy
+  // size is now ignored, not an error (one frame size per camera).
+  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(add["ok"] == true);
 }
 
 TEST_CASE("CommandRouter: names are counted in characters, not bytes") {
@@ -344,12 +353,16 @@ TEST_CASE("CommandRouter: breadcall input validates the room URL, token and slot
   CHECK(r.show().cameras.size() == 1);  // only the valid one was added
 }
 
-TEST_CASE("CommandRouter: SDI and virtual camera outputs refuse a format override") {
+TEST_CASE("CommandRouter: SDI and virtual camera outputs ignore a size but refuse half rate") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);
   auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
-  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
-  CHECK(add["error"]["code"] == "invalid");
+  // A per-output size is ignored (one frame size per camera)...
+  auto sized = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(sized["ok"] == true);
+  // ...but half rate is still refused: the fixed-format outputs have a fixed rate.
+  auto half = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 2}}}, {"format", {{"halfRate", true}}}}}}}});
+  CHECK(half["error"]["code"] == "invalid");
 }
 
 TEST_CASE("output kind omt validates its params") {

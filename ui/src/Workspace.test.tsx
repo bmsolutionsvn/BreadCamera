@@ -13,8 +13,8 @@ const show = {
       name: 'Sân khấu trái',
       input: { kind: 'srt', params: { mode: 'caller', url: 'srt://1.2.3.4:9000', latencyMs: 120 } },
       outputs: [
-        { id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: { name: 'BreadCamera - Sân khấu trái' }, format: { width: 0, height: 0, halfRate: false } },
-        { id: 'o2', kind: 'fullscreen', keyed: false, enabled: true, params: { monitor: 1 }, format: { width: 0, height: 0, halfRate: false } },
+        { id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: { name: 'BreadCamera - Sân khấu trái' }, format: { halfRate: false } },
+        { id: 'o2', kind: 'fullscreen', keyed: false, enabled: true, params: { monitor: 1 }, format: { halfRate: false } },
       ],
     },
     { id: 'b', name: 'Khách mời', input: { kind: 'srt', params: { mode: 'listener', port: 9001 } }, outputs: [] },
@@ -71,16 +71,15 @@ test('an empty show points to Add camera', () => {
   expect(screen.getByText('No cameras yet')).toBeInTheDocument();
 });
 
-test('Add output sends the chosen size and half rate', () => {
+test('Add output sends the chosen half rate', () => {
   render(<Workspace client={client()} />);
   fireEvent.click(within(screen.getByRole('complementary', { name: 'Inspector' })).getByRole('button', { name: 'Add output' }));
   const dlg = screen.getByRole('dialog', { name: 'Add output to CAM 1' });
-  fireEvent.change(within(dlg).getByLabelText('Resolution'), { target: { value: '1280x720' } });
   fireEvent.change(within(dlg).getByLabelText('Frame rate'), { target: { value: 'half' } });
   fireEvent.click(within(dlg).getByRole('button', { name: 'Add output' }));
   const req = FakeWs.last.lastRequest();
   expect(req.cmd).toBe('addOutput');
-  expect((req.args.output as { format: unknown }).format).toEqual({ width: 1280, height: 720, halfRate: true });
+  expect((req.args.output as { format: unknown }).format).toEqual({ halfRate: true });
 });
 
 test('Stop all outputs asks first, with a verb button', () => {

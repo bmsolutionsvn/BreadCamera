@@ -24,8 +24,6 @@ struct OutputConfig {
   bool keyed = false;
   bool enabled = true;
   nlohmann::json params = nlohmann::json::object();
-  int width = 0;           // 0 x 0 = same as the show (spec §4.3)
-  int height = 0;
   bool halfRate = false;   // every second tick
   bool operator==(const OutputConfig&) const = default;
 };
@@ -74,6 +72,5 @@ nlohmann::json outputToJson(const OutputConfig& out);
 OutputConfig outputFromJson(const nlohmann::json& j);  // throws ShowError
 std::optional<std::pair<int, int>> parseShowResolution(std::string_view s);  // "1280x720" | "1920x1080"
 std::string resolutionStr(int w, int h);
-bool isOutputSize(int w, int h);  // 0x0, 1280x720 or 960x540
 std::string newId();
 }  // namespace bc

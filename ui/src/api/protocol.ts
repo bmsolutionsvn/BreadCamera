@@ -56,8 +56,6 @@ export interface StateTree {
   cameras?: Record<string, CameraState>;
 }
 export interface OutputFormat {
-  width: number;
-  height: number;
   halfRate: boolean;
 }
 export interface OutputConfig {

@@ -3,7 +3,6 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
-#include <set>
 
 #include "core/lut.h"
 #include "core/utf8.h"
@@ -239,46 +238,35 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
 
-  // One frame (and one readback) per distinct output size this tick (spec §4.3). The readback
-  // is asynchronous: finish the previous copy if the GPU is done, start this tick's copy, and
-  // hand the output the newest *completed* image (one tick behind at most). The tick never
-  // maps the frame.
+  // One frame per camera per tick — the composited frame's size (spec §4.3). There is no
+  // per-output size and no fit. The readback is asynchronous: finish the previous copy if the
+  // GPU is done, start this tick's copy, and hand every CPU output the newest *completed*
+  // image (one tick behind at most). The tick never maps the frame.
   struct Variant {
     TextureRef tex;
     std::shared_ptr<const CpuImage> cpu;
-    bool readbackDone = false;  // the one readback for this size has run this tick
+    bool readbackDone = false;  // the one readback for the frame has run this tick
   };
-  std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
-  // Every size an output uses this tick, so a size a half-rate output skips this tick keeps
-  // its slot and cached image.
-  std::set<std::pair<uint32_t, uint32_t>> needed;
-  for (const auto& s : outputs_) {
-    if (!s.out) continue;
-    needed.insert({s.cfg.width > 0 ? static_cast<uint32_t>(s.cfg.width) : frame->width,
-                   s.cfg.height > 0 ? static_cast<uint32_t>(s.cfg.height) : frame->height});
-  }
-  auto variant = [&](const OutputConfig& c, bool needsCpu) -> Variant& {
-    const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
-    const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
-    auto& v = variants[{w, h}];
-    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : tools_.conv.fit(*frame, w, h);
-    if (needsCpu && !v.readbackDone) {
+  Variant variant;
+  variant.tex = frame;
+  auto forCpu = [&](bool needsCpu) -> const Variant& {
+    if (needsCpu && !variant.readbackDone) {
       // tryFinish before begin: the slot's previous copy finishes first, then this tick's
-      // begins. A begin while pending would discard the unfinished frame. Once per size per
-      // tick, so two CPU outputs sharing a size get the *same* image, not one a tick apart.
-      auto& rb = readbacks_[{w, h}];
+      // begins. A begin while pending would discard the unfinished frame. Once per tick, so
+      // two CPU outputs get the *same* image, not one a tick apart.
+      auto& rb = readbacks_[{frame->width, frame->height}];
       CpuImage done;
       if (rb.slot.tryFinish(tools_.conv, done)) rb.image = std::make_shared<CpuImage>(std::move(done));
-      if (!rb.slot.pending()) rb.slot.begin(tools_.conv, *tools_.conv.toBgra8(*v.tex, w, h));
-      v.cpu = rb.image;  // may be null on the first ticks: never a synthetic frame
-      v.readbackDone = true;
+      if (!rb.slot.pending()) rb.slot.begin(tools_.conv, *tools_.conv.toBgra8(*frame, frame->width, frame->height));
+      variant.cpu = rb.image;  // may be null on the first ticks: never a synthetic frame
+      variant.readbackDone = true;
     }
-    return v;
+    return variant;
   };
   for (auto& s : outputs_) {
     if (!s.out) continue;
     if (!s.cfg.halfRate) {
-      auto& v = variant(s.cfg, s.out->needsCpu());
+      const auto& v = forCpu(s.out->needsCpu());
       s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, hasAlpha});
       continue;
     }
@@ -290,20 +278,22 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
     s.carryAudio.clear();
     both->insert(both->end(), audio->begin(), audio->end());
-    auto& v = variant(s.cfg, s.out->needsCpu());
+    const auto& v = forCpu(s.out->needsCpu());
     const Rate half{sched.rate().num, sched.rate().den * 2};
     s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, hasAlpha});
   }
 
-  // Release the slot and cached image for any size no output uses any more (a reconfigured
-  // or removed output), so nothing is held or read back from a released texture.
-  for (auto it = readbacks_.begin(); it != readbacks_.end();) {
-    if (needed.count(it->first)) {
-      ++it;
-    } else {
-      it = readbacks_.erase(it);
+  // Release the readback slot and cached image once no output needs CPU any more (a
+  // reconfigured or removed CPU output), so nothing is held or read back from a released
+  // texture. A camera with no CPU output does no readback work at all.
+  bool anyCpu = false;
+  for (auto& s : outputs_) {
+    if (s.out && s.out->needsCpu()) {
+      anyCpu = true;
+      break;
     }
   }
+  if (!anyCpu) readbacks_.clear();
 
   std::lock_guard l(statsMutex_);
   phase_ = tickPhase_;

@@ -206,15 +206,13 @@ bc::Show buildShow() {
     c.stages = {{"color", bc::normalizeStageParams("color", {{"enabled", true}, {"exposure", 0.1}})},
                 {"matte", bc::normalizeStageParams("matte", {{"enabled", true}})},
                 {"background", bc::normalizeStageParams("background", {{"mode", "blur"}})}};
-    // The per-output format lives on OutputConfig (spec §4.3); params carry only the SRT keys.
+    // One frame size per camera (spec §4.3): params carry only the SRT keys.
     bc::OutputConfig srt;
     srt.id = "srt" + std::to_string(i);
     srt.kind = "srt";
     srt.keyed = false;
     srt.enabled = true;
     srt.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 47981 + i}, {"bitrateKbps", 6000}};
-    srt.width = 1280;
-    srt.height = 720;
     c.outputs.push_back(std::move(srt));
     if (i == 0) {
       bc::OutputConfig fs;

@@ -30,12 +30,11 @@ interface AjaDevice {
 
 type Kind = 'ndi' | 'omt' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
 
-const SIZES: Record<string, [number, number]> = { same: [0, 0], '1280x720': [1280, 720], '960x540': [960, 540] };
-
 const FIXED_FORMAT_NOTE = 'SDI and the virtual camera use a fixed format: 1080p at the show rate (SDI), 1080p30 (virtual camera).';
 
-// Output format per spec §4.3: same as show or smaller; same rate or half. M4b adds the SDI and
-// virtual-camera kinds, whose format is fixed by the hardware and not offered here.
+// Output format per spec §4.3: one frame size per camera (the show size); only the rate is a
+// per-output choice (same or half). M4b adds the SDI and virtual-camera kinds, whose format and
+// rate are fixed by the hardware and not offered here.
 export function AddOutputDialog({ client, camera, n, onClose }: { client: EngineClient; camera: { id: string; name: string }; n: number; onClose: () => void }) {
   const [kind, setKind] = useState<Kind>('ndi');
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
@@ -57,7 +56,6 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   const [ajaDevice, setAjaDevice] = useState('');
   const [ajaChannel, setAjaChannel] = useState(1);
   const [vcamIndex, setVcamIndex] = useState(1);
-  const [size, setSize] = useState('same');
   const [rate, setRate] = useState<'same' | 'half'>('same');
   const [serverError, setServerError] = useState('');
 
@@ -110,10 +108,9 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
     else if (kind === 'aja') params = { device: Number(ajaDevice), channel: ajaChannel };
     else if (kind === 'vcam') params = { index: vcamIndex };
     else params = { monitor };
-    const [width, height] = fixed ? [0, 0] : SIZES[size];
     const keyed = kind === 'decklink' ? decklinkKeyed : false;
     try {
-      await client.request('addOutput', { cameraId: camera.id, output: { kind, keyed, params, format: { width, height, halfRate: rate === 'half' } } });
+      await client.request('addOutput', { cameraId: camera.id, output: { kind, keyed, params, format: { halfRate: rate === 'half' } } });
       onClose();
     } catch (e) {
       setServerError(e instanceof Error ? e.message : String(e));
@@ -293,25 +290,14 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
       {fixed ? (
         <div className="hint">{FIXED_FORMAT_NOTE}</div>
       ) : (
-        <>
-          <Prop label="Resolution">
-            {(id) => (
-              <select id={id} className="ctl" value={size} onChange={(e) => setSize(e.target.value)}>
-                <option value="same">Same as show</option>
-                <option value="1280x720">1280×720</option>
-                <option value="960x540">960×540</option>
-              </select>
-            )}
-          </Prop>
-          <Prop label="Frame rate" hint="Half sends every second frame. Other rates are not offered because converting them judders.">
-            {(id) => (
-              <select id={id} className="ctl" value={rate} onChange={(e) => setRate(e.target.value as 'same' | 'half')}>
-                <option value="same">Same as show</option>
-                <option value="half">Half rate</option>
-              </select>
-            )}
-          </Prop>
-        </>
+        <Prop label="Frame rate" hint="Half sends every second frame. Other rates are not offered because converting them judders.">
+          {(id) => (
+            <select id={id} className="ctl" value={rate} onChange={(e) => setRate(e.target.value as 'same' | 'half')}>
+              <option value="same">Same as show</option>
+              <option value="half">Half rate</option>
+            </select>
+          )}
+        </Prop>
       )}
     </Modal>
   );
