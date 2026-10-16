@@ -50,7 +50,7 @@ try {
 }
 
 # ---- release binaries ----
-& (Join-Path $PSScriptRoot 'build.ps1') -Preset release
+& (Join-Path $PSScriptRoot 'build.ps1') -Preset release -SkipUi
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
 # ---- stage the freshly built UI ----
