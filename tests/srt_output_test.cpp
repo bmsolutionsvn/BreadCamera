@@ -95,6 +95,64 @@ TEST_CASE("SrtOutput: a listener output is read by an SRT caller input, picture 
   CHECK(std::chrono::steady_clock::now() - t0 < 2000ms);
 }
 
+TEST_CASE("SrtOutput: re-opens when the frame size changes" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  auto opts = bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49153}});
+  bc::SrtOutput out(opts);
+  out.start();
+  std::this_thread::sleep_for(300ms);
+
+  std::atomic<bool> run{true};
+  std::atomic<bool> big{false};  // flip the fed frame size mid-show (a source renegotiation)
+  std::thread feeder([&] {
+    uint64_t tick = 0;
+    while (run) {
+      const uint32_t w = big ? 1280 : 640;
+      const uint32_t h = big ? 720 : 360;
+      auto img = std::make_shared<bc::CpuImage>();
+      img->width = w;
+      img->height = h;
+      img->bgra.assign(static_cast<size_t>(w) * h * 4, 128);
+      auto audio = std::make_shared<std::vector<float>>(800 * 2, 0.1f);
+      bc::OutFrame f;
+      f.tick = tick++;
+      f.rate = {60, 1};
+      f.bgra = img;
+      f.audio = audio;
+      out.submit(std::move(f));
+      std::this_thread::sleep_for(16ms);
+    }
+  });
+
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool(*gpu);
+  bc::FfmpegInput in(*gpu, pool, bc::srtOptionsFromParams({{"mode", "caller"}, {"host", "127.0.0.1"}, {"port", 49153}}));
+  Sink sink;
+  in.start(sink);
+
+  auto waitForWidth = [&](uint32_t w) {
+    for (int i = 0; i < 100; ++i) {
+      {
+        std::lock_guard l(sink.m);
+        if (sink.width == w && sink.video > 20) return;
+      }
+      std::this_thread::sleep_for(100ms);
+    }
+  };
+
+  waitForWidth(640);  // the encoder opens from the first frame
+  big = true;         // the frame size changes; the encoder must re-open at the new size
+  waitForWidth(1280);
+
+  in.stop();
+  run = false;
+  feeder.join();
+  {
+    std::lock_guard l(sink.m);
+    CHECK(sink.width == 1280);  // re-encoded at the new size, not the first size
+  }
+  out.stop();
+}
+
 TEST_CASE("SrtOutput: stop() returns while a listener waits for a caller") {
   bc::SrtOutput out(bc::srtOutputOptionsFromParams({{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49152}}));
   out.start();
