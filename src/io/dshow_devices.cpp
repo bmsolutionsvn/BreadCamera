@@ -70,6 +70,32 @@ std::vector<DShowDevice> listDShowDevices() {
   return out;
 }
 
+IMoniker* findDShowMoniker(const std::string& displayName) {
+  ICreateDevEnum* devEnum = nullptr;
+  if (FAILED(CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&devEnum)))) return nullptr;
+  IEnumMoniker* monikers = nullptr;
+  IMoniker* found = nullptr;
+  if (devEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &monikers, 0) == S_OK && monikers) {
+    IMoniker* mon = nullptr;
+    while (monikers->Next(1, &mon, nullptr) == S_OK) {
+      LPOLESTR w = nullptr;
+      std::string dn;
+      if (SUCCEEDED(mon->GetDisplayName(nullptr, nullptr, &w)) && w) {
+        dn = toUtf8(w);
+        CoTaskMemFree(w);
+      }
+      if (dn == displayName) {
+        found = mon;  // keep the reference from Next()
+        break;
+      }
+      mon->Release();
+    }
+    monikers->Release();
+  }
+  devEnum->Release();
+  return found;
+}
+
 std::vector<CaptureDevice> mergeCaptureDevices(const std::vector<CaptureDevice>& mf, const std::vector<DShowDevice>& dshow) {
   std::vector<CaptureDevice> out = mf;
   for (const auto& d : dshow) {

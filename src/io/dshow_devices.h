@@ -4,6 +4,8 @@
 
 #include "io/mf_capture_input.h"  // bc::CaptureDevice
 
+struct IMoniker;  // dshow.h — forward-declared so this header stays COM-light
+
 namespace bc {
 // A DirectShow video-input device (CLSID_VideoInputDeviceCategory). OBS Virtual Camera and
 // other DirectShow-only virtual cameras live here, where Media Foundation cannot see them.
@@ -23,4 +25,8 @@ std::vector<DShowDevice> listDShowDevices();
 // device that survives is listed as {"name", "dshow:<display name>"}.
 std::vector<CaptureDevice> mergeCaptureDevices(const std::vector<CaptureDevice>& mf,
                                                const std::vector<DShowDevice>& dshow);
+
+// The moniker whose display name is `displayName`, AddRef'd (the caller Releases), or nullptr.
+// COM must already be initialised (MTA) on the calling thread.
+::IMoniker* findDShowMoniker(const std::string& displayName);
 }  // namespace bc

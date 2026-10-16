@@ -11,6 +11,11 @@ Deliberate shortcuts and open items. One line each, with where it lives.
 - M4a Task 6: NDI input drops audio that is not 48 kHz, with a visible message (`src/io/ndi_input.cpp`).
 - M4a Task 6: NDI input/discovery are tested only when the NDI SDK is installed on the build PC (`tests/ndi_input_test.cpp`).
 
+## DirectShow camera input (2026-10-16)
+- DirectShow capture (`src/io/dshow_capture_input.cpp`) uses the deprecated in-box SampleGrabber filter (`qedit.h`-era) and does not negotiate resolution or frame rate — the device default is used. Replace with a custom `IMemInputPin` sink filter if SampleGrabber is withdrawn.
+- The DirectShow id is the moniker display name (`dshow:<display name>`); a device uninstalled and reinstalled gets a new id, orphaning it in saved shows (`src/io/dshow_devices.cpp`).
+- DirectShow capture is video only (no audio), like the MF path (`src/io/dshow_capture_input.cpp`).
+
 ## M4b
 - DeckLink, AJA and the virtual camera are **untested on hardware**; the owner's checklist is `docs/superpowers/manual-checks/m4b-hardware.md`.
 - AJA output is fill only (spec §4.3 lists key+fill) — add a second channel for the key (`src/io/aja_output.cpp`).
