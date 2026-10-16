@@ -63,18 +63,23 @@ class Camera final : public InputSink {
   const nlohmann::json& matteParams() const { return matteParams_; }
   const nlohmann::json& backgroundParams() const { return backgroundParams_; }
   // Second half: rawAlpha (null = no matte this tick) → stages → readback → fan-out.
+  // previewWanted forces the one readback even when no output needsCpu(), so a visible preview
+  // (D5) still gets the image through the frame tap.
   void endTick(uint64_t index, const TickSchedule& sched, std::chrono::steady_clock::time_point now,
-               const TextureRef& rawAlpha);
+               const TextureRef& rawAlpha, bool previewWanted = false);
   StageGuard& matteGuard() { return matteGuard_; }
   StageGuard& backgroundGuard() { return backgroundGuard_; }
   StageGuard& colorGuard() { return colorGuard_; }
   FeedPhase tickPhase() const { return tickPhase_; }
   TextureRef lastFrame() const { return lastFrame_; }
+  // This tick's single readback, the image shared by every CPU output and the frame tap. Null
+  // until the first async copy finishes, and null when no CPU consumer wanted it this tick.
+  std::shared_ptr<const CpuImage> tickCpu() const { return tickCpu_; }
   void publishStatus();
   CameraStats stats() const;
-  // bcam-readback: the live per-size readback slots (0 when no output needs CPU). Diagnostic
-  // and test hook for the "no CPU output does no readback work" contract.
-  size_t readbackSlotCount() const { return readbacks_.size(); }
+  // bcam-readback: the one readback slot (0 when no output needs CPU and no preview wants it).
+  // Diagnostic and test hook for the "no CPU consumer does no readback work" contract.
+  size_t readbackSlotCount() const { return readback_ ? 1 : 0; }
 
   void onVideo(VideoFrameIn frame) override;
   void onAudio(AudioBlock audio) override;
@@ -91,9 +96,8 @@ class Camera final : public InputSink {
     std::optional<ErrorInfo> createError;
     std::vector<float> carryAudio;  // half-rate audio from the odd tick
   };
-  // One in-flight readback plus the newest completed image, per output size that a
-  // CPU-consuming output uses. image is null until the first copy finishes (never a
-  // synthetic frame).
+  // One in-flight readback plus the newest completed image. image is null until the first copy
+  // finishes (never a synthetic frame).
   struct ReadbackState {
     ReadbackSlot slot;
     std::shared_ptr<const CpuImage> image;
@@ -141,9 +145,10 @@ class Camera final : public InputSink {
   bool gradeDirty_ = true;
   std::optional<std::chrono::steady_clock::time_point> tickArrival_;
   FeedPhase tickPhase_ = FeedPhase::NoSignal;
-  // Per (width,height): the readback in flight and the last completed frame. Entries are
-  // dropped on the tick when no output needs that size (also covers reconfigure), and on
-  // destruction. Empty when no output needs CPU, so such a camera does no readback work.
-  std::map<std::pair<uint32_t, uint32_t>, ReadbackState> readbacks_;
+  // The single readback in flight and the last completed frame, shared by every CPU output and
+  // (through the tap) the preview. Absent when neither an output needs CPU nor a visible preview
+  // wants it, so such a camera does no readback work.
+  std::optional<ReadbackState> readback_;
+  std::shared_ptr<const CpuImage> tickCpu_;  // this tick's shared image, for the frame tap
 };
 }  // namespace bc

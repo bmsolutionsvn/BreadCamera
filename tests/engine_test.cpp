@@ -488,6 +488,42 @@ TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
   camera.stop();
 }
 
+// D5: a camera whose only output is GPU-only (never needsCpu) must still run one readback when a
+// visible preview wants its image, so the frame tap can hand the preview a CpuImage.
+TEST_CASE("GPU-only camera: a visible preview forces one readback") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setFormat(64, 36);
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&](uint64_t i, bool previewWanted) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr, previewWanted);
+    std::this_thread::sleep_for(3ms);
+  };
+
+  tick(0, /*previewWanted=*/false);
+  CHECK(camera.readbackSlotCount() == 0);  // no CPU output, no preview: no readback work
+
+  int images = 0;
+  for (uint64_t i = 1; i <= 20; ++i) {
+    tick(i, /*previewWanted=*/true);
+    if (camera.tickCpu()) ++images;
+  }
+  CHECK(camera.readbackSlotCount() == 1);  // the visible preview forces the one readback (D5)
+  CHECK(images > 0);                        // and the image really reached the tap
+  CHECK(factory.made->last == nullptr);     // the GPU-only output is never handed a CPU image
+
+  tick(21, /*previewWanted=*/false);
+  CHECK(camera.readbackSlotCount() == 0);  // preview gone, still no CPU output: released
+  camera.stop();
+}
+
 TEST_CASE("Factory: a non-string NDI name is rejected with the router's message") {
   Rig r;
   bc::DefaultAdapterFactory factory(*r.gpu, r.pool);

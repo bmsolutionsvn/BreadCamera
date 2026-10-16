@@ -5,10 +5,10 @@ extern "C" {
 }
 
 #include "core/state_store.h"
+#include "engine/engine.h"
 #include "engine/preview_encoder.h"
 #include "engine/preview_hub.h"
 #include "engine/preview_service.h"
-#include "gpu/device.h"
 #include "support/requires.h"
 
 using bc::PreviewSize;
@@ -84,17 +84,50 @@ TEST_CASE("PreviewEncoder: decodable H.264 with in-band headers" BC_REQUIRES(bc:
   CHECK(decoded >= 50);
 }
 
-TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing" BC_REQUIRES(bc::test::Req::H264Encoder)) {
-  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
-  bc::TexturePool pool(*gpu);
-  bc::Converter conv(*gpu, pool);
+// D3/D4/D7: the preview encodes the CpuImage the frame tap hands it, at that image's size — no
+// converter, no readback, no per-wire-size downscale. PreviewService owns no Converter, so the
+// only possible source of pixels is the tap.
+TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;
   std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
-  bc::PreviewService svc(conv, state, hub, [&](const std::string& c, std::vector<uint8_t> m) { sent[c].push_back(std::move(m)); });
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) { sent[c].push_back(std::move(m)); });
+  // The wire asks for Small (512x288) but the shared frame is 320x180: a stale dims(size)
+  // encoder would reject the image, so this pins encoding at the frame size.
   hub.subscribe("c1", {"a"}, PreviewSize::Small);
-  auto frame = conv.solid(1920, 1080, {0.2f, 0.2f, 0.2f, 1});
-  for (uint64_t t = 0; t < 40; ++t) svc.onTick(t, {{"a", frame}, {"b", frame}});
+  auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+  for (uint64_t t = 0; t < 40; ++t) svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
+  REQUIRE_FALSE(sent["c1"].empty());
+  CHECK((sent["c1"].front()[1] & 1) == 1);  // a keyframe first
+
+  // The first packet decodes at the frame size, not the wire size.
+  const auto& msg = sent["c1"].front();
+  const size_t idLen = msg[2] | (msg[3] << 8);
+  std::vector<uint8_t> annexB(msg.begin() + 4 + idLen + 8, msg.end());
+  const AVCodec* dec = avcodec_find_decoder(AV_CODEC_ID_H264);
+  AVCodecContext* ctx = avcodec_alloc_context3(dec);
+  REQUIRE(avcodec_open2(ctx, dec, nullptr) == 0);
+  AVPacket* pkt = av_packet_alloc();
+  AVFrame* frame = av_frame_alloc();
+  pkt->data = annexB.data();
+  pkt->size = static_cast<int>(annexB.size());
+  REQUIRE(avcodec_send_packet(ctx, pkt) >= 0);
+  REQUIRE(avcodec_receive_frame(ctx, frame) >= 0);
+  CHECK(frame->width == 320);
+  CHECK(frame->height == 180);
+  av_frame_free(&frame);
+  av_packet_free(&pkt);
+  avcodec_free_context(&ctx);
+}
+
+TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) { sent[c].push_back(std::move(m)); });
+  hub.subscribe("c1", {"a"}, PreviewSize::Small);
+  auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+  for (uint64_t t = 0; t < 40; ++t) svc.onTick(t, {bc::FrameTap{"a", nullptr, img}, bc::FrameTap{"b", nullptr, img}});
   REQUIRE(sent["c1"].size() >= 10);
   CHECK((sent["c1"].front()[1] & 1) == 1);
   CHECK(sent.count("c2") == 0);

@@ -170,7 +170,7 @@ void Engine::run() {
       WaitForSingleObject(timer, INFINITE);
     }
     const auto now = Clock::now();
-    std::vector<std::pair<std::string, TextureRef>> frames;
+    std::vector<FrameTap> frames;
     {
       std::lock_guard l(mutex_);
       // Half 1: every camera picks and converts.
@@ -239,7 +239,8 @@ void Engine::run() {
       for (auto& cam : cameras_) {
         const auto& id = cam->config().id;
         try {
-          cam->endTick(index, sched, now, alphas.count(cam.get()) ? alphas[cam.get()] : nullptr);
+          const bool previewWanted = previewWanted_ && previewWanted_(id);
+          cam->endTick(index, sched, now, alphas.count(cam.get()) ? alphas[cam.get()] : nullptr, previewWanted);
           // The error block must clear once the tick is clean again (spec §6.4: an
           // error is persistent *while true*, never forever).
           state_.erase("/cameras/" + id + "/tickError");
@@ -252,7 +253,7 @@ void Engine::run() {
           last = phase;
           state_.set("/cameras/" + id + "/phase", phase);
         }
-        frames.emplace_back(id, cam->lastFrame());
+        frames.push_back(FrameTap{id, cam->lastFrame(), cam->tickCpu()});
       }
       if (index % ticksPerSecond == 0) {
         for (auto& cam : cameras_) cam->publishStatus();
