@@ -2,6 +2,8 @@
 
 #include <windows.h>
 
+#include "io/dshow_devices.h"
+
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -135,11 +137,12 @@ struct MfCaptureInput::MfReaderCallback final : IMFSourceReaderCallback {
 std::vector<CaptureDevice> listCaptureDevices() {
   ensureMf();
   ComInit com;
-  std::vector<CaptureDevice> out;
+  std::vector<CaptureDevice> mf;
   for (auto& a : enumerate()) {
-    out.push_back({str(a.Get(), MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME), str(a.Get(), MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK)});
+    mf.push_back({str(a.Get(), MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME), str(a.Get(), MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK)});
   }
-  return out;
+  // Media Foundation misses DirectShow-only virtual cameras (OBS Virtual Camera); merge them in.
+  return mergeCaptureDevices(mf, listDShowDevices());
 }
 
 void MfCaptureInput::start(InputSink& sink) {

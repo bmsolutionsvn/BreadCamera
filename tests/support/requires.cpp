@@ -13,6 +13,7 @@
 #include "gpu/device.h"
 #include "io/aja.h"
 #include "io/decklink.h"
+#include "io/dshow_devices.h"
 #include "io/mf_capture_input.h"
 #include "io/vcam_output.h"
 
@@ -64,6 +65,9 @@ bool check(Req r, const char*& reason) {
     case Req::CaptureDevice:
       reason = "no USB/UVC capture device on this PC";
       return bc::listCaptureDevices().empty();
+    case Req::DShowDevice:
+      reason = "no DirectShow video capture device on this PC";
+      return bc::listDShowDevices().empty();
     case Req::Omt:
       reason = "OMT-HX checkout not built (BC_WITH_OMT=OFF)";
       return BC_WITH_OMT == 0;

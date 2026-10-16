@@ -4,6 +4,8 @@
 #include <doctest/doctest.h>
 
 #include <cstdio>
+#include <set>
+#include <string>
 #include <thread>
 
 #include "gpu/device.h"
@@ -33,11 +35,16 @@ struct Sink : bc::InputSink {
 
 TEST_CASE("listCaptureDevices: runs and returns names with ids") {
   auto list = bc::listCaptureDevices();
+  std::set<std::string> names;
   for (auto& d : list) {
     CHECK_FALSE(d.name.empty());
     CHECK_FALSE(d.id.empty());
+    names.insert(d.name);
   }
-  MESSAGE(list.size() << " capture device(s)");
+  CHECK(names.size() == list.size());  // no device is listed twice (MF + DirectShow merge)
+  std::string labels;
+  for (auto& d : list) labels += (labels.empty() ? "" : ", ") + d.name;
+  MESSAGE(list.size() << " capture device(s): " << labels);
 }
 
 TEST_CASE("MfCaptureInput: an unknown device is reported and retried, never crashes") {
