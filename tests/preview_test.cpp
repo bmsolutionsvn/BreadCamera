@@ -90,18 +90,30 @@ TEST_CASE("PreviewEncoder: decodable H.264 with in-band headers" BC_REQUIRES(bc:
 TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;
+  std::mutex mu;
   std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
-  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) { sent[c].push_back(std::move(m)); });
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
   // The wire asks for Small (512x288) but the shared frame is 320x180: a stale dims(size)
   // encoder would reject the image, so this pins encoding at the frame size.
   hub.subscribe("c1", {"a"}, PreviewSize::Small);
   auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
-  for (uint64_t t = 0; t < 40; ++t) svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
-  REQUIRE_FALSE(sent["c1"].empty());
-  CHECK((sent["c1"].front()[1] & 1) == 1);  // a keyframe first
+  // The encode happens off the tick (D4): drain each tick so the worker consumes every frame.
+  for (uint64_t t = 0; t < 40; ++t) {
+    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
+    svc.drain();
+  }
+  std::vector<uint8_t> msg;
+  {
+    std::lock_guard l(mu);
+    REQUIRE_FALSE(sent["c1"].empty());
+    CHECK((sent["c1"].front()[1] & 1) == 1);  // a keyframe first
+    msg = sent["c1"].front();
+  }
 
   // The first packet decodes at the frame size, not the wire size.
-  const auto& msg = sent["c1"].front();
   const size_t idLen = msg[2] | (msg[3] << 8);
   std::vector<uint8_t> annexB(msg.begin() + 4 + idLen + 8, msg.end());
   const AVCodec* dec = avcodec_find_decoder(AV_CODEC_ID_H264);
@@ -123,12 +135,52 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
 TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;
+  std::mutex mu;
   std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
-  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) { sent[c].push_back(std::move(m)); });
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
   hub.subscribe("c1", {"a"}, PreviewSize::Small);
   auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
-  for (uint64_t t = 0; t < 40; ++t) svc.onTick(t, {bc::FrameTap{"a", nullptr, img}, bc::FrameTap{"b", nullptr, img}});
+  for (uint64_t t = 0; t < 40; ++t) {
+    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}, bc::FrameTap{"b", nullptr, img}});
+    svc.drain();
+  }
+  std::lock_guard l(mu);
   REQUIRE(sent["c1"].size() >= 10);
   CHECK((sent["c1"].front()[1] & 1) == 1);
   CHECK(sent.count("c2") == 0);
+}
+
+// D9: past the encoder cap the excess tiles are skipped and a warning is set — unlike the old
+// broken_ flag, which blanked every preview on the first open failure.
+TEST_CASE("preview cap warns instead of disabling every preview" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::mutex mu;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
+  const size_t cap = bc::PreviewService::kMaxPreviewEncoders;
+  const size_t n = cap + 2;
+  auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+  std::vector<bc::FrameTap> frames;
+  for (size_t i = 0; i < n; ++i) {
+    hub.subscribe("c" + std::to_string(i), {"cam" + std::to_string(i)}, PreviewSize::Small);
+    frames.push_back(bc::FrameTap{"cam" + std::to_string(i), nullptr, img});
+  }
+  for (uint64_t t = 0; t < 20; ++t) {
+    svc.onTick(t, frames);
+    svc.drain();
+  }
+  std::lock_guard l(mu);
+  // The cameras within the cap still encode...
+  for (size_t i = 0; i < cap; ++i) CHECK_FALSE(sent["c" + std::to_string(i)].empty());
+  // ...the excess tiles are skipped...
+  for (size_t i = cap; i < n; ++i) CHECK(sent.count("c" + std::to_string(i)) == 0);
+  // ...and the warning is set rather than every preview being blanked.
+  CHECK(state.snapshot().contains(nlohmann::json::json_pointer("/engine/warnings/preview")));
 }
