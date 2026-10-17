@@ -109,8 +109,16 @@ int wmain(int argc, wchar_t** argv) {
   bc::ColorCalibrationService calib(engine, showDir / L"luts");
   bc::ControlServer server(port, token);
   bc::PreviewHub hub;
-  bc::PreviewService previews(conv, state, hub, [&](const bc::ClientId& c, std::vector<uint8_t> m) { server.sendBinary(c, m); });
-  engine.setFrameTap([&](uint64_t tick, const auto& frames) { previews.onTick(tick, frames); });
+  bc::PreviewService previews(state, hub, [&](const bc::ClientId& c, std::vector<uint8_t> m) { server.sendBinary(c, m); });
+  engine.setFrameTap([&](uint64_t tick, const std::vector<bc::FrameTap>& frames) { previews.onTick(tick, frames); });
+  // D5: a visible preview forces its camera's one readback even when no output needs CPU. The
+  // hub owns the wanted set and the tap fires after the tick, so push the wanted-set in here.
+  engine.setPreviewWanted([&hub](const std::string& id) {
+    for (const auto& key : hub.wanted()) {
+      if (key.first == id) return true;
+    }
+    return false;
+  });
 
   struct Fx : bc::CommandRouter::Effects {
     bc::Engine& engine;

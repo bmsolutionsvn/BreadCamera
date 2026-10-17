@@ -57,9 +57,9 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
 - **Object model (confirmed 2026-10-08):** no level 1 (standalone, no login).
   Level 2 is the **Show**, one show file per event. Level 3 is where a signal goes
   in or out: **Camera** (input) and **Output**.
-- Closing the window hides the UI to the tray; outputs keep running. Stopping
-  everything is a separate action behind a confirm dialog whose primary button
-  reads "Stop all outputs".
+- Closing the window asks to confirm, then quits and stops the engine; the window
+  never hides to the tray. Stopping the outputs alone is a separate action behind
+  a confirm dialog whose primary button reads "Stop all outputs".
 - **UI (confirmed 2026-10-08):** a native Windows pro tool, English only. Title
   bar with menus, toolbar, Multiview with a docked Inspector for the selected
   camera, status bar; Settings is a dialog. Colour calibration runs inside the

@@ -47,8 +47,6 @@ bc::CameraConfig chartCam(const std::string& id, std::vector<float> cast) {
 
 bc::Show showOf(std::vector<bc::CameraConfig> cams) {
   bc::Show s;
-  s.settings.width = 960;
-  s.settings.height = 540;
   s.cameras = std::move(cams);
   return s;
 }

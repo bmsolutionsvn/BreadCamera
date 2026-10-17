@@ -1,5 +1,7 @@
 #include "gpu/converter.h"
 
+#include <dxgi.h>
+
 #include <cstring>
 #include <stdexcept>
 
@@ -11,6 +13,20 @@
 using Microsoft::WRL::ComPtr;
 
 namespace bc {
+namespace {
+// Copies a mapped staging resource into a tightly packed bgra image, one row at a time
+// (the mapped RowPitch may exceed width * 4).
+void copyRows(const D3D11_MAPPED_SUBRESOURCE& m, uint32_t width, uint32_t height, CpuImage& out) {
+  out.width = width;
+  out.height = height;
+  out.bgra.resize(static_cast<size_t>(width) * height * 4);
+  for (uint32_t y = 0; y < height; ++y) {
+    std::memcpy(out.bgra.data() + static_cast<size_t>(y) * width * 4,
+                static_cast<const uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch, width * 4);
+  }
+}
+}  // namespace
+
 YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange) {
   const float kr = height >= 720 ? 0.2126f : 0.299f;
   const float kb = height >= 720 ? 0.0722f : 0.114f;
@@ -116,20 +132,32 @@ TextureRef Converter::fit(const GpuTexture& linear, uint32_t w, uint32_t h) {
 CpuImage Converter::readback(const GpuTexture& rgba8) {
   auto staging = pool_.acquire(rgba8.width, rgba8.height, rgba8.format, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
   CpuImage img;
-  img.width = rgba8.width;
-  img.height = rgba8.height;
-  img.bgra.resize(static_cast<size_t>(img.width) * img.height * 4);
   auto lock = gpu_.lock();
   auto* ctx = gpu_.context();
   ctx->CopyResource(staging->tex.Get(), rgba8.tex.Get());
   D3D11_MAPPED_SUBRESOURCE m{};
   if (FAILED(ctx->Map(staging->tex.Get(), 0, D3D11_MAP_READ, 0, &m))) throw std::runtime_error("Map failed");
-  for (uint32_t y = 0; y < img.height; ++y) {
-    std::memcpy(img.bgra.data() + static_cast<size_t>(y) * img.width * 4,
-                static_cast<const uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch, img.width * 4);
-  }
+  copyRows(m, rgba8.width, rgba8.height, img);
   ctx->Unmap(staging->tex.Get(), 0);
   return img;
+}
+
+void Converter::beginReadback(const TextureRef& staging, const GpuTexture& rgba8) {
+  auto lock = gpu_.lock();
+  gpu_.context()->CopyResource(staging->tex.Get(), rgba8.tex.Get());
+}
+
+bool Converter::tryFinishReadback(const TextureRef& staging, CpuImage& out) {
+  auto lock = gpu_.lock();
+  auto* ctx = gpu_.context();
+  D3D11_MAPPED_SUBRESOURCE m{};
+  // The DO_NOT_WAIT flag is a MapFlags argument (OR-ing it into MapType yields E_INVALIDARG).
+  const HRESULT hr = ctx->Map(staging->tex.Get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m);
+  if (hr == DXGI_ERROR_WAS_STILL_DRAWING) return false;  // not ready: change nothing
+  if (FAILED(hr)) throw std::runtime_error("Map failed");
+  copyRows(m, staging->width, staging->height, out);
+  ctx->Unmap(staging->tex.Get(), 0);
+  return true;
 }
 
 TextureRef Converter::solid(uint32_t w, uint32_t h, std::array<float, 4> c) {

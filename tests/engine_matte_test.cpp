@@ -56,12 +56,9 @@ bc::CameraConfig cam(const std::string& id, const std::string& mode, json inPara
   return c;
 }
 
-// Small show format so the tests stay cheap (the fake input is 64x36 by default); it also
-// keeps each tick well under the status-publish grid so a guard change is visible on time.
+// The fake input is 64x36 by default; the frame is the input's size, so the tests stay cheap.
 bc::Show smallShow() {
   bc::Show s;
-  s.settings.width = 64;
-  s.settings.height = 36;
   return s;
 }
 
@@ -162,11 +159,7 @@ TEST_CASE("Matte: a slow backend is bypassed for overrun and the tick stops over
 TEST_CASE("Matte: removing a camera releases its matte state; mixed sizes each get their own alpha") {
   Rig r;
   bc::Show show;
-  // Every camera's frame is fitted to the show format (§4.3), so an input size alone
-  // cannot change the matte job size; a 32x18 show keeps camera b's frame at its
-  // native input size.
-  show.settings.width = 32;
-  show.settings.height = 18;
+  // Each camera's frame is its own input's size (§4.3), so the matte jobs may differ in size.
   show.cameras.push_back(cam("a", "keyed"));
   show.cameras.push_back(cam("b", "keyed", {{"width", 32}, {"height", 18}}));
   r.engine.apply(show);

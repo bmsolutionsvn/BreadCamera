@@ -26,9 +26,8 @@ export function Section({ title, right, children }: { title: string; right?: Rea
 }
 
 function formatLabel(o: CameraConfig['outputs'][number]) {
-  const f = o.format;
-  const size = f && f.width ? `${f.width}×${f.height}` : 'same as show';
-  return `${o.keyed ? 'Keyed' : 'Composited'} · ${size}${f?.halfRate ? ' · half rate' : ''}`;
+  // One frame size per camera: every output sends the show size (spec §4.3).
+  return `${o.keyed ? 'Keyed' : 'Composited'} · same as show${o.format?.halfRate ? ' · half rate' : ''}`;
 }
 
 // The selected camera: Input, (M2: Effects via children), Outputs (spec §6.4).
@@ -133,7 +132,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
       </div>
       <div className="insp-b">
         <Section title="Input" right={<span className="ro">{health}</span>}>
-          {cs?.input?.error && <ErrorBlock error={cs.input.error} />}
+          {cs?.input?.error && <ErrorBlock error={cs.input.error} source="input" />}
           {cs?.tickError && <ErrorBlock title="Processing failed." message={cs.tickError} />}
           {error && <ErrorBlock message={error} />}
           {kind === 'srt' && (
@@ -181,7 +180,7 @@ export function Inspector({ client, snap, cam, n, onAddOutput, onRemoved, childr
             </Prop>
           )}
           {kind === 'uvc' && (
-            <Prop label="Device" hint="USB and built-in cameras are video only, no audio.">
+            <Prop label="Device" hint="Device cameras are video only, no audio.">
               {(id) => (
                 <div className="row-btns">
                   <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>

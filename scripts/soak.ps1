@@ -1,6 +1,6 @@
 param([double]$Hours = 0.5, [switch]$Faults)
 $ErrorActionPreference = 'Stop'
-& (Join-Path $PSScriptRoot 'build.ps1') -Preset release
+& (Join-Path $PSScriptRoot 'build.ps1') -Preset release -SkipUi
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 $out = Join-Path $env:TEMP ("bcam-soak-" + (Get-Date -Format 'yyyyMMdd-HHmm') + '.csv')
 $exe = Join-Path $PSScriptRoot '..\build\release\bc_soak.exe'

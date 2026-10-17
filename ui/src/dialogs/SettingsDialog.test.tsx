@@ -25,13 +25,18 @@ test('saves the hold time without asking', () => {
   expect(sent('setSettings')[0].args).toEqual({ holdMs: 8000 });
 });
 
-test('a resolution change asks first, with a verb button', () => {
+test('the Settings dialog no longer offers a Resolution field', () => {
   render(<SettingsDialog client={client()} onClose={() => {}} />);
-  fireEvent.change(screen.getByLabelText('Resolution'), { target: { value: '1280x720' } });
+  expect(screen.queryByLabelText('Resolution')).toBeNull();
+});
+
+test('a frame-rate change asks first, with a verb button', () => {
+  render(<SettingsDialog client={client()} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Frame rate'), { target: { value: '50/1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   expect(sent('setSettings')).toHaveLength(0);
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the show format?' })).getByRole('button', { name: 'Change format' }));
-  expect(sent('setSettings')[0].args).toEqual({ resolution: '1280x720' });
+  expect(sent('setSettings')[0].args).toEqual({ rate: '50/1' });
 });
 
 test('the Engine page shows the GPU and the missing matte backend', () => {

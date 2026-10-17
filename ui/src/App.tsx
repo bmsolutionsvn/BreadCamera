@@ -35,6 +35,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const cameras = snap.show?.cameras ?? [];
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
+  const [focused, setFocused] = useState<string | null>(null);
   const [layout, setLayout] = useState<Layout>('auto');
   const [dialog, setDialog] = useState<null | 'addCamera' | 'addOutput' | 'addEffect' | 'stopAll' | 'quit' | 'settings'>(null);
   const [now, setNow] = useState(() => Date.now());
@@ -68,26 +69,17 @@ export function Workspace({ client }: { client: EngineClient }) {
   const index = cameras.findIndex((c) => c.id === selected);
   const cam = index >= 0 ? cameras[index] : undefined;
   const holdMs = snap.show?.settings?.holdMs ?? 5000;
-  const menus = useMemo(
-    () => ({
-      file: [{ label: 'Quit…', onSelect: () => setDialog('quit') }],
-      show: [{ label: 'Settings…', shortcut: 'Ctrl+,', onSelect: () => setDialog('settings') }],
-      camera: [
-        { label: 'Add camera…', shortcut: 'Ctrl+Shift+N', onSelect: () => setDialog('addCamera') },
-        { label: 'Add output…', disabled: !cam, onSelect: () => setDialog('addOutput') },
-        { label: 'Add effect…', disabled: !cam, onSelect: () => setDialog('addEffect') },
-        { label: 'Calibrate colour…', shortcut: 'Ctrl+K', disabled: !cam || !cam.stages || !('color' in cam.stages), onSelect: () => cam && calib.start(cam.id) },
-      ],
-      view: (['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => ({ label: `Layout ${l === 'auto' ? 'Auto' : l.replace('x', '×')}`, onSelect: () => setLayout(l) })),
-      help: [{ label: 'BreadCamera 0.1', disabled: true, onSelect: () => {} }],
-    }),
-    [cam, calib.start],
-  );
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && calib.state && !dialog) {
-        calib.cancel();
-        return;
+      if (e.key === 'Escape') {
+        if (calib.state && !dialog) {
+          calib.cancel();
+          return;
+        }
+        if (focused && !dialog) {
+          setFocused(null);
+          return;
+        }
       }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
@@ -105,14 +97,14 @@ export function Workspace({ client }: { client: EngineClient }) {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [calib.state, calib.cancel, calib.start, cam, dialog]);
+  }, [calib.state, calib.cancel, calib.start, cam, dialog, focused]);
 
   const calibIndex = cameras.findIndex((c) => c.id === calib.state?.cameraId);
   const calibCam = calibIndex >= 0 ? cameras[calibIndex] : undefined;
 
   return (
     <div className="win">
-      <TitleBar menus={menus} />
+      <TitleBar />
       <Toolbar
         onAddCamera={() => setDialog('addCamera')}
         onStopAll={() => setDialog('stopAll')}
@@ -137,6 +129,8 @@ export function Workspace({ client }: { client: EngineClient }) {
             now={now}
             selected={selected}
             onSelect={select}
+            focused={focused}
+            onFocus={setFocused}
             layout={layout}
             onLayout={setLayout}
             offline={offline}

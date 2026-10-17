@@ -21,6 +21,10 @@
     "webview2",
     "wil",
     {
+      "name": "libdatachannel",
+      "features": ["srtp"]
+    },
+    {
       "name": "opencv4",
       "default-features": false,
       "features": ["contrib", "dnn"]

@@ -43,7 +43,7 @@ TEST_CASE("M4a acceptance: SRT in → engine → SRT out, read back" BC_REQUIRES
   c.name = "Cam";
   c.input.kind = "srt";
   c.input.params = {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49161}};
-  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49162}}, 1280, 720});
+  c.outputs.push_back({"srt-out", "srt", false, true, {{"mode", "listener"}, {"host", "127.0.0.1"}, {"port", 49162}}});
   show.cameras.push_back(c);
   engine.apply(show);
   engine.start();

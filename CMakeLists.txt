@@ -106,6 +106,26 @@ if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
 endif()
 message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
 
+# M6 Task 1 — optional ONNX Runtime (DirectML) matte backend (spec §7.2). The runtime, the
+# DirectML redistributable and the MODNet model are fetched by scripts/fetch-sdks.ps1.
+find_package(OnnxRuntime)
+option(BC_WITH_ONNX "Build the ONNX Runtime (DirectML) matte backend" ${OnnxRuntime_FOUND})
+if(BC_WITH_ONNX AND NOT OnnxRuntime_FOUND)
+  message(WARNING "BC_WITH_ONNX=ON but ONNX Runtime / the MODNet model were not found (run scripts/fetch-sdks.ps1); turning it off")
+  set(BC_WITH_ONNX OFF)
+endif()
+message(STATUS "BC_WITH_ONNX=${BC_WITH_ONNX}")
+
+# C1 — the shared LiveKit client (spec D1/§7). libdatachannel comes from vcpkg;
+# a missing library turns the client off and its code compiles out.
+find_package(LibDataChannel)
+option(BC_WITH_LIVECALL "Build the shared LiveKit client" ${LibDataChannel_FOUND})
+if(BC_WITH_LIVECALL AND NOT LibDataChannel_FOUND)
+  message(WARNING "BC_WITH_LIVECALL=ON but libdatachannel was not found; turning it off")
+  set(BC_WITH_LIVECALL OFF)
+endif()
+message(STATUS "BC_WITH_LIVECALL=${BC_WITH_LIVECALL}")
+
 # M3 Task 5 — optional chart detection (OpenCV mcc)
 find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
 if(OpenCV_FOUND)
@@ -179,6 +199,7 @@ add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
+  src/gpu/readback.cpp
   src/gpu/image_io.cpp
   src/gpu/compositor.cpp
   # M3 Task 3
@@ -204,12 +225,29 @@ add_library(bc_io STATIC
   src/io/srt_output.cpp
   # M4a Task 4
   src/io/mf_capture_input.cpp
+  # DirectShow camera input (OBS Virtual Camera)
+  src/io/dshow_devices.cpp
+  src/io/dshow_format.cpp
+  src/io/dshow_capture_input.cpp
+  # C1 Task 1
+  src/io/lkc/lkc.cpp
+  # C1 Task 3
+  src/io/breadcall_input.cpp
 )
 target_include_directories(bc_io PUBLIC src ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(bc_io PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(bc_io PUBLIC bc_gpu ${FFMPEG_LIBRARIES} srt)
 target_link_libraries(bc_io PUBLIC user32)
 target_link_libraries(bc_io PUBLIC mf mfplat mfreadwrite mfuuid ole32)
+
+# C1 Task 1 — the shared LiveKit client. When libdatachannel is absent the
+# client still compiles (BC_WITH_LIVECALL=0) and reports `lkc-unavailable`.
+if(BC_WITH_LIVECALL)
+  target_link_libraries(bc_io PUBLIC LibDataChannel::LibDataChannel)
+  target_compile_definitions(bc_io PUBLIC BC_WITH_LIVECALL=1)
+else()
+  target_compile_definitions(bc_io PUBLIC BC_WITH_LIVECALL=0)
+endif()
 
 if(BC_WITH_NDI)
   # M4a Task 2
@@ -282,6 +320,12 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${OMTHX_LIBOMT_DIR}/libomt.dll" "${OMTHX_LIBOMT_DIR}/libvmx.dll" "$<TARGET_FILE_DIR:${target}>")
   endif()
+  if(BC_WITH_ONNX)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ORT_DLL}" "${DML_DLL}" "$<TARGET_FILE_DIR:${target}>"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/modnet.onnx")
+  endif()
 endfunction()
 
 # ---- engine ----
@@ -306,6 +350,16 @@ add_library(bc_engine STATIC
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
 target_link_libraries(bc_engine PUBLIC ixwebsocket::ixwebsocket bcrypt)
+
+# M6 Task 1 — the optional ONNX Runtime (DirectML) matte backend.
+if(BC_WITH_ONNX)
+  # M6 Task 2 — the backend implementation.
+  target_sources(bc_engine PRIVATE src/engine/onnx_matte.cpp)
+  target_link_libraries(bc_engine PUBLIC ORT::ORT dxgi)
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_ONNX=1)
+else()
+  target_compile_definitions(bc_engine PUBLIC BC_WITH_ONNX=0)
+endif()
 
 if(BC_WITH_MAXINE)
   target_sources(bc_engine PRIVATE src/engine/maxine_matte.cpp ${MAXINE_VFX_PROXY} ${MAXINE_IMAGE_PROXY})
@@ -355,6 +409,10 @@ add_executable(bc_tests
   tests/ndi_input_test.cpp
   # M4a Task 4
   tests/mf_capture_test.cpp
+  # DirectShow camera input
+  tests/dshow_devices_test.cpp
+  tests/dshow_capture_test.cpp
+  tests/dshow_format_test.cpp
   # Task 2..14 test files
   # Task 9
   tests/engine_test.cpp
@@ -400,11 +458,25 @@ add_executable(bc_tests
   # M4b Task 1
   tests/uyvy_test.cpp
   tests/decklink_test.cpp
+  # C1 Task 1
+  tests/lkc_test.cpp
+  # C1 Task 3
+  tests/breadcall_input_test.cpp
+  # C1 Task 5
+  tests/e2e_c1_test.cpp
   # M4b Task 2
   tests/aja_test.cpp
   # M4b Task 3
   tests/vcam_shared_test.cpp
   tests/vcam_output_test.cpp
+  # M6 Task 2
+  tests/onnx_matte_test.cpp
+  # M6 Task 3
+  tests/e2e_m6_test.cpp
+  # real-e2e Task 1
+  tests/e2e_real_effects_test.cpp
+  # bcam-readback Task 1
+  tests/readback_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

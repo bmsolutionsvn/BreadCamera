@@ -173,25 +173,41 @@ void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
   state_.set(path("/input/error"), errorToJson(e));
 }
 
-TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
+TextureRef Camera::fittedSlate(const TextureRef& source) {
+  if (!source) return source;
+  if (source->width == lastSize_.w && source->height == lastSize_.h) return source;
+  const bool staleSrc = slateFitSrc_.lock().get() != source.get();
+  if (!slateFit_ || staleSrc || slateFit_->width != lastSize_.w || slateFit_->height != lastSize_.h) {
+    slateFit_ = tools_.conv.fit(*source, lastSize_.w, lastSize_.h);
+    slateFitSrc_ = source;
+  }
+  return slateFit_;
+}
+
+TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
   auto pick = sync_.pick(now);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
-      auto lin = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
-      lastConverted_ = (lin->width == width_ && lin->height == height_) ? lin : tools_.conv.fit(*lin, width_, height_);
+      // The frame is the input's own size: there is no show-wide frame size to scale to.
+      lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
+      lastSize_.w = lastConverted_->width;
+      lastSize_.h = lastConverted_->height;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
-  tickRaw_ = lastConverted_ ? lastConverted_ : slate;
+  tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
   tickFrame_ = tickRaw_;
   const bool colorOn = colorParams_.value("enabled", false);
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
-    if (!pick.fresh && !gradeDirty_ && lastGraded_) {
+    // A size change does not dirty the grade, so the reuse must also match the current frame's
+    // size: the colour stage can be bypassed across a renegotiation and leave a stale texture.
+    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == lastConverted_->width &&
+        lastGraded_->height == lastConverted_->height) {
       tickFrame_ = lastGraded_;
     } else {
       const auto t0 = Clock::now();
@@ -208,7 +224,8 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slate) {
   return tickFrame_;
 }
 
-void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha) {
+void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha,
+                     bool previewWanted) {
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -238,25 +255,44 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
 
   auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
 
-  // One frame (and one readback) per distinct output size this tick (spec §4.3).
-  struct Variant {
-    TextureRef tex;
-    std::shared_ptr<const CpuImage> cpu;
-  };
-  std::map<std::pair<uint32_t, uint32_t>, Variant> variants;
-  auto variant = [&](const OutputConfig& c, bool needsCpu) -> Variant& {
-    const uint32_t w = c.width > 0 ? static_cast<uint32_t>(c.width) : frame->width;
-    const uint32_t h = c.height > 0 ? static_cast<uint32_t>(c.height) : frame->height;
-    auto& v = variants[{w, h}];
-    if (!v.tex) v.tex = (w == frame->width && h == frame->height) ? frame : tools_.conv.fit(*frame, w, h);
-    if (needsCpu && !v.cpu) v.cpu = std::make_shared<CpuImage>(tools_.conv.readback(*tools_.conv.toBgra8(*v.tex, w, h)));
-    return v;
-  };
+  // One frame per camera per tick — the composited frame's size (spec §4.3). There is no
+  // per-output size and no fit. The readback is asynchronous: finish the previous copy if the
+  // GPU is done, start this tick's copy, and hand every CPU output the newest *completed*
+  // image (one tick behind at most). The tick never maps the frame. Run once per tick, so two
+  // CPU outputs and the frame tap all get the *same* image, not one a tick apart.
+  bool anyCpu = false;
+  for (auto& s : outputs_) {
+    if (s.out && s.out->needsCpu()) {
+      anyCpu = true;
+      break;
+    }
+  }
+  std::shared_ptr<const CpuImage> cpu;
+  if (anyCpu || previewWanted) {
+    if (!readback_) readback_.emplace();
+    // tryFinish before begin: the slot's previous copy finishes first, then this tick's begins.
+    // A begin while pending would discard the unfinished frame.
+    CpuImage done;
+    if (readback_->slot.tryFinish(tools_.conv, done)) readback_->image = std::make_shared<CpuImage>(std::move(done));
+    if (!readback_->slot.pending())
+      readback_->slot.begin(tools_.conv, *tools_.conv.toBgra8(*frame, frame->width, frame->height));
+    // A resolution change leaves the slot holding the previous size's completed image. Drop it so
+    // the old size is never published while the first new-size copy is in flight (spec §4.3).
+    if (readback_->image && (readback_->image->width != frame->width || readback_->image->height != frame->height))
+      readback_->image.reset();
+    cpu = readback_->image;  // may be null on the first ticks: never a synthetic frame
+  } else {
+    // No CPU consumer this tick (neither a CPU output nor a visible preview): release the slot
+    // and the cached image, so a reconfigured or removed consumer holds and reads back nothing.
+    readback_.reset();
+  }
+  tickCpu_ = cpu;
+
   for (auto& s : outputs_) {
     if (!s.out) continue;
+    const std::shared_ptr<const CpuImage> outCpu = s.out->needsCpu() ? cpu : nullptr;
     if (!s.cfg.halfRate) {
-      auto& v = variant(s.cfg, s.out->needsCpu());
-      s.out->submit(OutFrame{index, sched.rate(), v.tex, v.cpu, audio, 48000, 2, hasAlpha});
+      s.out->submit(OutFrame{index, sched.rate(), frame, outCpu, audio, 48000, 2, hasAlpha});
       continue;
     }
     // Half rate: even ticks only, carrying the odd tick's audio so nothing is lost.
@@ -267,9 +303,8 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
     auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
     s.carryAudio.clear();
     both->insert(both->end(), audio->begin(), audio->end());
-    auto& v = variant(s.cfg, s.out->needsCpu());
     const Rate half{sched.rate().num, sched.rate().den * 2};
-    s.out->submit(OutFrame{index / 2, half, v.tex, v.cpu, both, 48000, 2, hasAlpha});
+    s.out->submit(OutFrame{index / 2, half, frame, outCpu, both, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);

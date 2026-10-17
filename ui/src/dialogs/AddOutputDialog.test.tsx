@@ -4,7 +4,7 @@ import { EngineClient } from '../api/client';
 import { FakeWs } from '../test/fakeWs';
 import { AddOutputDialog } from './AddOutputDialog';
 
-test('an SRT output sends its connection and bitrate, and the format', () => {
+test('an SRT output sends its connection, bitrate and rate', () => {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
   c.connect();
@@ -13,12 +13,58 @@ test('an SRT output sends its connection and bitrate, and the format', () => {
   fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'srt' } });
   fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'listener' } });
   fireEvent.change(screen.getByLabelText('Port'), { target: { value: '9300' } });
-  fireEvent.change(screen.getByLabelText('Resolution'), { target: { value: '1280x720' } });
+  fireEvent.change(screen.getByLabelText('Frame rate'), { target: { value: 'half' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
   expect(add.args.output.kind).toBe('srt');
   expect(add.args.output.params).toMatchObject({ mode: 'listener', port: 9300, bitrateKbps: 8000 });
-  expect(add.args.output.format).toEqual({ width: 1280, height: 720, halfRate: false });
+  expect(add.args.output.format).toEqual({ halfRate: true });
+});
+
+test('an OMT output offers a mode and sends its mode and name', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  expect(screen.getByLabelText('Mode')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output).toMatchObject({
+    kind: 'omt',
+    params: { mode: 'hx', name: 'BreadCamera - A' },
+    format: { halfRate: false },
+  });
+  expect(add.args.output.params.codec).toBe('hevc');  // the default codec is sent for OMT-HX
+});
+
+test('an OMT-HX output offers a codec and sends the one chosen', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  expect(screen.getByLabelText('Codec')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Codec'), { target: { value: 'h264' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params).toMatchObject({ mode: 'hx', codec: 'h264', name: 'BreadCamera - A' });
+});
+
+test('a plain OMT output hides the codec and sends no codec', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'full' } });
+  expect(screen.queryByLabelText('Codec')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params.codec).toBeUndefined();
 });
 
 test('a virtual camera output picks the first free number and has no format choice', () => {
@@ -36,5 +82,5 @@ test('a virtual camera output picks the first free number and has no format choi
   expect(screen.queryByLabelText('Resolution')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
-  expect(add.args.output).toMatchObject({ kind: 'vcam', params: { index: 2 }, format: { width: 0, height: 0, halfRate: false } });
+  expect(add.args.output).toMatchObject({ kind: 'vcam', params: { index: 2 }, format: { halfRate: false } });
 });

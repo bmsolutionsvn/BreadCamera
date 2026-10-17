@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "core/utf8.h"
+#include "io/dshow_capture_input.h"
 #include "io/ffmpeg_input.h"
 #include "io/fullscreen_output.h"
 #include "io/mf_capture_input.h"
@@ -27,6 +28,9 @@
 #if BC_WITH_VCAM
 #include "io/vcam_output.h"
 #endif
+#if BC_WITH_LIVECALL
+#include "io/breadcall_input.h"
+#endif
 
 namespace bc {
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
@@ -45,8 +49,12 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
   if (cfg.kind == "uvc") {
     if (!cfg.params.contains("device") || !cfg.params["device"].is_string())
       throw std::invalid_argument("device is required");
-    return std::make_unique<MfCaptureInput>(gpu_, pool_, cfg.params["device"].get<std::string>(), cfg.params.value("width", 0),
-                                            cfg.params.value("height", 0), cfg.params.value("fps", 0));
+    const std::string device = cfg.params["device"].get<std::string>();
+    // A DirectShow-only camera (OBS Virtual Camera) is listed as "dshow:<display name>";
+    // everything else stays on the Media Foundation path.
+    if (device.rfind("dshow:", 0) == 0) return std::make_unique<DShowCaptureInput>(gpu_, pool_, device.substr(6));
+    return std::make_unique<MfCaptureInput>(gpu_, pool_, device, cfg.params.value("width", 0), cfg.params.value("height", 0),
+                                            cfg.params.value("fps", 0));
   }
   if (cfg.kind == "decklink") {
 #if BC_WITH_DECKLINK
@@ -60,6 +68,22 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
     return std::make_unique<AjaInput>(gpu_, pool_, cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>());
 #else
     throw std::invalid_argument("AJA support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "breadcall") {
+    // showFromJson does not run validateInput, so a hand-edited show file must be guarded
+    // here too (same rule as NDI above): non-string url or token is refused.
+    if (!cfg.params.contains("url") || !cfg.params["url"].is_string())
+      throw std::invalid_argument("BreadCall room URL is required");
+    if (!cfg.params.contains("token") || !cfg.params["token"].is_string())
+      throw std::invalid_argument("BreadCall token is required");
+    if (!cfg.params.contains("slot") || !cfg.params["slot"].is_number_integer())
+      throw std::invalid_argument("BreadCall slot is required (a whole number)");
+#if BC_WITH_LIVECALL
+    return std::make_unique<BreadCallInput>(gpu_, pool_, cfg.params["url"].get<std::string>(),
+                                            cfg.params["token"].get<std::string>(), cfg.params.at("slot").get<int>());
+#else
+    throw std::invalid_argument("BreadCall support is not built in this build");
 #endif
   }
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");
@@ -94,11 +118,16 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
       throw std::invalid_argument("OMT mode must be text");
     if (cfg.params.contains("name") && !cfg.params["name"].is_string())
       throw std::invalid_argument("OMT name must be text");
+    // Same rule as CommandRouter::validateOutput: a hand-edited show file with a
+    // non-string codec is rejected here too; the value is ignored for plain OMT (full).
+    if (cfg.params.contains("codec") && !cfg.params["codec"].is_string())
+      throw std::invalid_argument("OMT codec must be text");
 #if BC_WITH_OMT
     const std::string mode = cfg.params.value("mode", std::string("hx"));
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
     if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
-    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx);
+    const auto codec = cfg.params.value("codec", std::string("hevc")) == "h264" ? omthx::Codec::H264 : omthx::Codec::Hevc;
+    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec);
 #else
     (void)cam;
     throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");

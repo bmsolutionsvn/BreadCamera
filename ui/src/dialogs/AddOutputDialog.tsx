@@ -28,17 +28,19 @@ interface AjaDevice {
   name: string;
 }
 
-type Kind = 'ndi' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
-
-const SIZES: Record<string, [number, number]> = { same: [0, 0], '1280x720': [1280, 720], '960x540': [960, 540] };
+type Kind = 'ndi' | 'omt' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
 
 const FIXED_FORMAT_NOTE = 'SDI and the virtual camera use a fixed format: 1080p at the show rate (SDI), 1080p30 (virtual camera).';
 
-// Output format per spec §4.3: same as show or smaller; same rate or half. M4b adds the SDI and
-// virtual-camera kinds, whose format is fixed by the hardware and not offered here.
+// Output format per spec §4.3: one frame size per camera (the show size); only the rate is a
+// per-output choice (same or half). M4b adds the SDI and virtual-camera kinds, whose format and
+// rate are fixed by the hardware and not offered here.
 export function AddOutputDialog({ client, camera, n, onClose }: { client: EngineClient; camera: { id: string; name: string }; n: number; onClose: () => void }) {
   const [kind, setKind] = useState<Kind>('ndi');
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
+  const [omtMode, setOmtMode] = useState<'hx' | 'full'>('hx');
+  const [omtCodec, setOmtCodec] = useState<'hevc' | 'h264'>('hevc');
+  const [omtName, setOmtName] = useState(`BreadCamera - ${camera.name}`);
   const [srtMode, setSrtMode] = useState<'caller' | 'listener'>('caller');
   const [srtHost, setSrtHost] = useState('');
   const [srtPort, setSrtPort] = useState('9000');
@@ -54,7 +56,6 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   const [ajaDevice, setAjaDevice] = useState('');
   const [ajaChannel, setAjaChannel] = useState(1);
   const [vcamIndex, setVcamIndex] = useState(1);
-  const [size, setSize] = useState('same');
   const [rate, setRate] = useState<'same' | 'half'>('same');
   const [serverError, setServerError] = useState('');
 
@@ -98,6 +99,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   async function submit() {
     let params: Record<string, unknown>;
     if (kind === 'ndi') params = { name: ndiName };
+    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, name: omtName } : { mode: omtMode, name: omtName };
     else if (kind === 'srt') {
       params = { mode: srtMode, port: srtPortNum, latencyMs: Number(srtLatency) || 120, bitrateKbps: Number(bitrate) || 8000 };
       if (srtMode === 'caller' && srtHost) params.host = srtHost;
@@ -106,10 +108,9 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
     else if (kind === 'aja') params = { device: Number(ajaDevice), channel: ajaChannel };
     else if (kind === 'vcam') params = { index: vcamIndex };
     else params = { monitor };
-    const [width, height] = fixed ? [0, 0] : SIZES[size];
     const keyed = kind === 'decklink' ? decklinkKeyed : false;
     try {
-      await client.request('addOutput', { cameraId: camera.id, output: { kind, keyed, params, format: { width, height, halfRate: rate === 'half' } } });
+      await client.request('addOutput', { cameraId: camera.id, output: { kind, keyed, params, format: { halfRate: rate === 'half' } } });
       onClose();
     } catch (e) {
       setServerError(e instanceof Error ? e.message : String(e));
@@ -137,6 +138,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
         {(id) => (
           <select id={id} className="ctl" value={kind} onChange={(e) => chooseKind(e.target.value as Kind)}>
             <option value="ndi">NDI</option>
+            <option value="omt">OMT (Open Media Transport)</option>
             <option value="srt">SRT (H.264 over SRT)</option>
             <option value="fullscreen">Fullscreen on a monitor</option>
             <option value="decklink">DeckLink SDI</option>
@@ -146,6 +148,31 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
         )}
       </Prop>
       {kind === 'ndi' && <Prop label="NDI source name">{(id) => <input id={id} className="ctl" value={ndiName} onChange={(e) => setNdiName(e.target.value)} />}</Prop>}
+      {kind === 'omt' && (
+        <>
+          <Prop label="Mode">
+            {(id) => (
+              <select id={id} className="ctl" value={omtMode} onChange={(e) => setOmtMode(e.target.value as 'hx' | 'full')}>
+                <option value="hx">OMT-HX (HEVC or H.264)</option>
+                <option value="full">OMT (plain, VMX)</option>
+              </select>
+            )}
+          </Prop>
+          {omtMode === 'hx' && (
+            <Prop label="Codec">
+              {(id) => (
+                <select id={id} className="ctl" value={omtCodec} onChange={(e) => setOmtCodec(e.target.value as 'hevc' | 'h264')}>
+                  <option value="hevc">HEVC (H.265)</option>
+                  <option value="h264">H.264</option>
+                </select>
+              )}
+            </Prop>
+          )}
+          <Prop label="Name">
+            {(id) => <input id={id} className="ctl" value={omtName} onChange={(e) => setOmtName(e.target.value)} />}
+          </Prop>
+        </>
+      )}
       {kind === 'srt' && (
         <>
           <Prop label="Mode">
@@ -263,25 +290,14 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
       {fixed ? (
         <div className="hint">{FIXED_FORMAT_NOTE}</div>
       ) : (
-        <>
-          <Prop label="Resolution">
-            {(id) => (
-              <select id={id} className="ctl" value={size} onChange={(e) => setSize(e.target.value)}>
-                <option value="same">Same as show</option>
-                <option value="1280x720">1280×720</option>
-                <option value="960x540">960×540</option>
-              </select>
-            )}
-          </Prop>
-          <Prop label="Frame rate" hint="Half sends every second frame. Other rates are not offered because converting them judders.">
-            {(id) => (
-              <select id={id} className="ctl" value={rate} onChange={(e) => setRate(e.target.value as 'same' | 'half')}>
-                <option value="same">Same as show</option>
-                <option value="half">Half rate</option>
-              </select>
-            )}
-          </Prop>
-        </>
+        <Prop label="Frame rate" hint="Half sends every second frame. Other rates are not offered because converting them judders.">
+          {(id) => (
+            <select id={id} className="ctl" value={rate} onChange={(e) => setRate(e.target.value as 'same' | 'half')}>
+              <option value="same">Same as show</option>
+              <option value="half">Half rate</option>
+            </select>
+          )}
+        </Prop>
       )}
     </Modal>
   );

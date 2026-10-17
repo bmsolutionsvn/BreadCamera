@@ -177,21 +177,30 @@ TEST_CASE("CommandRouter: preview commands reach the effects, bad arguments do n
   CHECK(fx.keyIds.size() == 1);  // failures never fire an effect
 }
 
-TEST_CASE("CommandRouter: show resolution and output format are validated") {
+TEST_CASE("CommandRouter: a legacy show resolution is ignored, and an output size is ignored") {
   FakeFx fx;
   bc::CommandRouter r(bc::Show{}, fx);
-  REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
-  CHECK(r.show().settings.width == 1280);
-  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["error"]["code"] == "invalid");
+  // A legacy resolution is ignored, not validated: there is no show-wide size any more (D3).
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "1280x720"}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"resolution", "4k"}}}})["ok"] == true);
   auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
   auto ok = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 960}, {"height", 540}, {"halfRate", true}}}}}}}});
   REQUIRE(ok["ok"] == true);
-  auto& o = r.show().cameras[0].outputs[0];
-  CHECK(o.width == 960);
-  CHECK(o.halfRate);
-  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["error"]["code"] == "invalid");
+  CHECK(r.show().cameras[0].outputs[0].halfRate);
+  // A legacy per-output size is ignored, not rejected (one frame size per camera).
+  CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "ndi"}, {"format", {{"width", 1000}, {"height", 500}}}}}}}})["ok"] == true);
   REQUIRE(call(r, {{"cmd", "updateOutput"}, {"args", {{"cameraId", cam}, {"id", ok["result"]["id"]}, {"format", {{"width", 0}, {"height", 0}, {"halfRate", false}}}}}})["ok"] == true);
-  CHECK(r.show().cameras[0].outputs[0].width == 0);
+  CHECK_FALSE(r.show().cameras[0].outputs[0].halfRate);
+}
+
+TEST_CASE("validateOutput ignores a per-output size") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
+  // A fixed-format output (the virtual camera) used to refuse any per-output size; a legacy
+  // size is now ignored, not an error (one frame size per camera).
+  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(add["ok"] == true);
 }
 
 TEST_CASE("CommandRouter: names are counted in characters, not bytes") {
@@ -309,12 +318,51 @@ TEST_CASE("CommandRouter: card and virtual camera kinds") {
   CHECK(call(r, {{"cmd", "listAjaDevices"}})["result"].size() == 1);
 }
 
-TEST_CASE("CommandRouter: SDI and virtual camera outputs refuse a format override") {
+TEST_CASE("CommandRouter: breadcall input validates the room URL, token and slot") {
+  // C1: a BreadCall guest slot is one camera. Validation is compile-independent, so this
+  // passes with BC_WITH_LIVECALL on or off.
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto addCam = [&](json input) { return call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", input}}}}); };
+  const json ok = {{"kind", "breadcall"},
+                   {"params", {{"url", "wss://livekit.example.com"}, {"token", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.sig"}, {"slot", 2}}}};
+  CHECK(addCam(ok)["ok"] == true);
+  REQUIRE(r.show().cameras.size() == 1);
+  CHECK(r.show().cameras[0].input.params["slot"] == 2);
+
+  json badSlot = ok;
+  badSlot["params"]["slot"] = 9;
+  auto res = addCam(badSlot);
+  CHECK(res["error"]["code"] == "invalid");
+  CHECK(res["error"]["message"].get<std::string>().find("slot") != std::string::npos);
+
+  json noToken = ok;
+  noToken["params"].erase("token");
+  auto res2 = addCam(noToken);
+  CHECK(res2["error"]["code"] == "invalid");
+  CHECK(res2["error"]["message"].get<std::string>().find("token") != std::string::npos);
+
+  json textSlot = ok;
+  textSlot["params"]["slot"] = "2";
+  CHECK(addCam(textSlot)["error"]["code"] == "invalid");
+
+  json noUrl = ok;
+  noUrl["params"].erase("url");
+  CHECK(addCam(noUrl)["error"]["code"] == "invalid");
+
+  CHECK(r.show().cameras.size() == 1);  // only the valid one was added
+}
+
+TEST_CASE("CommandRouter: SDI and virtual camera outputs ignore a size but refuse half rate") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);
   auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "C"}, {"input", kSrt}}}})["result"]["id"];
-  auto add = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
-  CHECK(add["error"]["code"] == "invalid");
+  // A per-output size is ignored (one frame size per camera)...
+  auto sized = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 1}}}, {"format", {{"width", 1280}, {"height", 720}, {"halfRate", false}}}}}}}});
+  CHECK(sized["ok"] == true);
+  // ...but half rate is still refused: the fixed-format outputs have a fixed rate.
+  auto half = call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", cam}, {"output", {{"kind", "vcam"}, {"params", {{"index", 2}}}, {"format", {{"halfRate", true}}}}}}}});
+  CHECK(half["error"]["code"] == "invalid");
 }
 
 TEST_CASE("output kind omt validates its params") {
@@ -328,4 +376,62 @@ TEST_CASE("output kind omt validates its params") {
   CHECK_THROWS_AS(
       bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"name", 5}}}),
       std::invalid_argument);
+  // An hx output picks HEVC or H.264; anything else is refused.
+  CHECK_NOTHROW(bc::validateOutput(
+      bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}, {"codec", "h264"}}}));
+  CHECK_THROWS_WITH_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}, {"codec", "vp9"}}}),
+      "OMT codec must be 'hevc' or 'h264'", std::invalid_argument);
+  CHECK_THROWS_AS(
+      bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"codec", 5}}}),
+      std::invalid_argument);
+  // Plain OMT (full) is codec-less, but a codec on a full output is accepted and ignored.
+  CHECK_NOTHROW(bc::validateOutput(
+      bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"codec", "h264"}}}));
+}
+
+TEST_CASE("CommandRouter: a capture device cannot belong to two cameras") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto addCam = [&](std::string name, json input) {
+    return call(r, {{"cmd", "addCamera"}, {"args", {{"name", name}, {"input", input}}}});
+  };
+  const json camLink = {{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}};
+  auto a = addCam("Camera A", camLink)["result"]["id"];
+  auto dup = addCam("Camera B", camLink);
+  CHECK(dup["error"]["code"] == "invalid");
+  CHECK(dup["error"]["message"].get<std::string>().find("Camera A") != std::string::npos);
+  CHECK(r.show().cameras.size() == 1);
+  auto b = addCam("Camera B", {{"kind", "uvc"}, {"params", {{"device", "FaceTime HD"}}}})["result"]["id"];
+  REQUIRE(r.show().cameras.size() == 2);
+  CHECK(addCam("Camera C", kSrt)["ok"] == true);
+  auto move = call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"input", camLink}}}});
+  CHECK(move["error"]["code"] == "invalid");
+  CHECK(move["error"]["message"].get<std::string>().find("Camera A") != std::string::npos);
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"input", {{"kind", "uvc"}, {"params", {{"device", "FaceTime HD"}}}}}}}})["ok"] == true);
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", b}, {"name", "Renamed"}}}})["ok"] == true);
+}
+
+TEST_CASE("CommandRouter: a hand-edited show can rename a camera that shares a device") {
+  bc::CameraConfig a;
+  a.id = "a";
+  a.name = "Camera A";
+  a.input.kind = "uvc";
+  a.input.params = {{"device", "Cam Link 4K"}};
+  bc::CameraConfig b;
+  b.id = "b";
+  b.name = "Camera B";
+  b.input.kind = "uvc";
+  b.input.params = {{"device", "Cam Link 4K"}};
+  bc::Show show;
+  show.cameras.push_back(a);
+  show.cameras.push_back(b);
+  FakeFx fx;
+  bc::CommandRouter r(std::move(show), fx);
+  // The hand-edited show already holds two cameras on one device; a rename must still work.
+  CHECK(call(r, {{"cmd", "updateCamera"}, {"args", {{"id", "b"}, {"name", "Renamed"}}}})["ok"] == true);
+  CHECK(r.show().cameras[1].name == "Renamed");
+  // Renaming b and moving it onto the other camera's device is still refused.
+  auto move = call(r, {{"cmd", "updateCamera"}, {"args", {{"id", "b"}, {"name", "Renamed again"}, {"input", {{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}}}}}});
+  CHECK(move["error"]["code"] == "invalid");
 }

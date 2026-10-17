@@ -35,40 +35,55 @@ void SrtOutput::open() {
 }
 
 void SrtOutput::openEncoders(const OutFrame& f) {
+  // Called for the first frame and again when the frame size changes (a mid-show input
+  // renegotiation, spec D6).  The connection, the muxer header and the audio chain carry
+  // over; only the video encoder and its frame are rebuilt at the new size, and the
+  // existing stream's parameters are refreshed so the muxer follows the geometry.
   encW_ = static_cast<int>(f.bgra->width) & ~1;  // H.264 4:2:0 needs even sizes
   encH_ = static_cast<int>(f.bgra->height) & ~1;
+  avcodec_free_context(&venc_);
+  av_frame_free(&vframe_);
+  sws_freeContext(sws_);
+  sws_ = nullptr;
+  swsW_ = swsH_ = 0;
+
   auto v = openH264Encoder(encW_, encH_, f.rate.num, f.rate.den, int64_t{opts_.bitrateKbps} * 1000,
                            f.rate.num / f.rate.den, false);
   venc_ = v.ctx;
-  vst_ = avformat_new_stream(fmt_, nullptr);
+  if (!vst_) vst_ = avformat_new_stream(fmt_, nullptr);
   avcodec_parameters_from_context(vst_->codecpar, venc_);
   vst_->time_base = venc_->time_base;
 
-  const AVCodec* ac = avcodec_find_encoder(AV_CODEC_ID_AAC);
-  aenc_ = avcodec_alloc_context3(ac);
-  aenc_->sample_rate = 48000;
-  aenc_->sample_fmt = AV_SAMPLE_FMT_FLTP;
-  av_channel_layout_default(&aenc_->ch_layout, 2);
-  aenc_->bit_rate = 160000;
-  aenc_->time_base = {1, 48000};
-  check(avcodec_open2(aenc_, ac, nullptr), "aac encoder");
-  ast_ = avformat_new_stream(fmt_, nullptr);
-  avcodec_parameters_from_context(ast_->codecpar, aenc_);
-  ast_->time_base = aenc_->time_base;
+  if (!aenc_) {
+    const AVCodec* ac = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    aenc_ = avcodec_alloc_context3(ac);
+    aenc_->sample_rate = 48000;
+    aenc_->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    av_channel_layout_default(&aenc_->ch_layout, 2);
+    aenc_->bit_rate = 160000;
+    aenc_->time_base = {1, 48000};
+    check(avcodec_open2(aenc_, ac, nullptr), "aac encoder");
+    ast_ = avformat_new_stream(fmt_, nullptr);
+    avcodec_parameters_from_context(ast_->codecpar, aenc_);
+    ast_->time_base = aenc_->time_base;
+
+    aframe_ = av_frame_alloc();
+    aframe_->format = AV_SAMPLE_FMT_FLTP;
+    av_channel_layout_copy(&aframe_->ch_layout, &aenc_->ch_layout);
+    aframe_->sample_rate = 48000;
+    aframe_->nb_samples = aenc_->frame_size;  // 1024
+    check(av_frame_get_buffer(aframe_, 0), "audio frame");
+  }
 
   vframe_ = av_frame_alloc();
   vframe_->format = AV_PIX_FMT_NV12;
   vframe_->width = encW_;
   vframe_->height = encH_;
   check(av_frame_get_buffer(vframe_, 0), "video frame");
-  aframe_ = av_frame_alloc();
-  aframe_->format = AV_SAMPLE_FMT_FLTP;
-  av_channel_layout_copy(&aframe_->ch_layout, &aenc_->ch_layout);
-  aframe_->sample_rate = 48000;
-  aframe_->nb_samples = aenc_->frame_size;  // 1024
-  check(av_frame_get_buffer(aframe_, 0), "audio frame");
-  check(avformat_write_header(fmt_, nullptr), "mpegts header");
-  headerWritten_ = true;
+  if (!headerWritten_) {
+    check(avformat_write_header(fmt_, nullptr), "mpegts header");
+    headerWritten_ = true;
+  }
 }
 
 void SrtOutput::writePacket(AVCodecContext* c, AVStream* st) {
@@ -87,7 +102,9 @@ void SrtOutput::writePacket(AVCodecContext* c, AVStream* st) {
 
 void SrtOutput::deliver(const OutFrame& f) {
   if (!f.bgra || f.bgra->bgra.empty()) return;
-  if (!venc_) openEncoders(f);
+  const int w = static_cast<int>(f.bgra->width) & ~1;
+  const int h = static_cast<int>(f.bgra->height) & ~1;
+  if (!venc_ || w != encW_ || h != encH_) openEncoders(f);  // first frame, or the size changed
   if (!sws_ || swsW_ != f.bgra->width || swsH_ != f.bgra->height) {
     sws_ = sws_getCachedContext(sws_, static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA,
                                 encW_, encH_, AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr, nullptr, nullptr);

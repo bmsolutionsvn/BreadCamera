@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { EngineClient } from '../api/client';
+import { useEngine } from '../api/useEngine';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -8,7 +9,7 @@ import { Prop } from '../components/Prop';
 
 const chars = (s: string) => [...s].length;
 
-type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja';
+type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja' | 'breadcall';
 
 interface DeckLinkDevice {
   index: number;
@@ -42,7 +43,14 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const [ajaDevices, setAjaDevices] = useState<AjaDevice[]>([]);
   const [ajaDevice, setAjaDevice] = useState('');
   const [ajaChannel, setAjaChannel] = useState(1);
+  const [roomUrl, setRoomUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [slot, setSlot] = useState(1);
   const [serverError, setServerError] = useState('');
+  const snap = useEngine(client);
+  const usedBy = new Map<string, string>();
+  for (const c of snap.show?.cameras ?? [])
+    if (c.input.kind === 'uvc' && c.input.params.device) usedBy.set(String(c.input.params.device), c.name);
 
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
   const refreshDevices = () =>
@@ -68,6 +76,8 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
     device: kind === 'uvc' && !device ? 'Choose a device' : '',
     decklinkDevice: kind === 'decklink' && !decklinkDevice ? 'Choose a card' : '',
     aja: kind === 'aja' && !ajaDevice ? 'Choose a card' : '',
+    breadcallUrl: kind === 'breadcall' && (roomUrl.trim().length < 1 || roomUrl.length > 512) ? 'Room URL is 1 to 512 characters' : '',
+    breadcallToken: kind === 'breadcall' && (token.trim().length < 1 || token.length > 2048) ? 'Token is 1 to 2048 characters' : '',
   };
   const valid = Object.values(errors).every((e) => !e);
 
@@ -93,7 +103,9 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             ? { kind: 'decklink', params: { device: Number(decklinkDevice) } }
             : kind === 'aja'
               ? { kind: 'aja', params: { device: Number(ajaDevice), channel: ajaChannel } }
-              : { kind: 'srt', params: srtParams() };
+              : kind === 'breadcall'
+                ? { kind: 'breadcall', params: { url: roomUrl.trim(), token: token.trim(), slot } }
+                : { kind: 'srt', params: srtParams() };
     try {
       await client.request('addCamera', { name: name.trim(), input });
       onClose();
@@ -125,11 +137,12 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
       <Prop label="Input type">
         {(id) => (
           <select id={id} className="ctl" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            <option value="srt">SRT (BreadCall feeds, encoders)</option>
+            <option value="srt">SRT</option>
             <option value="ndi">NDI</option>
-            <option value="uvc">USB or built-in camera</option>
+            <option value="uvc">Device camera</option>
             <option value="decklink">DeckLink (SDI/HDMI)</option>
             <option value="aja">AJA (experimental)</option>
+            <option value="breadcall">BreadCall Room</option>
           </select>
         )}
       </Prop>
@@ -153,14 +166,14 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
         </Prop>
       )}
       {kind === 'uvc' && (
-        <Prop label="Device" hint={errors.device || 'USB and built-in cameras are video only, no audio.'}>
+        <Prop label="Device" hint={errors.device || 'Device cameras are video only, no audio.'}>
           {(id) => (
             <div className="row-btns">
               <select id={id} className="ctl" value={device} onChange={(e) => setDevice(e.target.value)}>
                 <option value="">Choose a device…</option>
                 {devices.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
+                  <option key={d.id} value={d.id} disabled={usedBy.has(d.id)}>
+                    {usedBy.has(d.id) ? d.name + ' (Already used by ' + usedBy.get(d.id) + ')' : d.name}
                   </option>
                 ))}
               </select>
@@ -223,6 +236,27 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
             )}
           </Prop>
           <ErrorBlock severity="warning" message="Experimental — not verified on hardware" />
+        </>
+      )}
+      {kind === 'breadcall' && (
+        <>
+          <Prop label="Room URL" hint={errors.breadcallUrl || 'The LiveKit room URL from BreadCall.'}>
+            {(id) => <input id={id} className="ctl mono" value={roomUrl} placeholder="wss://…" onChange={(e) => setRoomUrl(e.target.value)} />}
+          </Prop>
+          <Prop label="Token" hint={errors.breadcallToken || 'The receiver token BreadCall minted for this slot.'}>
+            {(id) => <input id={id} className="ctl mono" value={token} onChange={(e) => setToken(e.target.value)} />}
+          </Prop>
+          <Prop label="Slot" hint="The guest slot this camera subscribes to.">
+            {(id) => (
+              <select id={id} className="ctl" value={slot} onChange={(e) => setSlot(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Prop>
         </>
       )}
       {kind === 'srt' && (

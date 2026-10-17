@@ -20,7 +20,7 @@ const STRIP = 29;
 const GAP = 3;
 
 // Tiles keep 16:9 and the whole wall fits the area (docs/design/multiview.md §6).
-export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, layout, onLayout, offline }: {
+export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, focused, onFocus, layout, onLayout, offline }: {
   client: EngineClient;
   cameras: CameraConfig[];
   state: StateTree;
@@ -30,22 +30,28 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
   now: number;
   selected: string | null;
   onSelect: (id: string) => void;
+  focused: string | null;
+  onFocus: (id: string | null) => void;
   layout: Layout;
   onLayout: (l: Layout) => void;
   offline: boolean;
 }) {
   const area = useRef<HTMLDivElement>(null);
   const [tileW, setTileW] = useState(320);
-  const [cols, rows] = gridOf(layout, cameras.length);
+  const focusedIndex = cameras.findIndex((c) => c.id === focused);
+  const focusedCam = focusedIndex >= 0 ? cameras[focusedIndex] : undefined;
+  const [cols, rows] = focusedCam ? [1, 1] : gridOf(layout, cameras.length);
   const ids = useMemo(() => cameras.map((c) => c.id), [cameras]);
+  const subIds = useMemo(() => (focusedCam ? [focusedCam.id] : ids), [focusedCam, ids]);
 
   useEffect(() => {
-    // Only stream previews while the window is visible (spec §6.3).
-    const sync = () => client.setPreviewSubscription(document.visibilityState === 'hidden' ? [] : ids, 'small');
+    // Only stream previews while the window is visible (spec §6.3). While focused, the one
+    // camera stays subscribed and every other camera stops streaming.
+    const sync = () => client.setPreviewSubscription(document.visibilityState === 'hidden' ? [] : subIds, 'small');
     sync();
     document.addEventListener('visibilitychange', sync);
     return () => document.removeEventListener('visibilitychange', sync);
-  }, [client, ids]);
+  }, [client, subIds]);
 
   useLayoutEffect(() => {
     const el = area.current;
@@ -76,14 +82,20 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
         <b>Multiview</b>
         <span>{cameras.length} cameras</span>
         <span className="right">
-          Layout
-          <span className="seg" role="radiogroup" aria-label="Layout">
-            {(['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => (
-              <button key={l} role="radio" aria-checked={layout === l} className={layout === l ? 'on' : ''} onClick={() => onLayout(l)}>
-                {l === 'auto' ? 'Auto' : l.replace('x', '×')}
-              </button>
-            ))}
-          </span>
+          {focusedCam ? (
+            <button className="tb" onClick={() => onFocus(null)}>Grid</button>
+          ) : (
+            <>
+              Layout
+              <span className="seg" role="radiogroup" aria-label="Layout">
+                {(['auto', '2x2', '3x2', '4x2'] as Layout[]).map((l) => (
+                  <button key={l} role="radio" aria-checked={layout === l} className={layout === l ? 'on' : ''} onClick={() => onLayout(l)}>
+                    {l === 'auto' ? 'Auto' : l.replace('x', '×')}
+                  </button>
+                ))}
+              </span>
+            </>
+          )}
         </span>
       </div>
       <div className="wall-wrap">
@@ -110,23 +122,44 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
           </div>
         ) : (
           <div className="wall-area" ref={area}>
-            <div className="wall" role="listbox" aria-label="Multiview" tabIndex={0} onKeyDown={onKey} style={{ gridTemplateColumns: `repeat(${cols}, ${tileW}px)` }}>
-              {cameras.map((cfg, i) => (
+            {focusedCam ? (
+              <div className="wall focus">
                 <div
-                  key={cfg.id}
                   role="option"
-                  aria-selected={selected === cfg.id}
-                  aria-label={`CAM ${i + 1} ${cfg.name}`}
-                  className={`tile${selected === cfg.id ? ' sel' : ''}`}
-                  onClick={() => onSelect(cfg.id)}
+                  aria-selected={selected === focusedCam.id}
+                  aria-label={`CAM ${focusedIndex + 1} ${focusedCam.name}`}
+                  className={`tile focus${selected === focusedCam.id ? ' sel' : ''}`}
+                  onClick={() => onFocus(null)}
+                  title="Click to return to the grid"
                 >
                   <div className="pic">
-                    <PreviewCanvas client={client} cameraId={cfg.id} />
+                    <PreviewCanvas client={client} cameraId={focusedCam.id} />
                   </div>
-                  <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} schemas={schemas} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
+                  <Strip n={focusedIndex + 1} cfg={focusedCam} cam={state.cameras?.[focusedCam.id]} schemas={schemas} marks={marks[focusedCam.id]} holdMs={holdMs} now={now} dense={false} offline={offline} />
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <div className="wall" role="listbox" aria-label="Multiview" tabIndex={0} onKeyDown={onKey} style={{ gridTemplateColumns: `repeat(${cols}, ${tileW}px)` }}>
+                {cameras.map((cfg, i) => (
+                  <div
+                    key={cfg.id}
+                    role="option"
+                    aria-selected={selected === cfg.id}
+                    aria-label={`CAM ${i + 1} ${cfg.name}`}
+                    className={`tile${selected === cfg.id ? ' sel' : ''}`}
+                    onClick={() => {
+                      onSelect(cfg.id);
+                      onFocus(cfg.id);
+                    }}
+                  >
+                    <div className="pic">
+                      <PreviewCanvas client={client} cameraId={cfg.id} />
+                    </div>
+                    <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} schemas={schemas} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

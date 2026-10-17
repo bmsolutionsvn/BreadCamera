@@ -83,6 +83,43 @@ TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRE
   CHECK(std::abs(a - 128) <= 20);
 }
 
+TEST_CASE("OmthOutput: an omt hx output sends H.264 when asked" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "BreadCamera OMT h264 " + std::to_string(GetCurrentProcessId());
+  bc::OmthOutput out(name, omthx::Mode::Hx, omthx::Codec::H264);
+  auto img = std::make_shared<bc::CpuImage>();
+  // 640x360 like the HEVC case: the hardware H.264 encoder (h264_nvenc) also refuses tiny pictures.
+  img->width = 640;
+  img->height = 360;
+  img->bgra.assign(640 * 360 * 4, 200);
+  out.start();
+  const bc::Rate rate{30, 1};
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    for (uint64_t t = 0; run; ++t) {
+      out.submit(frameWith(img, t, rate, false));
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+  std::string address;
+  for (int i = 0; i < 50 && address.empty(); ++i) {
+    address = out.address();
+    if (address.empty()) std::this_thread::sleep_for(100ms);
+  }
+  REQUIRE_FALSE(address.empty());
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  bool got = false;
+  for (int i = 0; i < 60 && !got; ++i) {
+    if (rx.receiveVideo(vf, 200)) got = vf.format.width == 640 && vf.format.height == 360;
+  }
+  const auto stats = rx.stats();
+  run = false;
+  feeder.join();
+  out.stop();
+  REQUIRE(got);
+  CHECK(stats.codec == omthx::Codec::H264);  // the receiver sees the H.264 source, not HEVC
+}
+
 TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRES(bc::test::Req::Omt)) {
   const std::string name = "BreadCamera OMT full " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput out(name, omthx::Mode::Full);

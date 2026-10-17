@@ -25,18 +25,29 @@ struct EngineStats {
   std::map<std::string, CameraStats> cameras;
 };
 
+// One camera's frame handed to the frame tap: its exported texture plus the shared CPU image
+// produced by the tick's one readback (null when no output needed CPU and no preview wanted it).
+struct FrameTap {
+  std::string id;
+  TextureRef tex;
+  std::shared_ptr<const CpuImage> cpu;
+};
+
 // Master tick + camera set (spec §3.3). apply() is thread-safe; adapters are torn down
 // outside the tick lock so a slow stop never stalls the tick.
 class Engine {
  public:
-  using FrameTap = std::function<void(uint64_t tick, const std::vector<std::pair<std::string, TextureRef>>& frames)>;
+  using FrameTapFn = std::function<void(uint64_t tick, const std::vector<FrameTap>& frames)>;
   Engine(GpuTools tools, StateStore& state, AdapterFactory& factory);
   ~Engine();
   void apply(const Show& show);
   void start();
   void stop();
   EngineStats stats() const;
-  void setFrameTap(FrameTap tap) { tap_ = std::move(tap); }
+  void setFrameTap(FrameTapFn tap) { tap_ = std::move(tap); }
+  // Consulted before each camera's second half: true when a visible preview wants this camera,
+  // so the tick's one readback runs even with no CPU output (D5). Call before start().
+  void setPreviewWanted(std::function<bool(const std::string&)> wanted) { previewWanted_ = std::move(wanted); }
   // The matte service; call before start(). A null backend with a reason bypasses every matte.
   void setMatteBackend(std::unique_ptr<MatteBackend> backend, std::string unavailableReason);
   // Captures each camera's frame *before* any stage runs (spec: "from the frame before any
@@ -70,10 +81,11 @@ class Engine {
   ShowSettings settings_;
   bool settingsApplied_ = false;
   bool rateChanged_ = true;
-  TextureRef slate_;
+  TextureRef slate_;  // slate *source*; each camera fits it to its own size when it has no picture
   std::vector<std::unique_ptr<Camera>> cameras_;
   std::map<std::string, std::string> lastPhase_;
-  FrameTap tap_;
+  FrameTapFn tap_;
+  std::function<bool(const std::string&)> previewWanted_;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> overruns_{0};
   std::thread thread_;

@@ -93,6 +93,17 @@ void checkVcamFree(const Show& show, const OutputConfig& o) {
       }
 }
 
+// A capture device belongs to one camera only, so the second camera that asks for the same
+// device is refused (spec §4.2). Needs the whole show, so it is not part of validateInput.
+void checkDeviceFree(const Show& show, const InputConfig& in, const std::string& selfCameraId) {
+  if (in.kind != "uvc") return;
+  const auto device = in.params.value("device", std::string());
+  for (auto& c : show.cameras)
+    if (c.id != selfCameraId && c.input.kind == "uvc" && c.input.params.value("device", std::string()) == device) {
+      throw CmdError("invalid", "device " + device + " is already used by camera " + c.name);
+    }
+}
+
 PreviewSize sizeArg(const json& args) {
   auto s = parsePreviewSize(args.value("size", std::string("small")));
   if (!s) throw CmdError("invalid", "size must be small or large");
@@ -101,10 +112,8 @@ PreviewSize sizeArg(const json& args) {
 
 void formatFrom(const json& f, OutputConfig& o) {
   if (!f.is_object()) throw CmdError("bad-request", "format must be an object");
-  o.width = f.value("width", 0);
-  o.height = f.value("height", 0);
+  // One frame size per camera: a legacy width/height is ignored, not validated (spec §4.3).
   o.halfRate = f.value("halfRate", false);
-  if (!isOutputSize(o.width, o.height)) throw CmdError("invalid", "output size must be same as show, 1280x720 or 960x540");
 }
 
 std::string strParam(const json& p, const char* key, size_t minLen, size_t maxLen, const char* what) {
@@ -154,6 +163,14 @@ void validateInput(const InputConfig& in) {
     intParam(in.params, "channel", 1, 8, "AJA channel");
     return;
   }
+  if (in.kind == "breadcall") {
+    // C1: one camera per enabled guest slot. Validation is compile-independent, so it holds
+    // whether or not BC_WITH_LIVECALL built the input (the factory reports the missing build).
+    strParam(in.params, "url", 1, 512, "BreadCall room URL");
+    strParam(in.params, "token", 1, 2048, "BreadCall token");
+    intParam(in.params, "slot", 1, 8, "BreadCall slot");
+    return;
+  }
   throw std::invalid_argument("unknown input kind '" + in.kind + "'");
 }
 
@@ -182,6 +199,13 @@ void validateOutput(const OutputConfig& o) {
       const auto m = o.params["mode"].get<std::string>();
       if (m != "hx" && m != "full") throw std::invalid_argument("OMT mode must be 'hx' or 'full'");
     }
+    // The codec picks Hx's video codec; plain OMT (full) is codec-less, so a codec on a full
+    // output is accepted and ignored, not rejected (spec A4.3).
+    if (o.params.contains("codec")) {
+      if (!o.params["codec"].is_string()) throw std::invalid_argument("OMT codec must be text");
+      const auto c = o.params["codec"].get<std::string>();
+      if (c != "hevc" && c != "h264") throw std::invalid_argument("OMT codec must be 'hevc' or 'h264'");
+    }
     if (o.params.contains("name")) {
       if (!o.params["name"].is_string()) throw std::invalid_argument("OMT name must be text");
       const auto n = o.params["name"].get<std::string>();
@@ -191,19 +215,19 @@ void validateOutput(const OutputConfig& o) {
   }
   if (o.kind == "decklink") {
     intParam(o.params, "device", 0, 15, "DeckLink card");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   if (o.kind == "aja") {
     intParam(o.params, "device", 0, 7, "AJA card");
     intParam(o.params, "channel", 1, 8, "AJA channel");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   if (o.kind == "vcam") {
     intParam(o.params, "index", 1, 4, "virtual camera number");
     if (o.params.contains("name")) strParam(o.params, "name", 1, 80, "virtual camera name");
-    if (o.width || o.height || o.halfRate) throw std::invalid_argument("this output type has a fixed format (spec §4.3)");
+    if (o.halfRate) throw std::invalid_argument("this output type has a fixed rate (spec §4.3)");
     return;
   }
   throw std::invalid_argument("unknown output kind '" + o.kind + "'");
@@ -331,12 +355,16 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     c.id = newId();
     c.name = name(args);
     c.input = inputFrom(obj(args, "input"));
+    checkDeviceFree(next, c.input, c.id);
     next.cameras.push_back(c);
     result = {{"id", c.id}};
   } else if (cmd == "updateCamera") {
     auto& c = findCam(str(args, "id"));
     if (args.contains("name")) c.name = name(args);
-    if (args.contains("input")) c.input = inputFrom(obj(args, "input"), c.input.params);
+    if (args.contains("input")) {
+      c.input = inputFrom(obj(args, "input"), c.input.params);
+      checkDeviceFree(next, c.input, c.id);  // only a (re)set can clash; a rename never does
+    }
   } else if (cmd == "removeCamera") {
     const auto camId = str(args, "id");
     findCam(camId);
@@ -413,12 +441,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
       if (!r) throw CmdError("invalid", "rate must be 50/1, 60000/1001 or 60/1");
       next.settings.rate = *r;
     }
-    if (args.contains("resolution")) {
-      auto res = parseShowResolution(str(args, "resolution"));
-      if (!res) throw CmdError("invalid", "resolution must be 1280x720 or 1920x1080");
-      next.settings.width = res->first;
-      next.settings.height = res->second;
-    }
+    // A legacy "resolution" is ignored, not validated (there is no show-wide size any more, D3).
     if (args.contains("holdMs")) {
       if (!args["holdMs"].is_number_integer()) throw CmdError("bad-request", "holdMs must be a whole number");
       const int h = args["holdMs"].get<int>();

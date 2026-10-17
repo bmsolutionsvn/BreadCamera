@@ -13,8 +13,8 @@ const show = {
       name: 'Sân khấu trái',
       input: { kind: 'srt', params: { mode: 'caller', url: 'srt://1.2.3.4:9000', latencyMs: 120 } },
       outputs: [
-        { id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: { name: 'BreadCamera - Sân khấu trái' }, format: { width: 0, height: 0, halfRate: false } },
-        { id: 'o2', kind: 'fullscreen', keyed: false, enabled: true, params: { monitor: 1 }, format: { width: 0, height: 0, halfRate: false } },
+        { id: 'o1', kind: 'ndi', keyed: false, enabled: true, params: { name: 'BreadCamera - Sân khấu trái' }, format: { halfRate: false } },
+        { id: 'o2', kind: 'fullscreen', keyed: false, enabled: true, params: { monitor: 1 }, format: { halfRate: false } },
       ],
     },
     { id: 'b', name: 'Khách mời', input: { kind: 'srt', params: { mode: 'listener', port: 9001 } }, outputs: [] },
@@ -54,6 +54,13 @@ test('strips show input health, names and every output state', () => {
   expect(screen.getAllByText('Khách mời').length).toBeGreaterThan(0);
 });
 
+test('the status bar no longer shows a show-wide resolution', () => {
+  render(<Workspace client={client()} />);
+  const bar = screen.getByLabelText('Status bar');
+  expect(within(bar).getByText('59.94')).toBeInTheDocument();  // the rate stays
+  expect(within(bar).queryByText(/1920×1080/)).toBeNull();     // the size label is gone
+});
+
 test('the first camera is selected; arrow keys and clicks move the Inspector', () => {
   render(<Workspace client={client()} />);
   const insp = screen.getByRole('complementary', { name: 'Inspector' });
@@ -71,16 +78,15 @@ test('an empty show points to Add camera', () => {
   expect(screen.getByText('No cameras yet')).toBeInTheDocument();
 });
 
-test('Add output sends the chosen size and half rate', () => {
+test('Add output sends the chosen half rate', () => {
   render(<Workspace client={client()} />);
   fireEvent.click(within(screen.getByRole('complementary', { name: 'Inspector' })).getByRole('button', { name: 'Add output' }));
   const dlg = screen.getByRole('dialog', { name: 'Add output to CAM 1' });
-  fireEvent.change(within(dlg).getByLabelText('Resolution'), { target: { value: '1280x720' } });
   fireEvent.change(within(dlg).getByLabelText('Frame rate'), { target: { value: 'half' } });
   fireEvent.click(within(dlg).getByRole('button', { name: 'Add output' }));
   const req = FakeWs.last.lastRequest();
   expect(req.cmd).toBe('addOutput');
-  expect((req.args.output as { format: unknown }).format).toEqual({ width: 1280, height: 720, halfRate: true });
+  expect((req.args.output as { format: unknown }).format).toEqual({ halfRate: true });
 });
 
 test('Stop all outputs asks first, with a verb button', () => {
@@ -97,7 +103,56 @@ test('window buttons post to the shell', () => {
   render(<Workspace client={client()} />);
   fireEvent.click(screen.getByRole('button', { name: 'Minimise' }));
   expect(postMessage).toHaveBeenCalledWith('{"type":"window","action":"minimize"}');
+  fireEvent.click(screen.getByRole('button', { name: 'Quit BreadCamera' }));
+  expect(postMessage).toHaveBeenCalledWith('{"type":"window","action":"close"}');
   delete (window as unknown as { chrome?: unknown }).chrome;
+});
+
+function subscribed(): string[] {
+  const msgs = FakeWs.last.sent
+    .map((s) => JSON.parse(s) as { cmd: string; args: { cameraIds: string[] } })
+    .filter((m) => m.cmd === 'subscribePreview');
+  return msgs.length ? msgs[msgs.length - 1].args.cameraIds : [];
+}
+
+test('clicking a tile focuses one camera; Esc returns to the grid', () => {
+  render(<Workspace client={client()} />);
+  expect(subscribed()).toEqual(['a', 'b']);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Grid' })).toBeInTheDocument();
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(subscribed()).toEqual(['a', 'b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(2);
+});
+
+test('Escape closes a dialog opened while focused, keeping the focus view', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  // Open a dialog from the focused view, like a user would (Ctrl+, opens Settings).
+  fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+  expect(screen.getByRole('dialog', { name: 'Settings' })).toBeInTheDocument();
+  // One Escape closes the dialog and nothing else: the focused view must stay focused.
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog', { name: 'Settings' })).not.toBeInTheDocument();
+  expect(subscribed()).toEqual(['b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(1);
+});
+
+test('the Grid button and clicking the focused picture both return to the grid', () => {
+  render(<Workspace client={client()} />);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 2/ }));
+  expect(subscribed()).toEqual(['b']);
+  fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
+  expect(subscribed()).toEqual(['a', 'b']);
+
+  fireEvent.click(screen.getByRole('option', { name: /CAM 1/ }));
+  expect(subscribed()).toEqual(['a']);
+  fireEvent.click(screen.getByRole('option', { name: /CAM 1/ }));
+  expect(subscribed()).toEqual(['a', 'b']);
+  expect(screen.getAllByRole('option', { name: /^CAM / })).toHaveLength(2);
 });
 
 test('losing the engine shows the restart block and every pill goes Offline', () => {
@@ -107,17 +162,4 @@ test('losing the engine shows the restart block and every pill goes Offline', ()
   expect(screen.getByRole('status', { name: 'Engine restarting' })).toBeInTheDocument();
   expect(screen.getByTitle('NDI output: Offline')).toBeInTheDocument();
   c.close();
-});
-
-test('File menu Quit… confirms and quits instead of hiding to the tray', () => {
-  const postMessage = vi.fn();
-  (window as unknown as { chrome: unknown }).chrome = { webview: { postMessage, addEventListener() {}, removeEventListener() {} } };
-  render(<Workspace client={client()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'File' }));
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Quit…' }));
-  const dlg = screen.getByRole('dialog', { name: 'Quit BreadCamera?' });
-  expect(postMessage).not.toHaveBeenCalledWith('{"type":"window","action":"close"}');
-  fireEvent.click(within(dlg).getByRole('button', { name: 'Quit and stop all outputs' }));
-  expect(postMessage).toHaveBeenCalledWith('{"type":"quitConfirmed"}');
-  delete (window as unknown as { chrome?: unknown }).chrome;
 });

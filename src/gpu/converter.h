@@ -34,6 +34,13 @@ class Converter {
   TextureRef solid(uint32_t w, uint32_t h, std::array<float, 4> linearRgba);
   TextureRef uploadBgra8(const uint8_t* data, uint32_t w, uint32_t h, uint32_t stride);
 
+  // Non-blocking readback support for ReadbackSlot. beginReadback issues the cheap staging
+  // CopyResource under the GPU lock; tryFinishReadback maps without waiting (false when the
+  // copy is not ready — nothing changes; throws on a real failure).
+  void beginReadback(const TextureRef& staging, const GpuTexture& rgba8);
+  bool tryFinishReadback(const TextureRef& staging, CpuImage& out);
+  TexturePool& pool() { return pool_; }
+
  private:
   struct alignas(16) Params {
     float row0[4];

@@ -91,34 +91,46 @@ TEST_CASE("Show: newId gives 8 lowercase hex chars and differs") {
   CHECK(a != b);
 }
 
-TEST_CASE("Show: resolution and output format round-trip, and old files load with defaults") {
+TEST_CASE("Show: output rate round-trips, and old files load with defaults") {
   auto s = sampleShow();
-  s.settings.width = 1280;
-  s.settings.height = 720;
-  s.cameras[0].outputs[0].width = 960;
-  s.cameras[0].outputs[0].height = 540;
   s.cameras[0].outputs[0].halfRate = true;
   auto j = bc::showToJson(s, bc::SecretMode::Plain);
-  CHECK(j["settings"]["resolution"] == "1280x720");
-  CHECK(j["cameras"][0]["outputs"][0]["format"] == nlohmann::json{{"width", 960}, {"height", 540}, {"halfRate", true}});
+  CHECK_FALSE(j["settings"].contains("resolution"));  // a show has no resolution any more
+  CHECK(j["cameras"][0]["outputs"][0]["format"] == nlohmann::json{{"halfRate", true}});
   CHECK(bc::showFromJson(j) == s);
 
-  j["settings"].erase("resolution");
   j["cameras"][0]["outputs"][0].erase("format");
   auto old = bc::showFromJson(j);
-  CHECK(old.settings.width == 1920);
-  CHECK(old.settings.height == 1080);
-  CHECK(old.cameras[0].outputs[0].width == 0);
   CHECK_FALSE(old.cameras[0].outputs[0].halfRate);
 }
 
-TEST_CASE("Show: unsupported sizes are rejected") {
+TEST_CASE("a legacy show resolution is ignored on load") {
+  auto j = nlohmann::json::parse(
+      R"({"schemaVersion":1,"settings":{"rate":"60/1","resolution":"3840x2160"},
+          "cameras":[]})");
+  bc::Show s = bc::showFromJson(j);  // must not throw: the legacy resolution is ignored
+  CHECK(s.settings.rate == bc::Rate{60, 1});
+}
+
+TEST_CASE("a show file with a legacy per-output size still loads at the frame size") {
+  auto j = nlohmann::json::parse(R"({
+    "schemaVersion": 1,
+    "settings": {"rate": "60/1", "resolution": "1920x1080"},
+    "cameras": [{"id": "a", "name": "A",
+      "input": {"kind": "srt", "params": {"url": "srt://x"}},
+      "outputs": [{"id": "o", "kind": "srt", "params": {},
+                   "format": {"width": 800, "height": 600, "halfRate": true}}]}]})");
+  bc::Show s = bc::showFromJson(j);  // must not throw: the size is ignored, not an error
+  REQUIRE(s.cameras.size() == 1);
+  REQUIRE(s.cameras[0].outputs.size() == 1);
+  CHECK(s.cameras[0].outputs[0].halfRate);  // the rate is kept; the size is gone
+}
+
+TEST_CASE("Show: a legacy output size is ignored") {
   auto j = bc::showToJson(sampleShow(), bc::SecretMode::Plain);
-  j["settings"]["resolution"] = "3840x2160";
-  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
-  j["settings"]["resolution"] = "1920x1080";
+  // A legacy per-output size is ignored, not an error (one frame size per camera).
   j["cameras"][0]["outputs"][0]["format"] = {{"width", 800}, {"height", 600}, {"halfRate", false}};
-  CHECK_THROWS_AS(bc::showFromJson(j), bc::ShowError);
+  CHECK_NOTHROW(bc::showFromJson(j));
 }
 
 TEST_CASE("Show: Unicode names survive the file unchanged") {

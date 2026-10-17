@@ -1,6 +1,10 @@
 #include "support/requires.h"
 
+#include <windows.h>
+
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <mutex>
 #include <set>
 
@@ -9,11 +13,20 @@
 #include "gpu/device.h"
 #include "io/aja.h"
 #include "io/decklink.h"
+#include "io/dshow_devices.h"
 #include "io/mf_capture_input.h"
 #include "io/vcam_output.h"
 
 namespace bc::test {
 namespace {
+bool envSet(const char* name) {
+  char* buf = nullptr;
+  size_t len = 0;
+  if (_dupenv_s(&buf, &len, name) != 0 || buf == nullptr) return false;
+  const bool set = buf[0] != '\0';
+  std::free(buf);
+  return set;
+}
 bool check(Req r, const char*& reason) {
   switch (r) {
     case Req::Ndi:
@@ -52,6 +65,9 @@ bool check(Req r, const char*& reason) {
     case Req::CaptureDevice:
       reason = "no USB/UVC capture device on this PC";
       return bc::listCaptureDevices().empty();
+    case Req::DShowDevice:
+      reason = "no DirectShow video capture device on this PC";
+      return bc::listDShowDevices().empty();
     case Req::Omt:
       reason = "OMT-HX checkout not built (BC_WITH_OMT=OFF)";
       return BC_WITH_OMT == 0;
@@ -73,6 +89,42 @@ bool check(Req r, const char*& reason) {
       reason = "virtual camera not registered (run regsvr32 breadcamera-vcam.dll as admin on Windows 11)";
 #if BC_WITH_VCAM
       return !bc::VirtualCameraOutput::installed();
+#else
+      return true;
+#endif
+    case Req::Onnx:
+      reason = "ONNX Runtime/model not fetched (scripts/fetch-sdks.ps1)";
+#if BC_WITH_ONNX
+      {
+        wchar_t buf[MAX_PATH];
+        if (GetModuleFileNameW(nullptr, buf, MAX_PATH) == 0) return true;
+        return !std::filesystem::exists(std::filesystem::path(buf).parent_path() / "models" /
+                                        "modnet.onnx");
+      }
+#else
+      return true;
+#endif
+    case Req::LiveCall:
+      reason = "no LiveKit server (set BC_LIVECALL_URL and BC_LIVECALL_TOKEN)";
+#if BC_WITH_LIVECALL
+      return !envSet("BC_LIVECALL_URL") || !envSet("BC_LIVECALL_TOKEN");
+#else
+      return true;
+#endif
+    case Req::LiveCallGuests:
+      // The two-guest acceptance drives real publishers and receiver tokens with
+      // the LiveKit CLI, so it needs a live server (like LiveCall) plus `lk.exe`.
+      reason = "no LiveKit CLI for the two-guest acceptance (set BC_LIVECALL_LK to lk.exe)";
+#if BC_WITH_LIVECALL
+      if (!envSet("BC_LIVECALL_URL") || !envSet("BC_LIVECALL_TOKEN")) return true;
+      {
+        char* buf = nullptr;
+        size_t len = 0;
+        if (_dupenv_s(&buf, &len, "BC_LIVECALL_LK") != 0 || buf == nullptr) return true;
+        std::filesystem::path lk(buf);
+        std::free(buf);
+        return !std::filesystem::exists(lk);
+      }
 #else
       return true;
 #endif

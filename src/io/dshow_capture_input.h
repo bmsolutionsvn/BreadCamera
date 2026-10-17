@@ -1,0 +1,47 @@
+#pragma once
+#include <guiddef.h>
+
+#include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "gpu/device.h"
+#include "gpu/texture_pool.h"
+#include "io/input.h"
+
+namespace bc {
+// A DirectShow video capture device (CLSID_VideoInputDeviceCategory), addressed by moniker
+// display name. The path MF cannot take: OBS Virtual Camera and other DirectShow-only virtual
+// cameras. Video only, RGB32 -> BGRA8. Same contract as MfCaptureInput (spec §4.1/§4.2).
+class DShowCaptureInput final : public Input {
+ public:
+  DShowCaptureInput(GpuDevice& gpu, TexturePool& pool, std::string displayName);
+  ~DShowCaptureInput() override;
+  void start(InputSink& sink) override;
+  void stop() override;
+
+ private:
+  struct GrabberCB;
+  void run();
+  void runOnce(bool forceRgb32);
+
+  GpuDevice& gpu_;
+  TexturePool& pool_;
+  std::string displayName_;
+  InputSink* sink_ = nullptr;
+  std::atomic<bool> stopping_{false};
+  std::thread thread_;
+  GrabberCB* cb_ = nullptr;
+  // Set once per runOnce from the connected media type.
+  GUID subtype_{};
+  int width_ = 0;
+  int height_ = 0;
+  int stride_ = 0;
+  std::size_t need_ = 0;  // the bytes one full sample must hold (NV12 includes its chroma)
+  bool bottomUp_ = false;
+  bool bt709_ = false;
+};
+}  // namespace bc

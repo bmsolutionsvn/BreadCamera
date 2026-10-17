@@ -27,7 +27,7 @@ class SrtOutput final : public QueuedOutput {
 
  private:
   static int interrupt(void* self);
-  void openEncoders(const OutFrame& first);
+  void openEncoders(const OutFrame& frame);  // first frame, or again on a frame-size change
   void writePacket(AVCodecContext* c, AVStream* st);
   SrtOutputOptions opts_;
   AVFormatContext* fmt_ = nullptr;
@@ -39,7 +39,7 @@ class SrtOutput final : public QueuedOutput {
   AVFrame* aframe_ = nullptr;
   SwsContext* sws_ = nullptr;
   uint32_t swsW_ = 0, swsH_ = 0;
-  int encW_ = 0, encH_ = 0;  // set from the first frame
+  int encW_ = 0, encH_ = 0;  // the open encoders' size; a differing frame re-opens them
   std::vector<float> audioFifo_;  // interleaved stereo
   int64_t vpts_ = 0, apts_ = 0;
   bool headerWritten_ = false;
