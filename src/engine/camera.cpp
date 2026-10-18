@@ -22,10 +22,12 @@ Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateS
       colorTimer_.emplace(*tools_.gpu);
       backgroundTimer_.emplace(*tools_.gpu);
       upscaleTimer_.emplace(*tools_.gpu);
+      cleanupTimer_.emplace(*tools_.gpu);
     } catch (const std::exception&) {
       colorTimer_.reset();
       backgroundTimer_.reset();
       upscaleTimer_.reset();
+      cleanupTimer_.reset();
     }
   }
 }
@@ -78,6 +80,7 @@ void Camera::loadStageParams() {
   }
   upscaleParams_ = normalizeStageParams("upscale", cfg_.stages.value("upscale", nlohmann::json::object()));
   upscaleTargetH_ = upscaleParams_.value("target", std::string("1080")) == "720" ? 720u : 1080u;
+  cleanupParams_ = normalizeStageParams("cleanup", cfg_.stages.value("cleanup", nlohmann::json::object()));
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
@@ -88,6 +91,7 @@ double Camera::stageGpuMs(const std::string& kind) const {
   if (kind == "color") return colorGpuMs_;
   if (kind == "background") return backgroundGpuMs_;
   if (kind == "upscale") return upscaleGpuMs_;
+  if (kind == "cleanup") return cleanupGpuMs_;
   return 0;
 }
 
@@ -116,6 +120,18 @@ void Camera::pollUpscaleTimer(const TickSchedule& sched, Clock::time_point now) 
   if (auto took = upscaleTimer_->poll()) {
     upscaleGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
     upscaleGuard_.succeeded(*took, budget, now);
+  }
+}
+
+void Camera::pollCleanupTimer(const TickSchedule& sched, Clock::time_point now) {
+  // ponytail: the same fixed quarter-tick share per camera as Upscale; split by camera count if
+  // 8+ cameras run Clean up (RTX only, so it is zero-cost on every other PC).
+  const auto budget = sched.rate().period() / 4;
+  cleanupBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
+  if (!cleanupTimer_) return;
+  if (auto took = cleanupTimer_->poll()) {
+    cleanupGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    cleanupGuard_.succeeded(*took, budget, now);
   }
 }
 
@@ -181,6 +197,7 @@ void Camera::reconfigure(const CameraConfig& next) {
     backgroundGuard_ = StageGuard{};
     colorGuard_ = StageGuard{};
     upscaleGuard_ = StageGuard{};
+    cleanupGuard_ = StageGuard{};
   }
   loadStageParams();
   if (inputChanged) {
@@ -236,10 +253,15 @@ TextureRef Camera::fittedSlate(const TextureRef& source) {
 }
 
 TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point now) {
-  if (!upscaleParams_.value("enabled", false) || !in) return in;
-  const FrameSize want = upscaleTarget(in->width, in->height, upscaleTargetH_);
-  // A target not larger than the input does nothing (D3): keep the frame as it is.
-  if (want.w == in->width && want.h == in->height) {
+  if (!in) return in;
+  const bool cleanupOn = cleanupParams_.value("enabled", false);
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  if (!cleanupOn && !upscaleOn) return in;
+  const FrameSize want =
+      upscaleOn ? upscaleTarget(in->width, in->height, upscaleTargetH_) : FrameSize{in->width, in->height};
+  const bool resize = upscaleOn && (want.w != in->width || want.h != in->height);
+  // A target not larger than the input, and no Clean up: nothing to do (D3).
+  if (!cleanupOn && !resize) {
     lastEnhanced_.reset();
     return in;
   }
@@ -247,27 +269,78 @@ TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point n
   if (!fresh && lastEnhanced_ && lastEnhanced_->width == want.w && lastEnhanced_->height == want.h) {
     return lastEnhanced_;
   }
-  // FSR 1 (on RTX, Task 4 inserts the AI path ahead of it), guarded; while the guard is bypassed or
-  // there is no upscaler, a plain fit keeps the target size (D3a) so no output re-opens.
-  if (tools_.up && upscaleGuard_.shouldRun(now)) {
-    const bool gpuTimed = upscaleTimer_.has_value();
-    if (gpuTimed) upscaleTimer_->begin();
-    const auto t0 = Clock::now();
-    try {
-      lastEnhanced_ = tools_.up->apply(*in, want.w, want.h);
-      if (gpuTimed) {
-        upscaleTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
-      } else {
-        upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+  TextureRef frame = in;
+
+  // Clean up runs first (spec pipeline order), at 1×: RTX only. On a non-RTX PC (tools_.rtx ==
+  // nullptr) it bypasses with a readable reason and the picture passes through untouched (D7).
+  if (cleanupOn && cleanupGuard_.shouldRun(now)) {
+    if (tools_.rtx) {
+      const bool gpuTimed = cleanupTimer_.has_value();
+      if (gpuTimed) cleanupTimer_->begin();
+      const auto t0 = Clock::now();
+      try {
+        frame = tools_.rtx->run(*frame, frame->width, frame->height);
+        if (gpuTimed) {
+          cleanupTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+        } else {
+          cleanupGuard_.succeeded(Clock::now() - t0, cleanupBudget_, now);
+        }
+      } catch (const std::exception& e) {
+        if (gpuTimed) cleanupTimer_->end();
+        cleanupGuard_.failed(e.what(), now);
+        frame = in;  // a failed Clean up passes the frame through; Upscale still runs below
       }
-      return lastEnhanced_;
-    } catch (const std::exception& e) {
-      if (gpuTimed) upscaleTimer_->end();
-      upscaleGuard_.failed(e.what(), now);
+    } else {
+      cleanupGuard_.failed(ErrorInfo{"needs-rtx", "Clean up needs an NVIDIA RTX card; it is bypassed on this PC."},
+                           now);
     }
   }
-  lastEnhanced_ = tools_.conv.fit(*in, want.w, want.h);
-  return lastEnhanced_;
+
+  if (resize) {
+    // Fallback chain, always at the target size (D3a): RTX (spec D4) → FSR 1 (D6) → plain fit. Not
+    // fused: Clean up and Upscale are two VSR passes until an RTX run shows the cost matters.
+    bool done = false;
+    if (tools_.rtx && upscaleGuard_.shouldRun(now)) {
+      const bool gpuTimed = upscaleTimer_.has_value();
+      if (gpuTimed) upscaleTimer_->begin();
+      const auto t0 = Clock::now();
+      try {
+        frame = tools_.rtx->run(*frame, want.w, want.h);
+        done = true;
+        if (gpuTimed) {
+          upscaleTimer_->end();
+        } else {
+          upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+        }
+      } catch (const std::exception& e) {
+        if (gpuTimed) upscaleTimer_->end();
+        upscaleGuard_.failed(e.what(), now);  // fall through to FSR 1 / the fit below
+      }
+    }
+    if (!done) {
+      if (tools_.up && upscaleGuard_.shouldRun(now)) {
+        const bool gpuTimed = upscaleTimer_.has_value();
+        if (gpuTimed) upscaleTimer_->begin();
+        const auto t0 = Clock::now();
+        try {
+          frame = tools_.up->apply(*frame, want.w, want.h);
+          if (gpuTimed) {
+            upscaleTimer_->end();
+          } else {
+            upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+          }
+        } catch (const std::exception& e) {
+          if (gpuTimed) upscaleTimer_->end();
+          upscaleGuard_.failed(e.what(), now);
+          frame = tools_.conv.fit(*frame, want.w, want.h);  // bypass keeps the target size (D3a)
+        }
+      } else {
+        frame = tools_.conv.fit(*frame, want.w, want.h);  // no RTX/FSR, or bypassed: fit (D3a)
+      }
+    }
+  }
+  lastEnhanced_ = frame;
+  return frame;
 }
 
 TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
@@ -334,6 +407,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
                      bool previewWanted) {
   pollBackgroundTimer(sched, now);
   pollUpscaleTimer(sched, now);
+  pollCleanupTimer(sched, now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -471,6 +545,11 @@ void Camera::publishStatus() {
     }
   }
   state_.set(path("/stages/upscale/note"), upscaleNote ? nlohmann::json(*upscaleNote) : nlohmann::json(nullptr));
+  const bool cleanupOn = cleanupParams_.value("enabled", false);
+  state_.set(path("/stages/cleanup/state"), cleanupGuard_.stateName(cleanupOn));
+  state_.set(path("/stages/cleanup/error"),
+             errorToJson(cleanupOn ? cleanupGuard_.error() : std::optional<ErrorInfo>{}));
+  if (cleanupTimer_) state_.set(path("/stages/cleanup/gpuMs"), std::round(cleanupGpuMs_ * 10.0) / 10.0);
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

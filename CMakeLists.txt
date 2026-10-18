@@ -106,6 +106,18 @@ if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
 endif()
 message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
 
+# webcam-fx Task 4 — optional NVIDIA RTX Video SDK (Clean up and AI Upscale, spec D4). The SDK is
+# behind an NVIDIA Developer login, so it is never fetched or committed (spec "RTX Video SDK
+# licence obligations", §4b/§4e); BC_WITH_RTXVIDEO finds it under third_party/rtx_video_sdk or
+# turns itself off, and CI builds without it.
+find_package(RtxVideo)
+option(BC_WITH_RTXVIDEO "Build the NVIDIA RTX Video SDK Clean up and AI Upscale" ${RtxVideo_FOUND})
+if(BC_WITH_RTXVIDEO AND NOT RtxVideo_FOUND)
+  message(WARNING "BC_WITH_RTXVIDEO=ON but the NVIDIA RTX Video SDK was not found under RTXVIDEO_ROOT; turning it off")
+  set(BC_WITH_RTXVIDEO OFF)
+endif()
+message(STATUS "BC_WITH_RTXVIDEO=${BC_WITH_RTXVIDEO}")
+
 # M6 Task 1 — optional ONNX Runtime (DirectML) matte backend (spec §7.2). The runtime, the
 # DirectML redistributable and the MODNet model are fetched by scripts/fetch-sdks.ps1.
 find_package(OnnxRuntime)
@@ -213,10 +225,19 @@ add_library(bc_gpu STATIC
   src/gpu/gpu_timer.cpp
   # webcam-fx Task 3
   src/gpu/upscaler.cpp
+  # webcam-fx Task 4 (compiles to a null path when BC_WITH_RTXVIDEO=0)
+  src/gpu/rtx_video.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
 target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
+if(BC_WITH_RTXVIDEO)
+  target_include_directories(bc_gpu PUBLIC ${RTXVIDEO_INCLUDE_DIR})
+  target_link_libraries(bc_gpu PUBLIC "${RTXVIDEO_NGX_LIB}")
+  target_compile_definitions(bc_gpu PUBLIC BC_WITH_RTXVIDEO=1)
+else()
+  target_compile_definitions(bc_gpu PUBLIC BC_WITH_RTXVIDEO=0)
+endif()
 
 # ---- io ----
 add_library(bc_io STATIC
@@ -333,6 +354,11 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/modnet.onnx")
   endif()
+  if(BC_WITH_RTXVIDEO)
+    # webcam-fx Task 4 — the RTX Video SDK's runtime DLL, next to the engine and the tests.
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RTXVIDEO_NGX_DLL}" "$<TARGET_FILE_DIR:${target}>")
+  endif()
 endfunction()
 
 # ---- engine ----
@@ -406,6 +432,8 @@ add_executable(bc_tests
   # webcam-fx Task 3
   tests/upscaler_test.cpp
   tests/engine_upscale_test.cpp
+  # webcam-fx Task 4
+  tests/rtx_video_test.cpp
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp

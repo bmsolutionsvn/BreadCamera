@@ -234,6 +234,28 @@ available for commercial/non-commercial use; downloads require a free NVIDIA Dev
 (NGC) account. **Only the runtime files the SLA marks redistributable are shipped.** When enabled,
 `nvVideoEffects.dll` and the AI Green Screen model files accompany the executables.
 
+## NVIDIA RTX Video SDK runtime
+
+- **Version:** n/a on this machine (RTX Video SDK absent). The SDK ships unpinned; when built, the
+  version is whatever the developer unzipped into `third_party/rtx_video_sdk/` (or `%RTXVIDEO_ROOT%`)
+- **Licence:** NVIDIA RTX SDKs License (v. 2024-02-23, with the RTX supplement v. 2023-12-20)
+- **URL:** <https://developer.nvidia.com/rtx-video-sdk>
+- **Ships only when built:** `BC_WITH_RTXVIDEO=ON` (SDK under `%RTXVIDEO_ROOT%` or
+  `third_party/rtx_video_sdk`). Off for this build.
+
+The RTX Video SDK's runtime (`nvngx_vsr.dll`) is NVIDIA's, shipped in object-code form inside the
+installer under the NVIDIA RTX SDKs License (§1c/§2a). BreadCamera's own wrapper
+(`src/gpu/rtx_video.cpp`) is written from the SDK headers and programming guide, **not** from
+NVIDIA's sample code, and **no SDK file — headers (`nvsdk_ngx*.h`), import libraries, DLLs or
+anything from `samples/` — is committed to this repository**: the SDK is licence-gated behind an
+NVIDIA Developer login and lives in untracked `third_party/rtx_video_sdk/`. The runtime is not to be
+reverse engineered, and is not to be redistributed apart from BreadCamera.
+
+Attribution (supplement §7.1c): BreadCamera credits the RTX Video SDK as plain text in Settings →
+About (using NVIDIA's marks, such as the "NVIDIA RTX" logo, would need NVIDIA's written approval).
+NVIDIA must also be notified before commercial release (supplement §4). Both are **owner actions
+before the first public release**.
+
 ## OpenCV (core, imgproc, dnn, and the contrib `mcc` module)
 
 - **Version:** 4.14.0 (vcpkg port `opencv4`, features `contrib`, `dnn`)

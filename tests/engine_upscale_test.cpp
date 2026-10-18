@@ -179,3 +179,34 @@ TEST_CASE("Camera: Upscale to 720p on a 1280x720 input changes nothing and says 
   CHECK(r.factory.output("o-a")->lastImage()->height == 720);
   CHECK(r.at("/cameras/a/stages/upscale/note") == "Input is already 720p");
 }
+
+// Review Focus 5: a show from an AMD PC that already has Clean up on a camera. tools_.rtx is null
+// (no NVIDIA card), so the stage bypasses with a readable reason and the picture still flows.
+TEST_CASE("Camera: Clean up without an RTX card is bypassed with a readable error") {
+  Rig r;
+  bc::StateStore state;
+  bc::test::FakeFactory factory{r.conv};
+  bc::CameraConfig cfg = cam("a", json::object());  // no Upscale; Clean up only
+  cfg.stages["cleanup"] = bc::normalizeStageParams("cleanup", {{"enabled", true}});
+  cfg.outputs.clear();
+  bc::Camera camera(cfg, factory,
+                    bc::GpuTools{.conv = r.conv, .comp = r.comp, .grader = r.grader, .up = &r.up, .gpu = r.gpu.get()},
+                    state, {});
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(640, 360, {0, 0, 0, 1});
+  for (uint64_t i = 0; i < 3; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120, 640, 360));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(i, sched, now, nullptr);
+  }
+  camera.publishStatus();
+  auto s = state.snapshot();
+  CHECK(s.at(json::json_pointer("/cameras/a/stages/cleanup/state")) == "bypassed");
+  CHECK(s.at(json::json_pointer("/cameras/a/stages/cleanup/error/code")) == "needs-rtx");
+  // Nothing crashes and frames keep flowing at the input size (Clean up is 1× and never resizes).
+  REQUIRE(camera.lastFrame() != nullptr);
+  CHECK(camera.lastFrame()->width == 640);
+  CHECK(camera.lastFrame()->height == 360);
+  camera.stop();
+}

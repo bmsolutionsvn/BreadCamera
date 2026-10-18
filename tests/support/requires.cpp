@@ -59,6 +59,15 @@ bool check(Req r, const char*& reason) {
         return true;
       }
     }
+    case Req::RtxVideo: {
+      reason = "needs BC_WITH_RTXVIDEO (NVIDIA RTX Video SDK) and an NVIDIA RTX GPU";
+      if (BC_WITH_RTXVIDEO == 0) return true;
+      try {
+        return !bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware)->isNvidia();
+      } catch (...) {
+        return true;
+      }
+    }
     case Req::ChartDetect:
       reason = "chart detection is not in this build (OpenCV mcc missing)";
       return !bc::chartDetectionAvailable();

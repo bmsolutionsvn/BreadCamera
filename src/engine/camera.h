@@ -69,6 +69,7 @@ class Camera final : public InputSink {
   StageGuard& backgroundGuard() { return backgroundGuard_; }
   StageGuard& colorGuard() { return colorGuard_; }
   StageGuard& upscaleGuard() { return upscaleGuard_; }
+  StageGuard& cleanupGuard() { return cleanupGuard_; }
   // The last GPU measurement for a stage in ms, 0 when none (spec D14).
   double stageGpuMs(const std::string& kind) const;
   FeedPhase tickPhase() const { return tickPhase_; }
@@ -111,6 +112,7 @@ class Camera final : public InputSink {
   void pollColorTimer(std::chrono::steady_clock::time_point now);
   void pollBackgroundTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   void pollUpscaleTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
+  void pollCleanupTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   // The slate source fitted to the camera's last frame size, cached per (source, size). Only runs
   // on the no-picture path, so it costs nothing while the camera is live.
   TextureRef fittedSlate(const TextureRef& source);
@@ -145,9 +147,11 @@ class Camera final : public InputSink {
   nlohmann::json backgroundParams_;
   nlohmann::json colorParams_;
   nlohmann::json upscaleParams_;
+  nlohmann::json cleanupParams_;
   uint32_t upscaleTargetH_ = 1080;  // the Upscale target height: 720 or 1080 (spec D2)
   bool sawFrame_ = false;           // a frame has been converted at least once (the slate fallback)
   std::chrono::nanoseconds upscaleBudget_{4000000};  // sched.rate().period() / 4, for the CPU-fit path
+  std::chrono::nanoseconds cleanupBudget_{4000000};  // sched.rate().period() / 4, for the RTX path
   ColorGrade grade_;
   std::string lutPath_;
   std::optional<ErrorInfo> lutError_;
@@ -155,12 +159,15 @@ class Camera final : public InputSink {
   StageGuard backgroundGuard_;
   StageGuard colorGuard_;
   StageGuard upscaleGuard_;
+  StageGuard cleanupGuard_;
   std::optional<GpuTimer> colorTimer_;       // present when tools_.gpu is set (spec D14)
   std::optional<GpuTimer> backgroundTimer_;
   std::optional<GpuTimer> upscaleTimer_;
+  std::optional<GpuTimer> cleanupTimer_;
   double colorGpuMs_ = 0;       // last GPU measurement per stage, in ms
   double backgroundGpuMs_ = 0;
   double upscaleGpuMs_ = 0;
+  double cleanupGpuMs_ = 0;
   TextureRef bgImage_;               // linear RGBA16F replace background, or null
   std::string bgImagePath_;          // the loaded image's path, to skip reloading
   std::optional<ErrorInfo> bgImageError_;
