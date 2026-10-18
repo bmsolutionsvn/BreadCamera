@@ -24,6 +24,7 @@
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
+#include "gpu/upscaler.h"
 #include "io/aja.h"
 #include "io/decklink.h"
 #include "io/mf_capture_input.h"
@@ -95,6 +96,7 @@ int wmain(int argc, wchar_t** argv) {
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
   bc::ColorGrader grader(*gpu, pool);
+  bc::Upscaler up(*gpu, pool);
   bc::StateStore state;
   bc::DefaultAdapterFactory factory(*gpu, pool);
   bc::ShowStore store(showDir);
@@ -102,7 +104,8 @@ int wmain(int argc, wchar_t** argv) {
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
 
-  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .gpu = gpu.get()}, state, factory);
+  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .up = &up, .gpu = gpu.get()}, state,
+                    factory);
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);
   engine.apply(loaded.show);

@@ -5,6 +5,7 @@
 #include <map>
 
 #include "core/lut.h"
+#include "core/upscale_size.h"
 #include "core/utf8.h"
 #include "gpu/color_grader.h"
 #include "gpu/image_io.h"
@@ -20,9 +21,11 @@ Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateS
     try {
       colorTimer_.emplace(*tools_.gpu);
       backgroundTimer_.emplace(*tools_.gpu);
+      upscaleTimer_.emplace(*tools_.gpu);
     } catch (const std::exception&) {
       colorTimer_.reset();
       backgroundTimer_.reset();
+      upscaleTimer_.reset();
     }
   }
 }
@@ -73,6 +76,8 @@ void Camera::loadStageParams() {
           ErrorInfo{"background-image", std::string("cannot load the background image; using the colour: ") + e.what()};
     }
   }
+  upscaleParams_ = normalizeStageParams("upscale", cfg_.stages.value("upscale", nlohmann::json::object()));
+  upscaleTargetH_ = upscaleParams_.value("target", std::string("1080")) == "720" ? 720u : 1080u;
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
@@ -82,6 +87,7 @@ bool Camera::wantsMatte(Clock::time_point now) const {
 double Camera::stageGpuMs(const std::string& kind) const {
   if (kind == "color") return colorGpuMs_;
   if (kind == "background") return backgroundGpuMs_;
+  if (kind == "upscale") return upscaleGpuMs_;
   return 0;
 }
 
@@ -98,6 +104,18 @@ void Camera::pollBackgroundTimer(const TickSchedule& sched, Clock::time_point no
   if (auto took = backgroundTimer_->poll()) {
     backgroundGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
     backgroundGuard_.succeeded(*took, sched.rate().period() / 4, now);
+  }
+}
+
+void Camera::pollUpscaleTimer(const TickSchedule& sched, Clock::time_point now) {
+  // ponytail: a fixed quarter-tick budget per camera, the same share Background takes; split it by
+  // camera count if 8+ cameras run the FSR path.
+  const auto budget = sched.rate().period() / 4;
+  upscaleBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
+  if (!upscaleTimer_) return;
+  if (auto took = upscaleTimer_->poll()) {
+    upscaleGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    upscaleGuard_.succeeded(*took, budget, now);
   }
 }
 
@@ -162,6 +180,7 @@ void Camera::reconfigure(const CameraConfig& next) {
     matteGuard_ = StageGuard{};
     backgroundGuard_ = StageGuard{};
     colorGuard_ = StageGuard{};
+    upscaleGuard_ = StageGuard{};
   }
   loadStageParams();
   if (inputChanged) {
@@ -216,6 +235,41 @@ TextureRef Camera::fittedSlate(const TextureRef& source) {
   return slateFit_;
 }
 
+TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point now) {
+  if (!upscaleParams_.value("enabled", false) || !in) return in;
+  const FrameSize want = upscaleTarget(in->width, in->height, upscaleTargetH_);
+  // A target not larger than the input does nothing (D3): keep the frame as it is.
+  if (want.w == in->width && want.h == in->height) {
+    lastEnhanced_.reset();
+    return in;
+  }
+  // Reuse the last result on a repeat tick, as the grade does.
+  if (!fresh && lastEnhanced_ && lastEnhanced_->width == want.w && lastEnhanced_->height == want.h) {
+    return lastEnhanced_;
+  }
+  // FSR 1 (on RTX, Task 4 inserts the AI path ahead of it), guarded; while the guard is bypassed or
+  // there is no upscaler, a plain fit keeps the target size (D3a) so no output re-opens.
+  if (tools_.up && upscaleGuard_.shouldRun(now)) {
+    const bool gpuTimed = upscaleTimer_.has_value();
+    if (gpuTimed) upscaleTimer_->begin();
+    const auto t0 = Clock::now();
+    try {
+      lastEnhanced_ = tools_.up->apply(*in, want.w, want.h);
+      if (gpuTimed) {
+        upscaleTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+      } else {
+        upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+      }
+      return lastEnhanced_;
+    } catch (const std::exception& e) {
+      if (gpuTimed) upscaleTimer_->end();
+      upscaleGuard_.failed(e.what(), now);
+    }
+  }
+  lastEnhanced_ = tools_.conv.fit(*in, want.w, want.h);
+  return lastEnhanced_;
+}
+
 TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
   pollColorTimer(now);
   auto pick = sync_.pick(now);
@@ -226,28 +280,40 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
       const auto& f = pick.frame->frame;
       // The frame is the input's own size: there is no show-wide frame size to scale to.
       lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
-      lastSize_.w = lastConverted_->width;
-      lastSize_.h = lastConverted_->height;
+      sawFrame_ = true;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
+  // The camera's own size is the *enhanced* size: the target size derived from the last input, or
+  // the target's 16:9 fallback before any frame has been seen (D2/D3a). Updating lastSize_ here
+  // makes the slate fit to the target size too, so Upscale never has to resize the slate.
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  if (lastConverted_) {
+    const FrameSize s = upscaleOn ? upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_)
+                                  : FrameSize{lastConverted_->width, lastConverted_->height};
+    lastSize_.w = s.w;
+    lastSize_.h = s.h;
+  } else if (upscaleOn && !sawFrame_) {
+    lastSize_.w = upscaleTargetH_ * 16 / 9;
+    lastSize_.h = upscaleTargetH_;
+  }
   tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
-  tickFrame_ = tickRaw_;
+  tickFrame_ = enhance(tickRaw_, pick.fresh, now);
   const bool colorOn = colorParams_.value("enabled", false);
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
     // A size change does not dirty the grade, so the reuse must also match the current frame's
     // size: the colour stage can be bypassed across a renegotiation and leave a stale texture.
-    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == lastConverted_->width &&
-        lastGraded_->height == lastConverted_->height) {
+    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == tickFrame_->width &&
+        lastGraded_->height == tickFrame_->height) {
       tickFrame_ = lastGraded_;
     } else {
       const bool gpuTimed = colorTimer_.has_value();
       if (gpuTimed) colorTimer_->begin();
       const auto t0 = Clock::now();
       try {
-        lastGraded_ = tools_.grader.apply(tickRaw_, grade_);
+        lastGraded_ = tools_.grader.apply(tickFrame_, grade_);
         gradeDirty_ = false;
         tickFrame_ = lastGraded_;
         if (gpuTimed) {
@@ -267,6 +333,7 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
 void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha,
                      bool previewWanted) {
   pollBackgroundTimer(sched, now);
+  pollUpscaleTimer(sched, now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -392,6 +459,18 @@ void Camera::publishStatus() {
   state_.set(path("/stages/background/error"), errorToJson(bgOn ? bgErr : std::nullopt));
   if (colorTimer_) state_.set(path("/stages/color/gpuMs"), std::round(colorGpuMs_ * 10.0) / 10.0);
   if (backgroundTimer_) state_.set(path("/stages/background/gpuMs"), std::round(backgroundGpuMs_ * 10.0) / 10.0);
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  state_.set(path("/stages/upscale/state"), upscaleGuard_.stateName(upscaleOn));
+  state_.set(path("/stages/upscale/error"), errorToJson(upscaleOn ? upscaleGuard_.error() : std::optional<ErrorInfo>{}));
+  if (upscaleTimer_) state_.set(path("/stages/upscale/gpuMs"), std::round(upscaleGpuMs_ * 10.0) / 10.0);
+  std::optional<std::string> upscaleNote;
+  if (upscaleOn && lastConverted_) {
+    const FrameSize want = upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_);
+    if (want.w == lastConverted_->width && want.h == lastConverted_->height) {
+      upscaleNote = upscaleTargetH_ == 720 ? "Input is already 720p" : "Input is already 1080p";
+    }
+  }
+  state_.set(path("/stages/upscale/note"), upscaleNote ? nlohmann::json(*upscaleNote) : nlohmann::json(nullptr));
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

@@ -175,9 +175,10 @@ set(BC_SHADER_HEADERS)
 function(bc_shader name profile)
   set(src ${CMAKE_SOURCE_DIR}/src/gpu/shaders/${name}.hlsl)
   set(out ${BC_SHADER_DIR}/${name}.h)
+  # Any extra arguments are header dependencies the shader #includes (e.g. the vendored FSR headers).
   add_custom_command(OUTPUT ${out}
     COMMAND ${FXC} /nologo /O3 /T ${profile} /E main /Vn g_${name} /Fh ${out} ${src}
-    DEPENDS ${src} VERBATIM)
+    DEPENDS ${src} ${ARGN} VERBATIM)
   set(BC_SHADER_HEADERS ${BC_SHADER_HEADERS} ${out} PARENT_SCOPE)
 endfunction()
 bc_shader(yuv_to_linear cs_5_0)
@@ -194,6 +195,10 @@ foreach(s alpha_threshold alpha_morph alpha_blur bg_downsample bg_blur bg_compos
 endforeach()
 # M3 Task 3
 bc_shader(color_grade cs_5_0)
+# webcam-fx Task 3 — the FSR 1 upscaler's two compute shaders; the vendored headers are dependencies
+set(BC_FSR_HEADERS ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_a.h ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_fsr1.h)
+bc_shader(fsr_easu cs_5_0 ${BC_FSR_HEADERS})
+bc_shader(fsr_rcas cs_5_0 ${BC_FSR_HEADERS})
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
@@ -206,6 +211,8 @@ add_library(bc_gpu STATIC
   src/gpu/color_grader.cpp
   # webcam-fx Task 1
   src/gpu/gpu_timer.cpp
+  # webcam-fx Task 3
+  src/gpu/upscaler.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
@@ -396,6 +403,9 @@ add_executable(bc_tests
   tests/gpu_test.cpp
   # webcam-fx Task 1
   tests/gpu_timer_test.cpp
+  # webcam-fx Task 3
+  tests/upscaler_test.cpp
+  tests/engine_upscale_test.cpp
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp

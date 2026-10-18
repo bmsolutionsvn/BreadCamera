@@ -50,6 +50,10 @@ class Camera final : public InputSink {
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slateSource);
   // This tick's linear frame, between the halves.
   TextureRef tickFrame() const { return tickFrame_; }
+  // Upscale (spec D6): the frame at the target size, from the fallback chain RTX (Task 4) →
+  // tools_.up->apply (FSR 1) → conv.fit. Cached and reused while !fresh and the size matches;
+  // never changes size when the stage is bypassed (D3a).
+  TextureRef enhance(const TextureRef& in, bool fresh, std::chrono::steady_clock::time_point now);
   // This tick's frame before any stage (the slate when there is no picture).
   TextureRef tickRaw() const { return tickRaw_; }
   // True when this camera's matte is enabled and its guard lets it run this tick.
@@ -64,6 +68,7 @@ class Camera final : public InputSink {
   StageGuard& matteGuard() { return matteGuard_; }
   StageGuard& backgroundGuard() { return backgroundGuard_; }
   StageGuard& colorGuard() { return colorGuard_; }
+  StageGuard& upscaleGuard() { return upscaleGuard_; }
   // The last GPU measurement for a stage in ms, 0 when none (spec D14).
   double stageGpuMs(const std::string& kind) const;
   FeedPhase tickPhase() const { return tickPhase_; }
@@ -105,6 +110,7 @@ class Camera final : public InputSink {
   // guard (spec D14). A no-op when tools_.gpu is null (the stages time themselves on CPU).
   void pollColorTimer(std::chrono::steady_clock::time_point now);
   void pollBackgroundTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
+  void pollUpscaleTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   // The slate source fitted to the camera's last frame size, cached per (source, size). Only runs
   // on the no-picture path, so it costs nothing while the camera is live.
   TextureRef fittedSlate(const TextureRef& source);
@@ -138,21 +144,29 @@ class Camera final : public InputSink {
   nlohmann::json matteParams_;
   nlohmann::json backgroundParams_;
   nlohmann::json colorParams_;
+  nlohmann::json upscaleParams_;
+  uint32_t upscaleTargetH_ = 1080;  // the Upscale target height: 720 or 1080 (spec D2)
+  bool sawFrame_ = false;           // a frame has been converted at least once (the slate fallback)
+  std::chrono::nanoseconds upscaleBudget_{4000000};  // sched.rate().period() / 4, for the CPU-fit path
   ColorGrade grade_;
   std::string lutPath_;
   std::optional<ErrorInfo> lutError_;
   StageGuard matteGuard_;
   StageGuard backgroundGuard_;
   StageGuard colorGuard_;
+  StageGuard upscaleGuard_;
   std::optional<GpuTimer> colorTimer_;       // present when tools_.gpu is set (spec D14)
   std::optional<GpuTimer> backgroundTimer_;
+  std::optional<GpuTimer> upscaleTimer_;
   double colorGpuMs_ = 0;       // last GPU measurement per stage, in ms
   double backgroundGpuMs_ = 0;
+  double upscaleGpuMs_ = 0;
   TextureRef bgImage_;               // linear RGBA16F replace background, or null
   std::string bgImagePath_;          // the loaded image's path, to skip reloading
   std::optional<ErrorInfo> bgImageError_;
   TextureRef tickFrame_;  // this tick's linear frame, between the halves
   TextureRef tickRaw_;    // this tick's frame before any stage
+  TextureRef lastEnhanced_;  // the last Upscale result, reused on a repeat tick
   TextureRef lastGraded_;
   bool gradeDirty_ = true;
   std::optional<std::chrono::steady_clock::time_point> tickArrival_;
