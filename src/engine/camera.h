@@ -14,6 +14,7 @@
 #include "core/frame_sync.h"
 #include "core/input_health.h"
 #include "core/show.h"
+#include "core/skin_match.h"
 #include "core/stage_guard.h"
 #include "core/stage_params.h"
 #include "core/state_store.h"
@@ -60,6 +61,18 @@ class Camera final : public InputSink {
   bool wantsMatte(std::chrono::steady_clock::time_point now) const;
   const nlohmann::json& matteParams() const { return matteParams_; }
   const nlohmann::json& backgroundParams() const { return backgroundParams_; }
+  const nlohmann::json& colorParams() const { return colorParams_; }
+  // Match (spec D9-D16): a camera matches another in the Engine's tick, which reads these. The
+  // search of skin statistics and the eased correction stay entirely in the camera; the tick is
+  // never blocked (the readbacks are 128x72 and asynchronous) and stage params are never written.
+  bool matchMode() const;
+  std::string matchTo() const;
+  // The last measured skin statistics of the frame leaving Colour — what a camera matching this
+  // one reads (with the previous tick's matte as the alpha mask).
+  std::optional<SkinStats> matchOutputStats() const { return matchOutput_; }
+  void setMatchReference(std::optional<SkinStats> ref, bool refHasPicture);
+  // True while another camera matches this one: it measures its output even out of Match mode.
+  void setMatchedBy(bool matched) { matchedBy_ = matched; }
   // Second half: rawAlpha (null = no matte this tick) → stages → readback → fan-out.
   // previewWanted forces the one readback even when no output needsCpu(), so a visible preview
   // (D5) still gets the image through the frame tap.
@@ -104,6 +117,12 @@ class Camera final : public InputSink {
     ReadbackSlot slot;
     std::shared_ptr<const CpuImage> image;
   };
+  // One Match measurement in flight: up to three tiny readbacks (entering, leaving, alpha).
+  struct MatchRound {
+    ReadbackSlot in, out, alpha;
+    bool wantIn = false, wantOut = false, wantAlpha = false;
+    CpuImage inImg, outImg, alphaImg;
+  };
   void startInput();
   void startOutput(OutputSlot& slot);
   void loadStageParams();
@@ -113,6 +132,17 @@ class Camera final : public InputSink {
   void pollBackgroundTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   void pollUpscaleTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   void pollCleanupTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
+  // Match (Task 7): the grade for Match mode — the params' grade without the LUT, plus the eased
+  // correction. Calibrate keeps the stored LUT (rebuilt by loadStageParams).
+  ColorGrade matchGrade() const;
+  // Finish any in-flight 128x72 measurement without waiting, and ease the correction when the
+  // round is complete. Called once per tick before the frame is picked.
+  void finishMatchRound(std::chrono::steady_clock::time_point now);
+  // Begin a measurement round every 6th tick: the frame entering Colour, the frame leaving it, and
+  // the previous tick's refined matte. The copies are cheap dispatches; the map happens later.
+  void beginMatchRound(const TextureRef& entering);
+  // Solve a new target (or hold) and ease towards it. `own` is the entering frame's statistics.
+  void updateMatchTarget(const std::optional<SkinStats>& own, std::chrono::steady_clock::time_point now);
   // The slate source fitted to the camera's last frame size, cached per (source, size). Only runs
   // on the no-picture path, so it costs nothing while the camera is live.
   TextureRef fittedSlate(const TextureRef& source);
@@ -183,5 +213,18 @@ class Camera final : public InputSink {
   // wants it, so such a camera does no readback work.
   std::optional<ReadbackState> readback_;
   std::shared_ptr<const CpuImage> tickCpu_;  // this tick's shared image, for the frame tap
+  // Match state (Task 7). All tick-thread only.
+  uint64_t matchTick_ = 0;                             // beginTick counter, for the every-6th cadence
+  std::optional<MatchRound> matchRound_;               // one measurement at a time
+  int matchRoundAge_ = 0;                              // ticks the current round has been in flight
+  bool matchedBy_ = false;                             // another camera matches this one
+  MatchCorrection correction_;                         // the eased correction the grade carries
+  MatchCorrection matchTarget_;                        // the last solved target
+  std::optional<SkinStats> matchOwn_;                  // the entering frame's statistics
+  std::optional<SkinStats> matchRef_;                  // the reference camera's output statistics
+  std::optional<SkinStats> matchOutput_;               // this camera's output statistics (for others)
+  bool matchRefLive_ = false;                          // the reference had a live picture
+  std::optional<std::chrono::steady_clock::time_point> lastMatchAt_;
+  TextureRef lastAlpha_;  // the previous tick's refined matte, for the skin mask
 };
 }  // namespace bc

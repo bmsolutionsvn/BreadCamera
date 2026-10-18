@@ -168,6 +168,25 @@ void Engine::run() {
     std::vector<FrameTap> frames;
     {
       std::lock_guard l(mutex_);
+      // Match wiring (spec D9, Task 7), before half 1: hand every Match camera its reference's
+      // measured output, and mark the referenced cameras so they measure their output even when
+      // they are not in Match mode themselves.
+      for (auto& cam : cameras_) cam->setMatchedBy(false);
+      for (auto& cam : cameras_) {
+        if (!cam->matchMode()) continue;
+        const std::string to = cam->matchTo();
+        if (to.empty()) continue;  // Auto balance needs no reference
+        Camera* ref = nullptr;
+        for (auto& c : cameras_) {
+          if (c->config().id == to) {
+            ref = c.get();
+            break;
+          }
+        }
+        cam->setMatchReference(ref ? ref->matchOutputStats() : std::nullopt,
+                               ref != nullptr && ref->tickPhase() == FeedPhase::Live);
+        if (ref) ref->setMatchedBy(true);
+      }
       // Half 1: every camera picks and converts.
       for (auto& cam : cameras_) {
         try {

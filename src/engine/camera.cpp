@@ -13,6 +13,11 @@
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
+namespace {
+// Match's tiny readbacks (spec §3.1: the main path never copies a full frame to the CPU).
+constexpr uint32_t kMatchW = 128, kMatchH = 72;
+}  // namespace
+
 Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
     : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy) {
   loadStageParams();
@@ -35,7 +40,14 @@ Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateS
 Camera::~Camera() { stop(); }
 
 void Camera::loadStageParams() {
+  const nlohmann::json prevColor = colorParams_;
   colorParams_ = normalizeStageParams("color", cfg_.stages.value("color", nlohmann::json::object()));
+  if (colorParams_ != prevColor) {  // spec D16: the correction lives in the camera and resets here
+    correction_ = MatchCorrection{};
+    matchTarget_ = MatchCorrection{};
+    matchOwn_.reset();
+    lastMatchAt_.reset();
+  }
   auto lutKeep = grade_.lut;
   grade_ = gradeFrom(colorParams_);
   const std::string lut = colorParams_.value("lut", std::string());
@@ -93,6 +105,81 @@ double Camera::stageGpuMs(const std::string& kind) const {
   if (kind == "upscale") return upscaleGpuMs_;
   if (kind == "cleanup") return cleanupGpuMs_;
   return 0;
+}
+
+bool Camera::matchMode() const {
+  return colorParams_.value("enabled", false) && colorParams_.value("mode", std::string("calibrate")) == "match";
+}
+
+std::string Camera::matchTo() const { return colorParams_.value("matchTo", std::string()); }
+
+void Camera::setMatchReference(std::optional<SkinStats> ref, bool refHasPicture) {
+  matchRef_ = std::move(ref);
+  matchRefLive_ = refHasPicture;
+}
+
+ColorGrade Camera::matchGrade() const {
+  ColorGrade g = gradeFrom(colorParams_);
+  g.lut.reset();  // spec D9: no LUT in Match; the stored LUT returns in Calibrate
+  g.exposure += correction_.exposure;
+  g.temperature += correction_.temperature;
+  g.tint += correction_.tint;
+  return g;
+}
+
+void Camera::updateMatchTarget(const std::optional<SkinStats>& own, Clock::time_point now) {
+  const double dt = lastMatchAt_ ? std::chrono::duration<double>(now - *lastMatchAt_).count() : 0.1;
+  lastMatchAt_ = now;
+  std::optional<MatchCorrection> target;
+  if (!matchTo().empty()) {
+    if (matchRef_ && matchRefLive_ && own) target = solveMatch(*own, *matchRef_);
+  } else if (own) {
+    target = autoBalance(*own);
+  }
+  if (!target) return;  // hold: no skin, or the reference is down (spec D12, review focus 3)
+  matchTarget_ = *target;
+  correction_ = ease(correction_, matchTarget_, dt);
+}
+
+void Camera::finishMatchRound(Clock::time_point now) {
+  if (!matchRound_) return;
+  MatchRound& r = *matchRound_;
+  if (r.wantIn && r.in.tryFinish(tools_.conv, r.inImg)) r.wantIn = false;
+  if (r.wantOut && r.out.tryFinish(tools_.conv, r.outImg)) r.wantOut = false;
+  if (r.wantAlpha && r.alpha.tryFinish(tools_.conv, r.alphaImg)) r.wantAlpha = false;
+  if (r.wantIn || r.wantOut || r.wantAlpha) {
+    // ponytail: a GPU copy that never lands is dropped after ~2 s; a per-round retry budget if a
+    // driver wedges on the tiny copy.
+    if (++matchRoundAge_ > 120) matchRound_.reset();
+    return;
+  }
+  const uint8_t* alpha = r.alphaImg.bgra.empty() ? nullptr : r.alphaImg.bgra.data();
+  if (!r.outImg.bgra.empty()) {
+    matchOutput_ = skinStats(r.outImg.bgra.data(), alpha, kMatchW, kMatchH);
+  }
+  if (matchMode() && !r.inImg.bgra.empty()) {
+    matchOwn_ = skinStats(r.inImg.bgra.data(), alpha, kMatchW, kMatchH);
+    updateMatchTarget(matchOwn_, now);
+  }
+  matchRound_.reset();
+}
+
+void Camera::beginMatchRound(const TextureRef& entering) {
+  if (matchRound_) return;  // one measurement at a time; a re-begin would discard an unfinished frame
+  if (!matchMode() && !matchedBy_) return;
+  MatchRound r;
+  if (matchMode()) {
+    r.in.begin(tools_.conv, *tools_.conv.toBgra8(*entering, kMatchW, kMatchH));
+    r.wantIn = true;
+  }
+  r.out.begin(tools_.conv, *tools_.conv.toBgra8(*tickFrame_, kMatchW, kMatchH));
+  r.wantOut = true;
+  if (lastAlpha_) {
+    r.alpha.begin(tools_.conv, *tools_.conv.toBgra8(*lastAlpha_, kMatchW, kMatchH));
+    r.wantAlpha = true;
+  }
+  matchRoundAge_ = 0;
+  matchRound_ = std::move(r);
 }
 
 void Camera::pollColorTimer(Clock::time_point now) {
@@ -345,6 +432,8 @@ TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point n
 
 TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
   pollColorTimer(now);
+  ++matchTick_;
+  finishMatchRound(now);  // never waits: the previous small readbacks may or may not be ready
   auto pick = sync_.pick(now);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
@@ -374,7 +463,20 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   }
   tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
   tickFrame_ = enhance(tickRaw_, pick.fresh, now);
+  const TextureRef entering = tickFrame_;  // the frame entering Colour, for Match's own statistics
   const bool colorOn = colorParams_.value("enabled", false);
+  if (matchMode()) {
+    // spec D11/D16: Match drives the existing grade. Dirty only when a field moves by more than
+    // 1e-3, so a still correction reuses the last graded texture (as Calibrate does).
+    const ColorGrade g = matchGrade();
+    const bool moved = std::abs(g.exposure - grade_.exposure) > 1e-3f ||
+                       std::abs(g.temperature - grade_.temperature) > 1e-3f ||
+                       std::abs(g.tint - grade_.tint) > 1e-3f;
+    if (moved || grade_.lut) {  // the correction moved, or a Calibrate LUT is still attached
+      grade_ = g;
+      gradeDirty_ = true;
+    }
+  }
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
     // A size change does not dirty the grade, so the reuse must also match the current frame's
     // size: the colour stage can be bypassed across a renegotiation and leave a stale texture.
@@ -400,6 +502,7 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
       }
     }
   }
+  if (matchTick_ % 6 == 0) beginMatchRound(entering);  // three tiny readbacks, finished later
   return tickFrame_;
 }
 
@@ -418,6 +521,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
       matteGuard_.failed(e.what(), now);
     }
   }
+  lastAlpha_ = alpha;  // Match masks skin with the previous tick's refined matte (one-tick lag)
   auto bg = backgroundFrom(backgroundParams_);
   if (bg.mode != BackgroundMode::None && alpha && backgroundGuard_.shouldRun(now)) {
     const bool gpuTimed = backgroundTimer_.has_value();
@@ -526,6 +630,15 @@ void Camera::publishStatus() {
   state_.set(path("/stages/color/state"), colorGuard_.stateName(colorOn));
   auto colorErr = colorGuard_.error() ? colorGuard_.error() : lutError_;
   state_.set(path("/stages/color/error"), errorToJson(colorOn ? colorErr : std::nullopt));
+  // spec D9/D12: the Match state the Inspector shows. Null in Calibrate.
+  std::optional<std::string> matchState;
+  if (matchMode()) {
+    if (!matchOwn_) matchState = "holding-no-face";
+    else if (matchTo().empty()) matchState = "auto";
+    else if (!matchRef_ || !matchRefLive_) matchState = "holding-reference-down";
+    else matchState = "matching";
+  }
+  state_.set(path("/stages/color/match"), matchState ? nlohmann::json(*matchState) : nlohmann::json(nullptr));
   state_.set(path("/stages/matte/state"), matteGuard_.stateName(matteOn));
   state_.set(path("/stages/matte/error"), errorToJson(matteOn ? matteGuard_.error() : std::optional<ErrorInfo>{}));
   state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));

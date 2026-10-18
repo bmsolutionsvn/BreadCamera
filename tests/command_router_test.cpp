@@ -293,6 +293,45 @@ TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {
   CHECK(call(r, {{"cmd", "removeStage"}, {"args", {{"cameraId", cam}, {"stage", "background"}}}})["error"]["code"] == "not-found");
 }
 
+TEST_CASE("CommandRouter: Match refuses itself, unknown cameras and loops") {
+  // spec D9/D16: a camera may match another, never itself, never an unknown id, and never a
+  // camera whose own match chain loops back to it.
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto add = [&](std::string name) {
+    return call(r, {{"cmd", "addCamera"}, {"args", {{"name", name}, {"input", kSrt}}}})["result"]["id"].get<std::string>();
+  };
+  auto set = [&](const std::string& cam, json params) {
+    return call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "color"}, {"params", params}}}});
+  };
+  const auto a = add("A");
+  const auto b = add("B");
+  const auto c = add("C");
+
+  auto self = set(a, {{"enabled", true}, {"mode", "match"}, {"matchTo", a}});
+  CHECK(self["error"]["code"] == "invalid");
+  CHECK(self["error"]["message"] == "A camera cannot match itself.");
+
+  auto unknown = set(a, {{"enabled", true}, {"mode", "match"}, {"matchTo", "zz"}});
+  CHECK(unknown["error"]["code"] == "invalid");
+  CHECK(unknown["error"]["message"] == "No camera zz.");
+
+  REQUIRE(set(a, {{"enabled", true}, {"mode", "match"}, {"matchTo", b}})["ok"] == true);
+  // b -> a is refused: a already matches b.
+  auto loop = set(b, {{"enabled", true}, {"mode", "match"}, {"matchTo", a}});
+  CHECK(loop["error"]["code"] == "invalid");
+  CHECK(loop["error"]["message"] == "A already matches this camera, directly or through another camera.");
+
+  REQUIRE(set(b, {{"enabled", true}, {"mode", "match"}, {"matchTo", c}})["ok"] == true);
+  // c -> a is refused: a -> b -> c loops back to c.
+  auto loop2 = set(c, {{"enabled", true}, {"mode", "match"}, {"matchTo", a}});
+  CHECK(loop2["error"]["code"] == "invalid");
+  CHECK(loop2["error"]["message"] == "A already matches this camera, directly or through another camera.");
+
+  // Removing a camera others match is allowed: the others hold (spec D12).
+  CHECK(call(r, {{"cmd", "removeCamera"}, {"args", {{"id", b}}}})["ok"] == true);
+}
+
 TEST_CASE("CommandRouter: calibrateColor stores the result; undo, clear and removal") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);

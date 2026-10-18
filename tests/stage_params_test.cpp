@@ -62,6 +62,13 @@ TEST_CASE("schemaToJson: unavailable appears only when set") {
   CHECK(bc::schemaToJson(*s, "Needs an NVIDIA RTX card.")["unavailable"] == "Needs an NVIDIA RTX card.");
 }
 
+TEST_CASE("colour: an old colour stage loads in Calibrate mode") {
+  // A show written before Match (spec D9) has no mode/matchTo: it loads as Calibrate.
+  auto p = bc::normalizeStageParams("color", {{"enabled", true}});
+  CHECK(p["mode"] == "calibrate");
+  CHECK(p["matchTo"] == "");
+}
+
 TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
   auto c = bc::normalizeStageParams("color", nlohmann::json::object());
   CHECK(c["enabled"] == false);

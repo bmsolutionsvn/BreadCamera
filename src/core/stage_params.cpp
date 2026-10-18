@@ -65,6 +65,10 @@ std::vector<StageSchema> build() {
   };
   color.fields = {
       simple("enabled", "bool", false, "On"),
+      // spec D9: the Colour effect has two modes. Hidden: the Inspector's segmented control
+      // sends them, but they are not rendered as generic fields.
+      hide(enumeration("mode", {"calibrate", "match"}, {"Calibrate", "Match"}, "calibrate", "Mode")),
+      hide(simple("matchTo", "text", "", "Match to")),
       hide(number("exposure", -3, 3, 0.05, 0, "Exposure (EV)")),
       hide(number("temperature", -100, 100, 1, 0, "Temperature")),
       hide(number("tint", -100, 100, 1, 0, "Tint")),
