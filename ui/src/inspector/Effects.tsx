@@ -106,7 +106,7 @@ export function Effects({ client, snap, cam, n, schemas, onAdd, calib }: {
               {errors[s.kind] && <ErrorBlock message={errors[s.kind]} />}
               {st?.note && <p className="note">{st.note}</p>}
               {missing.length > 0 && <p className="note">Needs {missing.map(labelOf).join(', ')}, which is not on this camera.</p>}
-              {s.kind === 'color' && <ColourPanel client={client} cam={cam} n={n} calib={calib} />}
+              {s.kind === 'color' && <ColourPanel client={client} snap={snap} cam={cam} n={n} calib={calib} />}
               <StageForm schema={s} values={values} onChange={(p) => change(s.kind, p)} />
             </div>
           </div>

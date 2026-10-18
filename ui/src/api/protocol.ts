@@ -23,10 +23,11 @@ export interface StageState {
   error: ErrorInfo | null;
   gpuMs?: number;
   note?: string | null;
+  match?: string | null;
 }
 export interface StageField {
   key: string;
-  type: 'number' | 'enum' | 'bool' | 'color' | 'path';
+  type: 'number' | 'enum' | 'bool' | 'color' | 'path' | 'text';
   default: unknown;
   label: string;
   min?: number;
