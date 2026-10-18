@@ -292,7 +292,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
 
   if (cmd == "getStageSchemas") {
     json out = json::array();
-    for (auto& s : stageSchemas()) out.push_back(schemaToJson(s));
+    for (auto& s : stageSchemas()) out.push_back(schemaToJson(s, fx_.stageUnavailable(s.kind)));
     return out;
   }
 
@@ -405,6 +405,12 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   } else if (cmd == "setStage") {
     auto& c = findCam(str(args, "cameraId"));
     const auto stage = str(args, "stage");
+    // Adding an effect this PC cannot run is refused; changing one already on the camera (a show
+    // moved from an RTX PC) stays editable.
+    if (!c.stages.contains(stage)) {
+      const auto why = fx_.stageUnavailable(stage);
+      if (!why.empty()) throw CmdError("unavailable", why);
+    }
     const auto& params = obj(args, "params");
     json merged = c.stages.value(stage, json::object());
     for (auto& [k, v] : params.items()) merged[k] = v;

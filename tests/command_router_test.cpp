@@ -124,6 +124,13 @@ TEST_CASE("CommandRouter: hostile or malformed messages get an error, never a cr
 }
 
 namespace {
+// An effect the GPU cannot run: Clean up is unavailable on this PC.
+struct UnavailFx : FakeFx {
+  std::string stageUnavailable(const std::string& kind) override {
+    return kind == "cleanup" ? "Needs an NVIDIA RTX card." : "";
+  }
+};
+
 // Records the preview effects so the two routing-only commands are pinned too.
 struct RecFx : bc::CommandRouter::Effects {
   std::vector<bc::ClientId> subClients;
@@ -243,7 +250,36 @@ TEST_CASE("CommandRouter: setStage merges, normalizes and validates") {
   auto bad = call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"choke", 50}}}}}});
   CHECK(bad["error"]["code"] == "invalid");
   CHECK(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", "nope"}, {"stage", "matte"}, {"params", json::object()}}}})["error"]["code"] == "not-found");
-  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 3);
+  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 5);
+}
+
+TEST_CASE("CommandRouter: an unavailable effect cannot be added, but one already on a camera can be changed") {
+  UnavailFx fx;
+  bc::CommandRouter r({}, fx);
+  bool sawCleanup = false;
+  const json schemes = call(r, {{"cmd", "getStageSchemas"}})["result"];
+  for (auto& s : schemes) {
+    if (s["kind"] == "cleanup") {
+      sawCleanup = true;
+      CHECK(s["unavailable"] == "Needs an NVIDIA RTX card.");
+    }
+  }
+  CHECK(sawCleanup);
+  auto cam = call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", kSrt}}}})["result"]["id"];
+  auto refused = call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "cleanup"}, {"params", {{"enabled", true}}}}}});
+  CHECK(refused["error"]["code"] == "unavailable");
+  CHECK(refused["error"]["message"] == "Needs an NVIDIA RTX card.");
+  CHECK_FALSE(r.show().cameras[0].stages.contains("cleanup"));
+  // A show moved from an RTX PC already has Clean up on the camera: changing it is always allowed.
+  bc::Show loaded;
+  bc::CameraConfig c;
+  c.id = "aaaa1111";
+  c.name = "Cam";
+  c.stages["cleanup"] = json{{"enabled", false}};
+  loaded.cameras.push_back(c);
+  bc::CommandRouter r2(loaded, fx);
+  CHECK(call(r2, {{"cmd", "setStage"}, {"args", {{"cameraId", "aaaa1111"}, {"stage", "cleanup"}, {"params", {{"enabled", true}}}}}})["ok"] == true);
+  CHECK(r2.show().cameras[0].stages["cleanup"]["enabled"] == true);
 }
 
 TEST_CASE("CommandRouter: removeStage takes an effect off the camera") {

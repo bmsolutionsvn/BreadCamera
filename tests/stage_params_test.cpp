@@ -41,10 +41,25 @@ TEST_CASE("stage schemas: pipeline order, labels, add-in metadata, enabled first
   auto& mode = j["fields"][1];
   CHECK(mode["key"] == "mode");
   CHECK(mode["options"].size() == mode["optionLabels"].size());
-  REQUIRE(bc::stageSchemas().size() == 3);
-  CHECK(bc::stageSchemas()[0].kind == "color");  // pipeline order: colour runs first
-  CHECK(bc::stageSchemas()[1].kind == "matte");
+  REQUIRE(bc::stageSchemas().size() == 5);
+  CHECK(bc::stageSchemas()[0].kind == "cleanup");  // pipeline order: clean up runs first
+  CHECK(bc::stageSchemas()[1].kind == "upscale");
   for (auto& s : bc::stageSchemas()) CHECK(s.fields.front().key == "enabled");
+}
+
+TEST_CASE("stage schemas: clean up and upscale come first, in pipeline order") {
+  std::vector<std::string> kinds;
+  for (auto& s : bc::stageSchemas()) kinds.push_back(s.kind);
+  CHECK(kinds == std::vector<std::string>{"cleanup", "upscale", "color", "matte", "background"});
+  auto up = bc::normalizeStageParams("upscale", {{"enabled", true}});
+  CHECK(up["target"] == "1080");
+  CHECK_THROWS(bc::normalizeStageParams("upscale", {{"target", "2160"}}));
+}
+
+TEST_CASE("schemaToJson: unavailable appears only when set") {
+  auto* s = bc::findStageSchema("cleanup");
+  CHECK_FALSE(bc::schemaToJson(*s).contains("unavailable"));
+  CHECK(bc::schemaToJson(*s, "Needs an NVIDIA RTX card.")["unavailable"] == "Needs an NVIDIA RTX card.");
 }
 
 TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
@@ -52,7 +67,7 @@ TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
   CHECK(c["enabled"] == false);
   CHECK(c["gamma"] == 1);
   CHECK(c["lut"] == "");
-  CHECK(bc::stageSchemas().front().kind == "color");
+  CHECK(bc::stageSchemas()[2].kind == "color");  // colour runs after clean up and upscale
   auto j = bc::schemaToJson(*bc::findStageSchema("color"));
   bool lutHidden = false;
   for (auto& f : j["fields"]) if (f["key"] == "lut") lutHidden = f.value("hidden", false);

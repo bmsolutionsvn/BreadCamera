@@ -180,6 +180,11 @@ int wmain(int argc, wchar_t** argv) {
       return {{"lutPath", r.lutPath}, {"deltaEBefore", r.deltaEBefore}, {"deltaE", r.deltaE}, {"rating", r.rating}, {"reference", r.reference}};
     }
     void forgetColor(const std::string& id) override { calib.forget(id); }
+    // Task 4 fills this: Clean up reports "Needs an NVIDIA RTX card." when the RTX Video SDK is absent.
+    std::string stageUnavailable(const std::string& kind) override {
+      (void)kind;
+      return "";
+    }
     void shutdown() override { g_quit = true; }
   } fx(engine, store, server, hub, previews, calib);
   bc::CommandRouter router(loaded.show, fx);

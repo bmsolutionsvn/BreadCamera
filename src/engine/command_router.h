@@ -35,6 +35,12 @@ class CommandRouter {
     virtual nlohmann::json findChart(const std::string& cameraId) = 0;
     virtual nlohmann::json calibrateColor(const std::string& cameraId, const std::string& chart, const ChartQuad& q) = 0;
     virtual void forgetColor(const std::string& cameraId) = 0;
+    // Why an effect cannot be added on this PC (empty = it can). Not pure: a test fake or an
+    // engine that never had the seam keeps compiling, and the API path stays the same.
+    virtual std::string stageUnavailable(const std::string& kind) {
+      (void)kind;
+      return "";
+    }
     virtual void shutdown() = 0;
   };
 
