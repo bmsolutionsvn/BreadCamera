@@ -102,7 +102,7 @@ int wmain(int argc, wchar_t** argv) {
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
 
-  bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
+  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .gpu = gpu.get()}, state, factory);
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);
   engine.apply(loaded.show);

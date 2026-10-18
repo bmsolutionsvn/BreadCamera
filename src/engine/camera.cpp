@@ -15,6 +15,16 @@ using Clock = std::chrono::steady_clock;
 Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
     : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy) {
   loadStageParams();
+  if (tools_.gpu) {
+    // Per-stage GPU timing (spec D14). A query failure falls back to the CPU timing.
+    try {
+      colorTimer_.emplace(*tools_.gpu);
+      backgroundTimer_.emplace(*tools_.gpu);
+    } catch (const std::exception&) {
+      colorTimer_.reset();
+      backgroundTimer_.reset();
+    }
+  }
 }
 
 Camera::~Camera() { stop(); }
@@ -67,6 +77,28 @@ void Camera::loadStageParams() {
 
 bool Camera::wantsMatte(Clock::time_point now) const {
   return matteParams_.value("enabled", false) && matteGuard_.shouldRun(now);
+}
+
+double Camera::stageGpuMs(const std::string& kind) const {
+  if (kind == "color") return colorGpuMs_;
+  if (kind == "background") return backgroundGpuMs_;
+  return 0;
+}
+
+void Camera::pollColorTimer(Clock::time_point now) {
+  if (!colorTimer_) return;
+  if (auto took = colorTimer_->poll()) {
+    colorGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    colorGuard_.succeeded(*took, std::chrono::milliseconds(4), now);
+  }
+}
+
+void Camera::pollBackgroundTimer(const TickSchedule& sched, Clock::time_point now) {
+  if (!backgroundTimer_) return;
+  if (auto took = backgroundTimer_->poll()) {
+    backgroundGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    backgroundGuard_.succeeded(*took, sched.rate().period() / 4, now);
+  }
 }
 
 void Camera::startInput() {
@@ -185,6 +217,7 @@ TextureRef Camera::fittedSlate(const TextureRef& source) {
 }
 
 TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
+  pollColorTimer(now);
   auto pick = sync_.pick(now);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
@@ -210,13 +243,20 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
         lastGraded_->height == lastConverted_->height) {
       tickFrame_ = lastGraded_;
     } else {
+      const bool gpuTimed = colorTimer_.has_value();
+      if (gpuTimed) colorTimer_->begin();
       const auto t0 = Clock::now();
       try {
         lastGraded_ = tools_.grader.apply(tickRaw_, grade_);
         gradeDirty_ = false;
         tickFrame_ = lastGraded_;
-        colorGuard_.succeeded(Clock::now() - t0, std::chrono::milliseconds(4), now);
+        if (gpuTimed) {
+          colorTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+        } else {
+          colorGuard_.succeeded(Clock::now() - t0, std::chrono::milliseconds(4), now);
+        }
       } catch (const std::exception& e) {
+        if (gpuTimed) colorTimer_->end();
         colorGuard_.failed(e.what(), now);
       }
     }
@@ -226,6 +266,7 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
 
 void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha,
                      bool previewWanted) {
+  pollBackgroundTimer(sched, now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -238,14 +279,21 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
   }
   auto bg = backgroundFrom(backgroundParams_);
   if (bg.mode != BackgroundMode::None && alpha && backgroundGuard_.shouldRun(now)) {
+    const bool gpuTimed = backgroundTimer_.has_value();
+    if (gpuTimed) backgroundTimer_->begin();
     const auto t0 = Clock::now();
     try {
       bg.image = bgImage_;
       frame = tools_.comp.apply(frame, alpha, bg);
       hasAlpha = bg.mode == BackgroundMode::Keyed;
       // ponytail: a fixed quarter-tick budget per camera; share by camera count if 8+ cameras run.
-      backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+      if (gpuTimed) {
+        backgroundTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+      } else {
+        backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+      }
     } catch (const std::exception& e) {
+      if (gpuTimed) backgroundTimer_->end();
       backgroundGuard_.failed(e.what(), now);
       frame = tickFrame_;
       hasAlpha = false;
@@ -342,6 +390,8 @@ void Camera::publishStatus() {
   state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));
   auto bgErr = backgroundGuard_.error() ? backgroundGuard_.error() : bgImageError_;
   state_.set(path("/stages/background/error"), errorToJson(bgOn ? bgErr : std::nullopt));
+  if (colorTimer_) state_.set(path("/stages/color/gpuMs"), std::round(colorGpuMs_ * 10.0) / 10.0);
+  if (backgroundTimer_) state_.set(path("/stages/background/gpuMs"), std::round(backgroundGpuMs_ * 10.0) / 10.0);
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

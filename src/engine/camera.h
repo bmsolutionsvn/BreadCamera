@@ -22,6 +22,7 @@
 #include "engine/gpu_tools.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
+#include "gpu/gpu_timer.h"
 #include "gpu/readback.h"
 
 namespace bc {
@@ -63,6 +64,8 @@ class Camera final : public InputSink {
   StageGuard& matteGuard() { return matteGuard_; }
   StageGuard& backgroundGuard() { return backgroundGuard_; }
   StageGuard& colorGuard() { return colorGuard_; }
+  // The last GPU measurement for a stage in ms, 0 when none (spec D14).
+  double stageGpuMs(const std::string& kind) const;
   FeedPhase tickPhase() const { return tickPhase_; }
   TextureRef lastFrame() const { return lastFrame_; }
   // This tick's single readback, the image shared by every CPU output and the frame tap. Null
@@ -98,6 +101,10 @@ class Camera final : public InputSink {
   void startInput();
   void startOutput(OutputSlot& slot);
   void loadStageParams();
+  // Poll each stage's GpuTimer once a tick; a finished measurement feeds that stage's
+  // guard (spec D14). A no-op when tools_.gpu is null (the stages time themselves on CPU).
+  void pollColorTimer(std::chrono::steady_clock::time_point now);
+  void pollBackgroundTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
   // The slate source fitted to the camera's last frame size, cached per (source, size). Only runs
   // on the no-picture path, so it costs nothing while the camera is live.
   TextureRef fittedSlate(const TextureRef& source);
@@ -137,6 +144,10 @@ class Camera final : public InputSink {
   StageGuard matteGuard_;
   StageGuard backgroundGuard_;
   StageGuard colorGuard_;
+  std::optional<GpuTimer> colorTimer_;       // present when tools_.gpu is set (spec D14)
+  std::optional<GpuTimer> backgroundTimer_;
+  double colorGpuMs_ = 0;       // last GPU measurement per stage, in ms
+  double backgroundGpuMs_ = 0;
   TextureRef bgImage_;               // linear RGBA16F replace background, or null
   std::string bgImagePath_;          // the loaded image's path, to skip reloading
   std::optional<ErrorInfo> bgImageError_;

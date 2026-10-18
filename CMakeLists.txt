@@ -204,6 +204,8 @@ add_library(bc_gpu STATIC
   src/gpu/compositor.cpp
   # M3 Task 3
   src/gpu/color_grader.cpp
+  # webcam-fx Task 1
+  src/gpu/gpu_timer.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
@@ -392,6 +394,8 @@ add_executable(bc_tests
   tests/compositor_test.cpp
   # Task 5
   tests/gpu_test.cpp
+  # webcam-fx Task 1
+  tests/gpu_timer_test.cpp
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp

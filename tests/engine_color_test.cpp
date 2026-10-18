@@ -3,12 +3,17 @@
 #include <thread>
 
 #include "core/lut.h"
+#include "core/rate.h"
 #include "core/stage_params.h"
 #include "core/state_store.h"
+#include "core/tick_schedule.h"
+#include "engine/camera.h"
 #include "engine/engine.h"
+#include "engine/gpu_tools.h"
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
+#include "io/input.h"
 #include "support/fake_input.h"
 #include "support/temp_dir.h"
 
@@ -24,7 +29,7 @@ struct Rig {
   bc::ColorGrader grader{*gpu, pool};
   bc::StateStore state;
   bc::test::FakeFactory factory{conv};
-  bc::Engine engine{bc::GpuTools{conv, comp, grader}, state, factory};
+  bc::Engine engine{bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .gpu = gpu.get()}, state, factory};
   ~Rig() { engine.stop(); }
   json at(const std::string& p) {
     auto s = state.snapshot();
@@ -107,4 +112,39 @@ TEST_CASE("Engine::capture returns frames before stages, and refuses a camera wi
     CHECK(std::string(e.what()).find("b") != std::string::npos);
   }
   CHECK_THROWS_AS(r.engine.capture({"zzz"}), std::invalid_argument);
+}
+
+TEST_CASE("Camera: the colour stage publishes its GPU time") {
+  Rig r;
+  bc::Show show;
+  show.cameras.push_back(cam("a", {{"enabled", true}, {"exposure", 1}}, {{"bgra", {131, 131, 131, 255}}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(1300ms);
+  auto published = r.at("/cameras/a/stages/color/gpuMs");
+  REQUIRE(published.is_number());
+  CHECK(published.get<double>() >= 0.0);
+
+  // stageGpuMs is the number publishStatus writes: drive one camera by hand and watch it fill.
+  std::vector<uint8_t> px(64 * 36 * 4, 131);
+  for (size_t i = 3; i < px.size(); i += 4) px[i] = 255;
+  bc::StateStore state;
+  bc::test::FakeFactory factory{r.conv};
+  bc::Camera camera(cam("a", {{"enabled", true}, {"exposure", 1}}), factory,
+                    bc::GpuTools{.conv = r.conv, .comp = r.comp, .grader = r.grader, .gpu = r.gpu.get()}, state, {});
+  bc::TickSchedule sched{bc::Rate{60, 1}};
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  for (int i = 0; i < 60 && camera.stageGpuMs("color") <= 0; ++i) {
+    const auto now = std::chrono::steady_clock::now();
+    camera.onVideo(bc::VideoFrameIn{r.conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, i});
+    camera.beginTick(now, slate);
+    camera.endTick(static_cast<uint64_t>(i), sched, now, nullptr);
+    r.gpu->context()->Flush();
+    std::this_thread::sleep_for(2ms);
+  }
+  CHECK(camera.stageGpuMs("color") > 0);
+  camera.publishStatus();
+  auto gpuMs = state.snapshot().at(json::json_pointer("/cameras/a/stages/color/gpuMs"));
+  REQUIRE(gpuMs.is_number());
+  CHECK(gpuMs.get<double>() >= 0.0);  // the published number is stageGpuMs rounded to 0.1
 }
