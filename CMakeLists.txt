@@ -168,6 +168,8 @@ add_library(bc_core STATIC
   # M3 Task 1
   src/core/color_math.cpp
   src/core/lut.cpp
+  # webcam-fx Task 6
+  src/core/skin_match.cpp
   # M3 Task 2
   src/core/chart.cpp
   src/core/calibration.cpp
@@ -476,6 +478,8 @@ add_executable(bc_tests
   # M3 Task 1
   tests/color_math_test.cpp
   tests/lut_test.cpp
+  # webcam-fx Task 6
+  tests/skin_match_test.cpp
   # M3 Task 2
   tests/chart_test.cpp
   tests/calibration_test.cpp
