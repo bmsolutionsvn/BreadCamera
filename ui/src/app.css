@@ -214,7 +214,7 @@ select.ctl { appearance: auto; }
 .pick { display: grid; gap: 4px; }
 .pick-row { display: grid; grid-template-columns: 16px 24px 1fr auto; gap: 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--bm-border); border-radius: 4px; background: var(--bm-surface); color: var(--bm-text); }
 .pick-row.sel { border-color: var(--bm-brand); background: var(--bm-brand-wash); }
-.pick-row.done { opacity: .5; }
+.pick-row.off :is(.ic, b, p) { opacity: .5; }
 .pick-row input { margin: 2px 0 0; accent-color: var(--bm-brand); }
 .pick-row .ic { color: var(--bm-text-muted); }
 .pick-row b { font-weight: 600; display: block; }

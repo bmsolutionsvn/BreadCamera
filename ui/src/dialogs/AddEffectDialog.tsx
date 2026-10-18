@@ -9,7 +9,7 @@ import { isAdded } from '../inspector/Effects';
 
 // Every registered effect appears here automatically (spec §5.4); a missing dependency is explained, not hidden.
 export function AddEffectDialog({ client, camera, n, schemas, onClose }: { client: EngineClient; camera: CameraConfig; n: number; schemas: StageSchemaJson[]; onClose: () => void }) {
-  const usable = (s: StageSchemaJson) => !isAdded(camera, s.kind) && s.requires.every((k) => isAdded(camera, k));
+  const usable = (s: StageSchemaJson) => !isAdded(camera, s.kind) && s.requires.every((k) => isAdded(camera, k)) && !s.unavailable;
   const [pick, setPick] = useState(() => schemas.find(usable)?.kind ?? '');
   const [error, setError] = useState('');
   const labelOf = (kind: string) => schemas.find((s) => s.kind === kind)?.label ?? kind;
@@ -46,8 +46,9 @@ export function AddEffectDialog({ client, camera, n, schemas, onClose }: { clien
         {schemas.map((s) => {
           const done = isAdded(camera, s.kind);
           const missing = s.requires.filter((k) => !isAdded(camera, k));
+          const off = done || missing.length > 0 || Boolean(s.unavailable);
           return (
-            <label key={s.kind} className={`pick-row${pick === s.kind ? ' sel' : ''}${done || missing.length ? ' done' : ''}`}>
+            <label key={s.kind} className={`pick-row${pick === s.kind ? ' sel' : ''}${off ? ' off' : ''}`}>
               <input type="radio" name="effect" aria-label={s.label} checked={pick === s.kind} disabled={!usable(s)} onChange={() => setPick(s.kind)} />
               <span className="ic">
                 <Icon name={s.icon as IconName} size={18} />
@@ -55,8 +56,11 @@ export function AddEffectDialog({ client, camera, n, schemas, onClose }: { clien
               <div>
                 <b>{s.label}</b>
                 <p>{s.description}</p>
-                {s.requires.length > 0 && (
-                  <span className="req">{missing.length ? `Add ${missing.map(labelOf).join(', ')} first.` : `Needs ${s.requires.map(labelOf).join(', ')}, already on this camera.`}</span>
+                {(s.requires.length > 0 || s.unavailable) && (
+                  <span className="req">
+                    {s.unavailable ??
+                      (missing.length ? `Add ${missing.map(labelOf).join(', ')} first.` : `Needs ${s.requires.map(labelOf).join(', ')}, already on this camera.`)}
+                  </span>
                 )}
               </div>
               {done && <span className="tag2">ADDED</span>}

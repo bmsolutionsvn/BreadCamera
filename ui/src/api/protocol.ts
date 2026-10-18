@@ -21,6 +21,8 @@ export interface CameraState {
 export interface StageState {
   state: 'off' | 'active' | 'bypassed';
   error: ErrorInfo | null;
+  gpuMs?: number;
+  note?: string | null;
 }
 export interface StageField {
   key: string;
@@ -42,6 +44,7 @@ export interface StageSchemaJson {
   requires: string[];
   onAdd: Record<string, unknown>;
   fields: StageField[];
+  unavailable?: string;
 }
 export interface StateTree {
   engine?: {
