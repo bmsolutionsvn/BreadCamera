@@ -21,7 +21,7 @@ cmake --build --preset release
 ```
 
 `BC_WITH_OMT` is not a cache option in `CMakeLists.txt` (89–99); it is derived: when
-`../OMT-HX/include/omthx/omthx.h` and `../OMT-HX/third_party/libomt/libomt.lib` both exist, CMake does
+`../OMT-HX/include/omthx/omthx.h` and `../OMT-HX/omt/libomt/libomt.h` (its submodules) both exist, CMake does
 `add_subdirectory(${OMTHX_ROOT} omthx-build)` and sets `BC_WITH_OMT ON` (else `OFF`). The build therefore reports
 `BC_WITH_OMT=ON`, and the artifact confirms it:
 

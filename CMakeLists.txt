@@ -86,15 +86,15 @@ if(BC_WITH_VCAM)
   add_subdirectory(vcam)
 endif()
 
-# Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
-# scripts/build-libomt.ps1 once so third_party/libomt is populated.
+# Optional OMT-HX output (see ../OMT-HX). Its CMake builds libomt and libvmx from its omt/ submodules,
+# so the checkout needs `git submodule update --init` once.
 set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
-if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/third_party/libomt/libomt.lib")
+if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/omt/libomt/libomt.h")
   add_subdirectory("${OMTHX_ROOT}" omthx-build)
   set(BC_WITH_OMT ON)
 else()
   set(BC_WITH_OMT OFF)
-  message(STATUS "OMT output OFF: no built OMT-HX checkout at ${OMTHX_ROOT} (run its scripts/build-libomt.ps1)")
+  message(STATUS "OMT output OFF: no OMT-HX checkout with its submodules at ${OMTHX_ROOT}")
 endif()
 message(STATUS "BC_WITH_OMT=${BC_WITH_OMT}")
 
@@ -316,9 +316,7 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NDI_DLL}" "$<TARGET_FILE_DIR:${target}>")
   endif()
   if(BC_WITH_OMT)
-    add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${OMTHX_LIBOMT_DIR}/libomt.dll" "${OMTHX_LIBOMT_DIR}/libvmx.dll" "$<TARGET_FILE_DIR:${target}>")
+    omthx_copy_runtime(${target})
   endif()
   if(BC_WITH_ONNX)
     add_custom_command(TARGET ${target} POST_BUILD

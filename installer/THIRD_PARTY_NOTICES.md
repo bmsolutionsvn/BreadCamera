@@ -272,11 +272,12 @@ libajantv2 repository's `LICENSE` file.
 
 ## libomt / libvmx (Open Media Transport)
 
-- **Version:** libomt `bb4b67be8e5964f1017592b9fc5406495e704e5d`, libomtnet
-  `7d29031ff3f355ffa1f0cd08ee24d02e258445dd`, Open Media Transport binaries v1.0.0.19
-  (pinned in `OMT-HX/scripts/build-libomt.ps1`)
+- **Version:** built from source, pinned as the submodules in `OMT-HX/omt/`: forks of Open Media
+  Transport at <https://github.com/bmsolutionsvn> (libomt `bb4b67b`, libomtnet `d7cf026` with the
+  OMT-HX changes on upstream `7d29031`, libvmx `a1828cb`)
 - **Licence:** MIT (libomt, libomtnet and libvmx)
-- **URL:** <https://github.com/openmediatransport/libomt>
+- **URL:** <https://github.com/openmediatransport/libomt>, <https://github.com/openmediatransport/libomtnet>,
+  <https://github.com/openmediatransport/libvmx>
 - **Shipped as:** `libomt.dll`, `libvmx.dll`
 
     MIT License
