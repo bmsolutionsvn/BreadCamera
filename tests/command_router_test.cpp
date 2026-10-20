@@ -95,10 +95,12 @@ TEST_CASE("CommandRouter: outputs, stopAllOutputs and settings") {
   CHECK(call(r, {{"cmd", "addOutput"}, {"args", {{"cameraId", "nope"}, {"output", {{"kind", "ndi"}}}}}})["error"]["code"] == "not-found");
   REQUIRE(call(r, {{"cmd", "stopAllOutputs"}})["ok"] == true);
   CHECK(r.show().cameras[0].outputs[0].enabled == false);
-  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"rate", "30/1"}}}})["error"]["code"] == "invalid");
+  CHECK(call(r, {{"cmd", "setSettings"}, {"args", {{"rate", "100/1"}}}})["error"]["code"] == "invalid");
   REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"rate", "50/1"}, {"holdMs", 2000}}}})["ok"] == true);
   CHECK(r.show().settings.rate == bc::Rate{50, 1});
   CHECK(r.show().settings.holdMs == 2000);
+  REQUIRE(call(r, {{"cmd", "setSettings"}, {"args", {{"rate", "120/1"}}}})["ok"] == true);
+  CHECK(r.show().settings.rate == bc::Rate{120, 1});
   REQUIRE(call(r, {{"cmd", "removeOutput"}, {"args", {{"cameraId", cam}, {"id", add["result"]["id"]}}}})["ok"] == true);
   REQUIRE(call(r, {{"cmd", "removeCamera"}, {"args", {{"id", cam}}}})["ok"] == true);
   CHECK(call(r, {{"cmd", "removeCamera"}, {"args", {{"id", cam}}}})["error"]["code"] == "not-found");

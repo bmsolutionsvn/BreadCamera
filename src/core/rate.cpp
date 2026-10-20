@@ -16,7 +16,13 @@ std::optional<Rate> parseShowRate(std::string_view s) {
     return std::nullopt;
   }
   Rate r{num, den};
-  if (r == Rate{50, 1} || r == Rate{60000, 1001} || r == Rate{60, 1}) return r;
+  constexpr Rate kShowRates[] = {
+      {15, 1}, {24000, 1001}, {24, 1}, {25, 1}, {30000, 1001}, {30, 1},
+      {50, 1}, {60000, 1001}, {60, 1}, {120000, 1001}, {120, 1},
+  };
+  for (const auto& allowed : kShowRates) {
+    if (r == allowed) return r;
+  }
   return std::nullopt;
 }
 }  // namespace bc

@@ -160,7 +160,7 @@ Show showFromJson(const json& j) {
     Show s;
     auto settings = j.value("settings", json::object());
     auto rate = parseShowRate(settings.value("rate", std::string("60/1")));
-    if (!rate) throw ShowError("settings.rate must be 50/1, 60000/1001 or 60/1");
+    if (!rate) throw ShowError("settings.rate must be 15, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 119.88 or 120 fps");
     s.settings.rate = *rate;
     // A legacy settings.resolution is ignored, not an error: a show has no frame size any more.
     s.settings.holdMs = settings.value("holdMs", 5000);

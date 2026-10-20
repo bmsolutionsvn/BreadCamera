@@ -52,7 +52,7 @@ TEST_CASE("Show: validation rejects bad files") {
   bad["schemaVersion"] = 2;
   CHECK_THROWS_AS(bc::showFromJson(bad), bc::ShowError);
   bad = good;
-  bad["settings"]["rate"] = "30/1";
+  bad["settings"]["rate"] = "100/1";
   CHECK_THROWS_AS(bc::showFromJson(bad), bc::ShowError);
   bad = good;
   bad["settings"]["holdMs"] = 70000;
