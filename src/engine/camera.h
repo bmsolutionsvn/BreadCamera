@@ -142,6 +142,8 @@ class Camera final : public InputSink {
     std::optional<ErrorInfo> createError;
     std::vector<float> carryAudio;  // half-rate audio from the odd frame
     uint64_t emitted = 0;           // frames submitted to this output
+    Rate outRate{0, 1};             // the SDI output's fixed rate; 0 until it starts
+    bool deferred = false;          // SDI waits for the camera's first frame
   };
   // One in-flight readback plus the newest completed image. image is null until the first copy
   // finishes (never a synthetic frame).

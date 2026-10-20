@@ -15,10 +15,15 @@ extern "C" {
 namespace bc {
 namespace {
 NTV2VideoFormat formatFor(Rate r) {
+  if (r == Rate{24000, 1001}) return NTV2_FORMAT_1080p_2398;
+  if (r == Rate{24, 1}) return NTV2_FORMAT_1080p_2400;
+  if (r == Rate{25, 1}) return NTV2_FORMAT_1080p_2500;
+  if (r == Rate{30000, 1001}) return NTV2_FORMAT_1080p_2997;
+  if (r == Rate{30, 1}) return NTV2_FORMAT_1080p_3000;
   if (r == Rate{50, 1}) return NTV2_FORMAT_1080p_5000_A;
   if (r == Rate{60000, 1001}) return NTV2_FORMAT_1080p_5994_A;
   if (r == Rate{60, 1}) return NTV2_FORMAT_1080p_6000_A;
-  throw std::invalid_argument("no AJA format for rate " + r.str());
+  throw std::invalid_argument("AJA SDI does not support " + r.str());
 }
 }  // namespace
 

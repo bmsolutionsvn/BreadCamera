@@ -40,6 +40,7 @@ class SrtOutput final : public QueuedOutput {
   SwsContext* sws_ = nullptr;
   uint32_t swsW_ = 0, swsH_ = 0;
   int encW_ = 0, encH_ = 0;  // the open encoders' size; a differing frame re-opens them
+  Rate encRate_{0, 1};       // the open encoder's rate; a rate change also re-opens them
   std::vector<float> audioFifo_;  // interleaved stereo
   int64_t vpts_ = 0, apts_ = 0;
   bool headerWritten_ = false;

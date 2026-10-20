@@ -13,23 +13,20 @@ namespace bc {
 class AdapterFactory {
  public:
   virtual ~AdapterFactory() = default;
-  // The SDI and virtual-camera outputs need the show rate to pick their fixed format. The
-  // engine sets it in apply() before cameras are (re)built.
-  virtual void setShowRate(Rate) {}
+  // The SDI outputs need the camera's own rate to pick their fixed format. The camera passes it
+  // with every makeOutput call; it is not a show-wide rate.
   virtual std::unique_ptr<Input> makeInput(const InputConfig& cfg) = 0;
-  virtual std::unique_ptr<Output> makeOutput(const OutputConfig& cfg, const CameraConfig& cam) = 0;
+  virtual std::unique_ptr<Output> makeOutput(const OutputConfig& cfg, const CameraConfig& cam, Rate videoRate) = 0;
 };
 
 class DefaultAdapterFactory final : public AdapterFactory {
  public:
   DefaultAdapterFactory(GpuDevice& gpu, TexturePool& pool) : gpu_(gpu), pool_(pool) {}
-  void setShowRate(Rate r) override { rate_ = r; }
   std::unique_ptr<Input> makeInput(const InputConfig& cfg) override;
-  std::unique_ptr<Output> makeOutput(const OutputConfig& cfg, const CameraConfig& cam) override;
+  std::unique_ptr<Output> makeOutput(const OutputConfig& cfg, const CameraConfig& cam, Rate videoRate) override;
 
  private:
   GpuDevice& gpu_;
   TexturePool& pool_;
-  Rate rate_{60, 1};
 };
 }  // namespace bc

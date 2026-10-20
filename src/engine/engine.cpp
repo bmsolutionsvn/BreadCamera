@@ -53,7 +53,6 @@ void Engine::loadSlate() {
 }
 
 void Engine::apply(const Show& show) {
-  factory_.setShowRate(show.settings.rate);
   std::vector<std::unique_ptr<Camera>> removed;
   {
     std::lock_guard l(mutex_);
@@ -167,7 +166,9 @@ void Engine::run() {
       if (!ready.empty()) {
         const auto t0 = Clock::now();
         frames = processReady(ready, now);
-        if (Clock::now() - t0 > settings_.rate.period()) ++overruns_;
+        // One Project-period budget per emitted frame: a pass that batches four cameras has four
+        // frames' worth of budget, not one.
+        if (Clock::now() - t0 > settings_.rate.period() * ready.size()) ++overruns_;
         worked = true;
       } else {
         until = now + std::chrono::seconds(1);  // housekeeping wake

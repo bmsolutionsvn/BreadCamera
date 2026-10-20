@@ -87,9 +87,15 @@ std::optional<Rate> deckLinkRateFor(uint32_t mode) {
 }
 
 uint32_t deckLinkModeFor(Rate r) {
+  if (r == Rate{24000, 1001}) return bmdModeHD1080p2398;
+  if (r == Rate{24, 1}) return bmdModeHD1080p24;
+  if (r == Rate{25, 1}) return bmdModeHD1080p25;
+  if (r == Rate{30000, 1001}) return bmdModeHD1080p2997;
+  if (r == Rate{30, 1}) return bmdModeHD1080p30;
   if (r == Rate{50, 1}) return bmdModeHD1080p50;
   if (r == Rate{60000, 1001}) return bmdModeHD1080p5994;
   if (r == Rate{60, 1}) return bmdModeHD1080p6000;
-  throw std::invalid_argument("no DeckLink mode for rate " + r.str());
+  if (r == Rate{120, 1}) return bmdModeHD1080p120;
+  throw std::invalid_argument("DeckLink SDI does not support " + r.str());
 }
 }  // namespace bc

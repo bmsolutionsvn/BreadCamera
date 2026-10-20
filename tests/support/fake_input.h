@@ -111,7 +111,7 @@ class FakeFactory final : public bc::AdapterFactory {
     inputs[p.value("tag", std::string("in"))] = in.get();
     return in;
   }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig&) override {
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig&, bc::Rate) override {
     if (cfg.kind != "fake") throw std::invalid_argument("unknown output kind " + cfg.kind);
     auto out = std::make_unique<FakeOutput>(cfg.params.value("cpu", true));
     out->delayMs = cfg.params.value("delayMs", 0);

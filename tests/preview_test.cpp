@@ -1,5 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <chrono>
+#include <thread>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
@@ -252,6 +255,7 @@ TEST_CASE("preview: one camera failing to open keeps the others encoding" BC_REQ
   for (uint64_t t = 0; t < 8; t += 2) {
     svc.onTick(t, {bc::FrameTap{"bad", 0, nullptr, bad}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   // Now a healthy camera starts streaming: the earlier failure must not blank it. (Under the old
   // global broken_ flag no later camera would ever encode, so the check below would fail.)
@@ -259,6 +263,7 @@ TEST_CASE("preview: one camera failing to open keeps the others encoding" BC_REQ
   for (uint64_t t = 8; t < 48; t += 2) {
     svc.onTick(t, {bc::FrameTap{"bad", 0, nullptr, bad}, bc::FrameTap{"good", 0, nullptr, good}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   CHECK_FALSE(sent["c0"].empty());   // the good camera keeps encoding

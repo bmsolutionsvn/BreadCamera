@@ -91,6 +91,19 @@ TEST_CASE("Engine: a 30 fps input stays 30 fps at any Project rate") {
   }
 }
 
+TEST_CASE("Engine: the output frame carries the camera rate, not the Project rate") {
+  Rig r;
+  bc::Show show = testShow();
+  show.settings.rate = bc::Rate{15, 1};
+  show.cameras.push_back(cam("a", {out("o1")}, {{"rateNum", 30000}, {"rateDen", 1001}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(700ms);
+  auto seen = r.factory.output("o1")->seen();
+  REQUIRE_FALSE(seen.empty());
+  CHECK(r.factory.output("o1")->lastRate() == bc::Rate{30000, 1001});
+}
+
 TEST_CASE("Engine: no output frame before the first input frame") {
   Rig r;
   bc::Show show = testShow();
@@ -219,7 +232,7 @@ class ThrowingFactory final : public bc::AdapterFactory {
  public:
   explicit ThrowingFactory(bc::test::FakeFactory& real) : real_(real) {}
   std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override { return real_.makeInput(cfg); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
     auto o = std::make_unique<ThrowingOutput>();
     out = o.get();
     return o;
@@ -362,7 +375,7 @@ class RecordingFactory final : public bc::AdapterFactory {
  public:
   explicit RecordingFactory(bool needsCpu) : needsCpu_(needsCpu) {}
   std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoInput>(); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
     auto o = std::make_unique<RecordingOutput>(needsCpu_);
     made = o.get();
     all.push_back(o.get());
@@ -664,7 +677,7 @@ TEST_CASE("Factory: a non-string NDI name is rejected with the router's message"
   o.params["name"] = 7;  // hand-edited show file: name is not text
   // Both validation sites must reject the same value with the same words.
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "NDI name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "NDI name must be text", std::invalid_argument);
 }
 
 TEST_CASE("Factory: a breadcall input with a missing or non-integer slot is rejected clearly") {
@@ -690,15 +703,15 @@ TEST_CASE("Factory: an omt output is built from its mode and name") {
   o.kind = "omt";
   o.params = {{"mode", "full"}, {"name", "Stage"}};
 #if BC_WITH_OMT
-  CHECK(factory.makeOutput(o, c) != nullptr);
+  CHECK(factory.makeOutput(o, c, {60, 1}) != nullptr);
   o.params["name"] = 7;  // hand-edited show file: name is not text
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT name must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT name must be text", std::invalid_argument);
   o.params["name"] = "Stage";
   o.params["mode"] = 5;  // hand-edited show file: mode is not text
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT mode must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT mode must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT mode must be text", std::invalid_argument);
 #else
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT support is not built (BC_WITH_OMT=OFF)", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT support is not built (BC_WITH_OMT=OFF)", std::invalid_argument);
 #endif
 }

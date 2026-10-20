@@ -6,8 +6,13 @@
 #include "support/requires.h"
 
 #if BC_WITH_DECKLINK
+#include <windows.h>
+
+#include <objbase.h>
+#include <oleauto.h>
 #include <thread>
 
+#include "DeckLinkAPI_h.h"
 #include "gpu/device.h"
 #include "io/decklink.h"
 #include "io/decklink_input.h"

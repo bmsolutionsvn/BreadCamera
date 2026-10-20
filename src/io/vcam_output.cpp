@@ -37,8 +37,8 @@ void VirtualCameraOutput::open() {
 
 void VirtualCameraOutput::deliver(const OutFrame& f) {
   if (!f.bgra || f.bgra->bgra.empty()) return;
-  if (++frames_ % 2) return;  // ~30 fps from a 60 fps tick
-  if (!writer_.isOpen() && (frames_ % 30 == 0 || frames_ == 2)) writer_.open(index_);
+  ++frames_;
+  if (!writer_.isOpen() && (frames_ % 30 == 0 || frames_ == 1)) writer_.open(index_);
   if (!writer_.isOpen()) return;  // no app has the camera open: nothing to do
   const uint8_t* src = f.bgra->bgra.data();
   if (f.bgra->width != vcam::kWidth || f.bgra->height != vcam::kHeight) {

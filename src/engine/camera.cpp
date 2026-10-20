@@ -241,9 +241,15 @@ void Camera::startInput() {
 void Camera::startOutput(OutputSlot& s) {
   s.out.reset();
   s.createError.reset();
+  s.deferred = false;
   if (!s.cfg.enabled) return;
+  if ((s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !hasNominalRate()) {
+    s.deferred = true;  // no input rate yet; start it from the first frame
+    return;
+  }
   try {
-    s.out = factory_.makeOutput(s.cfg, cfg_);
+    s.outRate = nominalRate();
+    s.out = factory_.makeOutput(s.cfg, cfg_, s.outRate);
     s.out->start();
   } catch (const std::exception& e) {
     s.out.reset();
@@ -480,6 +486,11 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   } else {
     lastConverted_.reset();
   }
+  if (pick.fresh) {
+    for (auto& s : outputs_) {
+      if (s.deferred) startOutput(s);
+    }
+  }
   // The camera's own size is the *enhanced* size: the target size derived from the last input, or
   // the target's 16:9 fallback before any frame has been seen (D2/D3a). Updating lastSize_ here
   // makes the slate fit to the target size too, so Upscale never has to resize the slate.
@@ -620,6 +631,14 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
 
   for (auto& s : outputs_) {
     if (!s.out) continue;
+    if ((s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !(s.outRate == nominalRate())) {
+      // The card's mode is fixed at open; a renegotiated input rate needs the output re-added.
+      s.out->stop();
+      s.out.reset();
+      s.createError = ErrorInfo{"output-config", "the camera rate changed; re-add this SDI output"};
+      s.outRate = Rate{0, 1};
+      continue;
+    }
     const std::shared_ptr<const CpuImage> outCpu = s.out->needsCpu() ? cpu : nullptr;
     std::shared_ptr<const std::vector<float>> outAudio = audio;
     if (s.cfg.halfRate) {
