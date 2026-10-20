@@ -29,6 +29,7 @@ struct EngineStats {
 // produced by the tick's one readback (null when no output needed CPU and no preview wanted it).
 struct FrameTap {
   std::string id;
+  uint64_t tick = 0;
   TextureRef tex;
   std::shared_ptr<const CpuImage> cpu;
 };
@@ -67,6 +68,7 @@ class Engine {
   };
 
   void run();
+  std::vector<FrameTap> processReady(const std::vector<Camera*>& ready, std::chrono::steady_clock::time_point now);
   void loadSlate();
   SyncPolicy policy() const { return {std::chrono::milliseconds(250), std::chrono::milliseconds(settings_.holdMs)}; }
 
@@ -80,7 +82,6 @@ class Engine {
   std::condition_variable captureCv_;
   ShowSettings settings_;
   bool settingsApplied_ = false;
-  bool rateChanged_ = true;
   TextureRef slate_;  // slate *source*; each camera fits it to its own size when it has no picture
   std::vector<std::unique_ptr<Camera>> cameras_;
   std::map<std::string, std::string> lastPhase_;
@@ -88,6 +89,9 @@ class Engine {
   std::function<bool(const std::string&)> previewWanted_;
   std::atomic<bool> running_{false};
   std::atomic<uint64_t> overruns_{0};
+  std::atomic<bool> wake_{false};
+  std::mutex wakeMutex_;
+  std::condition_variable wakeCv_;
   std::thread thread_;
 };
 }  // namespace bc

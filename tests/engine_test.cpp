@@ -72,23 +72,37 @@ std::string phaseOf(bc::StateStore& s, const std::string& id) {
 }
 }  // namespace
 
-TEST_CASE("Engine: a 30 fps input becomes a steady 60 fps output") {
+TEST_CASE("Engine: a 30 fps input stays 30 fps at any Project rate") {
+  for (const auto& project : {bc::Rate{15, 1}, bc::Rate{60, 1}}) {
+    Rig r;
+    bc::Show show = testShow();
+    show.settings.rate = project;
+    show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}, {"bgra", {10, 20, 200, 255}}}));
+    r.engine.apply(show);
+    r.engine.start();
+    auto t0 = Clock::now();
+    std::this_thread::sleep_for(1500ms);
+    auto seen = r.factory.output("o1")->seen();
+    int n = countBetween(seen, t0 + 500ms, t0 + 1500ms);
+    CHECK(n >= 27);
+    CHECK(n <= 33);
+    CHECK(maxGap(seen) < 60ms);
+    CHECK(r.engine.stats().cameras.at("a").repeats == 0);
+  }
+}
+
+TEST_CASE("Engine: no output frame before the first input frame") {
   Rig r;
   bc::Show show = testShow();
-  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}, {"bgra", {10, 20, 200, 255}}}));
+  show.cameras.push_back(cam("a", {out("o1")}, {{"paused", true}}));
   r.engine.apply(show);
   r.engine.start();
-  auto t0 = Clock::now();
-  std::this_thread::sleep_for(1600ms);
-  auto seen = r.factory.output("o1")->seen();
-  int n = countBetween(seen, t0 + 500ms, t0 + 1500ms);
-  CHECK(n >= 55);
-  CHECK(n <= 62);
-  CHECK(maxGap(seen) < 50ms);
-  auto& last = seen.back();
-  CHECK(std::abs(last.firstPixel[0] - 10) <= 2);
-  CHECK(std::abs(last.firstPixel[2] - 200) <= 2);
-  CHECK(r.engine.stats().cameras.at("a").repeats > 0);
+  std::this_thread::sleep_for(300ms);
+  CHECK(r.factory.output("o1")->seen().empty());
+  CHECK(phaseOf(r.state, "a") == "nosignal");
+  r.factory.input("a")->paused = false;
+  std::this_thread::sleep_for(300ms);
+  CHECK_FALSE(r.factory.output("o1")->seen().empty());
 }
 
 TEST_CASE("Engine: each tick carries exactly its share of audio") {
@@ -134,7 +148,7 @@ TEST_CASE("Engine: a slow output does not slow its neighbour") {
   r.engine.start();
   auto t0 = Clock::now();
   std::this_thread::sleep_for(1600ms);
-  CHECK(countBetween(r.factory.output("fast")->seen(), t0 + 500ms, t0 + 1500ms) >= 55);
+  CHECK(countBetween(r.factory.output("fast")->seen(), t0 + 500ms, t0 + 1500ms) >= 25);
   CHECK(r.factory.output("slow")->status().dropped > 0);
 }
 
@@ -199,27 +213,25 @@ class ThrowingOutput final : public bc::Output {
   bc::OutputStatus status() const override { return {}; }
 };
 
-class NoFrameInput final : public bc::Input {
- public:
-  void start(bc::InputSink&) override {}
-  void stop() override {}
-};
-
 class ThrowingFactory final : public bc::AdapterFactory {
  public:
-  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoFrameInput>(); }
+  explicit ThrowingFactory(bc::test::FakeFactory& real) : real_(real) {}
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override { return real_.makeInput(cfg); }
   std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
     auto o = std::make_unique<ThrowingOutput>();
     out = o.get();
     return o;
   }
   ThrowingOutput* out = nullptr;
+
+ private:
+  bc::test::FakeFactory& real_;
 };
 }  // namespace
 
 TEST_CASE("Engine: tickError is set by a throwing tick and cleared by the next clean tick") {
   Rig r;
-  ThrowingFactory factory;
+  ThrowingFactory factory{r.factory};
   bc::Engine engine{bc::GpuTools{r.conv, r.comp, r.grader}, r.state, factory};
   bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}));
@@ -251,8 +263,8 @@ TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a
   auto snap = r.state.snapshot();
   CHECK_FALSE(snap["engine"]["warnings"]["slate"].get<std::string>().empty());
   auto seen = r.factory.output("o1")->seen();
-  REQUIRE_FALSE(seen.empty());
-  CHECK(std::abs(seen.back().firstPixel[2] - 73) <= 4);
+  CHECK(seen.empty());  // D16: a camera with no input frame sends no picture, not a slate
+  CHECK(snap["cameras"]["a"]["phase"] == "nosignal");
 }
 
 TEST_CASE("Engine: a bad output config is reported and the camera keeps running") {
@@ -282,8 +294,8 @@ TEST_CASE("Engine: every output sends the one frame size, and a half-rate output
   CHECK(r.factory.output("full")->seen().back().width == 64);  // one frame size: the input's size
   auto halfSeen = r.factory.output("half")->seen();
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
-  CHECK(n >= 27);
-  CHECK(n <= 31);
+  CHECK(n >= 13);
+  CHECK(n <= 17);
   for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 800 * 2);
 }
 

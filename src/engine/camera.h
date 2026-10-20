@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -51,7 +52,19 @@ class Camera final : public InputSink {
   void setBudgetRate(Rate r) { budgetRate_ = r; }
   Rate projectRate() const { return budgetRate_; }
   // The input's declared rate, or the measured one, or the Project rate before either is known.
-  Rate nominalRate() const { return nominalRate_.value_or(budgetRate_); }
+  Rate nominalRate() const {
+    const uint64_t p = nominalPacked_.load();
+    if (!p) return budgetRate_;
+    return Rate{static_cast<int>(p >> 32), static_cast<int>(p & 0xffffffffu)};
+  }
+  bool hasNominalRate() const { return nominalPacked_.load() != 0; }
+  // Wakes the engine when an input frame arrives (called from the input thread).
+  void setWake(std::function<void()> wake) { wake_ = std::move(wake); }
+  // True when the engine should process this camera now: a new input frame is pending.
+  bool ready(std::chrono::steady_clock::time_point now) const;
+  // The monotonic index of the last emitted frame.
+  uint64_t emitIndex() const { return emitIndex_; }
+  uint64_t tickIndex() const { return tickIndex_; }
   // First half (tick thread): newest frame → linear texture at its own size, or the slate fitted
   // to the camera's size. Never null.
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slateSource);
@@ -110,6 +123,7 @@ class Camera final : public InputSink {
   struct Pending {
     VideoFrameIn frame;
     std::chrono::steady_clock::time_point arrival;
+    uint64_t seq = 0;
   };
   struct OutputSlot {
     OutputConfig cfg;
@@ -160,9 +174,13 @@ class Camera final : public InputSink {
   StateStore& state_;
   FrameSync<Pending> sync_;
   Rate budgetRate_{60, 1};
-  std::optional<Rate> declaredRate_;
-  std::optional<Rate> nominalRate_;
+  std::atomic<uint64_t> nominalPacked_{0};  // packed Rate; 0 = not known yet
   RateEstimator estimator_;
+  std::function<void()> wake_;
+  std::atomic<uint64_t> arrivals_{0};
+  uint64_t taken_ = 0;
+  uint64_t emitIndex_ = 0;
+  uint64_t tickIndex_ = 0;
   AudioDelay audio_{48000, 2};
   std::unique_ptr<Input> input_;
   std::vector<OutputSlot> outputs_;

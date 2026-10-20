@@ -223,8 +223,7 @@ void Camera::pollCleanupTimer(const TickSchedule& sched, Clock::time_point now) 
 }
 
 void Camera::startInput() {
-  declaredRate_.reset();
-  nominalRate_.reset();
+  nominalPacked_.store(0);
   estimator_.reset();
   inputState_ = SignalState::Connecting;
   state_.set(path("/input/state"), "connecting");
@@ -318,14 +317,23 @@ void Camera::reconfigure(const CameraConfig& next) {
 
 void Camera::onVideo(VideoFrameIn frame) {
   const auto now = Clock::now();
+  const auto pack = [](Rate r) {
+    return (static_cast<uint64_t>(static_cast<uint32_t>(r.num)) << 32) | static_cast<uint32_t>(r.den);
+  };
   if (frame.rate) {
-    declaredRate_ = frame.rate;
-    nominalRate_ = frame.rate;
-  } else if (!nominalRate_) {
+    nominalPacked_.store(pack(*frame.rate));
+  } else if (nominalPacked_.load() == 0) {
     estimator_.push(now);
-    if (auto r = estimator_.rate()) nominalRate_ = r;
+    if (auto r = estimator_.rate()) nominalPacked_.store(pack(*r));
   }
-  sync_.push(Pending{std::move(frame), now}, now);
+  const uint64_t seq = ++arrivals_;
+  sync_.push(Pending{std::move(frame), now, seq}, now);
+  if (wake_) wake_();
+}
+
+bool Camera::ready(Clock::time_point now) const {
+  (void)now;
+  return arrivals_.load() > taken_;
 }
 
 void Camera::onAudio(AudioBlock a) {
@@ -445,6 +453,8 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   ++matchTick_;
   finishMatchRound(now);  // never waits: the previous small readbacks may or may not be ready
   auto pick = sync_.pick(now);
+  if (pick.fresh && pick.frame) taken_ = pick.frame->seq;
+  tickIndex_ = emitIndex_++;
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
