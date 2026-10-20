@@ -171,6 +171,9 @@ void Engine::run() {
         worked = true;
       } else {
         until = now + std::chrono::seconds(1);  // housekeeping wake
+        for (auto& cam : cameras_) {
+          if (auto d = cam->nextRepeatAt(now); d && *d < *until) *until = *d;
+        }
       }
     }
     if (!frames.empty() && tap_) tap_(pass, frames);
@@ -274,7 +277,7 @@ std::vector<FrameTap> Engine::processReady(const std::vector<Camera*>& ready, Cl
     const auto& id = cam->config().id;
     try {
       const bool previewWanted = previewWanted_ && previewWanted_(id);
-      cam->endTick(cam->tickIndex(), sched, now, alphas.count(cam) ? alphas[cam] : nullptr, previewWanted);
+      cam->endTick(now, alphas.count(cam) ? alphas[cam] : nullptr, previewWanted);
       // The error block must clear once the pass is clean again (spec §6.4: an
       // error is persistent *while true*, never forever).
       state_.erase("/cameras/" + id + "/tickError");

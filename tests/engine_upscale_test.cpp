@@ -97,7 +97,7 @@ TEST_CASE("Camera: Upscale keeps the target size when its stage is bypassed") {
     camera.onVideo(solidFrame(r.conv, 120, 640, 360));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   };
   for (uint64_t i = 0; i < 4; ++i) tick(i);
   REQUIRE(camera.lastFrame() != nullptr);
@@ -154,11 +154,11 @@ TEST_CASE("Camera: the slate is at the target size while Upscale is on") {
   camera.onVideo(solidFrame(r.conv, 120, 640, 360));
   const auto t0 = Clock::now();
   camera.beginTick(t0, slateSource);
-  camera.endTick(0, sched, t0, nullptr);
+  camera.endTick(t0, nullptr);
   REQUIRE(camera.lastFrame() != nullptr);
   CHECK(camera.lastFrame()->width == 1920);
   camera.beginTick(t0 + 6s, slateSource);
-  camera.endTick(1, sched, t0 + 6s, nullptr);
+  camera.endTick(t0 + 6s, nullptr);
   REQUIRE(camera.lastFrame() != nullptr);
   CHECK(camera.lastFrame()->width == 1920);
   CHECK(camera.lastFrame()->height == 1080);
@@ -198,7 +198,7 @@ TEST_CASE("Camera: Clean up without an RTX card is bypassed with a readable erro
     camera.onVideo(solidFrame(r.conv, 120, 640, 360));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   }
   camera.publishStatus();
   auto s = state.snapshot();

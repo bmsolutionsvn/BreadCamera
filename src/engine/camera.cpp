@@ -19,7 +19,7 @@ constexpr uint32_t kMatchW = 128, kMatchH = 72;
 }  // namespace
 
 Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
-    : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy) {
+    : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy), policy_(policy) {
   loadStageParams();
   if (tools_.gpu) {
     // Per-stage GPU timing (spec D14). A query failure falls back to the CPU timing.
@@ -190,18 +190,18 @@ void Camera::pollColorTimer(Clock::time_point now) {
   }
 }
 
-void Camera::pollBackgroundTimer(const TickSchedule& sched, Clock::time_point now) {
+void Camera::pollBackgroundTimer(Clock::time_point now) {
   if (!backgroundTimer_) return;
   if (auto took = backgroundTimer_->poll()) {
     backgroundGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
-    backgroundGuard_.succeeded(*took, sched.rate().period() / 4, now);
+    backgroundGuard_.succeeded(*took, projectRate().period() / 4, now);
   }
 }
 
-void Camera::pollUpscaleTimer(const TickSchedule& sched, Clock::time_point now) {
-  // ponytail: a fixed quarter-tick budget per camera, the same share Background takes; split it by
+void Camera::pollUpscaleTimer(Clock::time_point now) {
+  // ponytail: a fixed quarter-budget share per camera, the same share Background takes; split it by
   // camera count if 8+ cameras run the FSR path.
-  const auto budget = sched.rate().period() / 4;
+  const auto budget = projectRate().period() / 4;
   upscaleBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
   if (!upscaleTimer_) return;
   if (auto took = upscaleTimer_->poll()) {
@@ -210,10 +210,10 @@ void Camera::pollUpscaleTimer(const TickSchedule& sched, Clock::time_point now) 
   }
 }
 
-void Camera::pollCleanupTimer(const TickSchedule& sched, Clock::time_point now) {
-  // ponytail: the same fixed quarter-tick share per camera as Upscale; split by camera count if
+void Camera::pollCleanupTimer(Clock::time_point now) {
+  // ponytail: the same fixed quarter-budget share per camera as Upscale; split by camera count if
   // 8+ cameras run Clean up (RTX only, so it is zero-cost on every other PC).
-  const auto budget = sched.rate().period() / 4;
+  const auto budget = projectRate().period() / 4;
   cleanupBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
   if (!cleanupTimer_) return;
   if (auto took = cleanupTimer_->poll()) {
@@ -317,6 +317,7 @@ void Camera::reconfigure(const CameraConfig& next) {
 
 void Camera::onVideo(VideoFrameIn frame) {
   const auto now = Clock::now();
+  lastArrival_ = now;
   const auto pack = [](Rate r) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(r.num)) << 32) | static_cast<uint32_t>(r.den);
   };
@@ -332,8 +333,17 @@ void Camera::onVideo(VideoFrameIn frame) {
 }
 
 bool Camera::ready(Clock::time_point now) const {
-  (void)now;
-  return arrivals_.load() > taken_;
+  if (arrivals_.load() > taken_) return true;
+  if (!sawFrame_ || !lastArrival_) return false;
+  if (nextRepeat_) return now >= *nextRepeat_;
+  return now >= *lastArrival_ + policy_.stallAfter;
+}
+
+std::optional<Clock::time_point> Camera::nextRepeatAt(Clock::time_point now) const {
+  if (!sawFrame_ || !lastArrival_) return std::nullopt;
+  const auto stallAt = *lastArrival_ + policy_.stallAfter;
+  if (now < stallAt) return stallAt;
+  return nextRepeat_ ? nextRepeat_ : std::optional<Clock::time_point>{stallAt};
 }
 
 void Camera::onAudio(AudioBlock a) {
@@ -453,8 +463,10 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   ++matchTick_;
   finishMatchRound(now);  // never waits: the previous small readbacks may or may not be ready
   auto pick = sync_.pick(now);
+  const uint64_t prevTaken = taken_;
   if (pick.fresh && pick.frame) taken_ = pick.frame->seq;
-  tickIndex_ = emitIndex_++;
+  tickIndex_ = emitIndex_;
+  emitIndex_ = advanceIndex(emitIndex_, prevTaken, taken_, pick.fresh);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
@@ -523,14 +535,19 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
     }
   }
   if (matchTick_ % 6 == 0) beginMatchRound(entering);  // three tiny readbacks, finished later
+  if (!(nominalRate() == audioSched_.rate())) audioSched_ = TickSchedule(nominalRate());
+  if (pick.phase == FeedPhase::Holding || pick.phase == FeedPhase::Slate) {
+    nextRepeat_ = now + nominalRate().period();
+  } else {
+    nextRepeat_.reset();
+  }
   return tickFrame_;
 }
 
-void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha,
-                     bool previewWanted) {
-  pollBackgroundTimer(sched, now);
-  pollUpscaleTimer(sched, now);
-  pollCleanupTimer(sched, now);
+void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool previewWanted) {
+  pollBackgroundTimer(now);
+  pollUpscaleTimer(now);
+  pollCleanupTimer(now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -555,7 +572,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
       if (gpuTimed) {
         backgroundTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
       } else {
-        backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+        backgroundGuard_.succeeded(Clock::now() - t0, projectRate().period() / 4, now);
       }
     } catch (const std::exception& e) {
       if (gpuTimed) backgroundTimer_->end();
@@ -566,7 +583,7 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
   }
   lastFrame_ = frame;
 
-  auto audio = std::make_shared<std::vector<float>>(audio_.pull(sched.audioFramesForTick(index, 48000)));
+  auto audio = std::make_shared<std::vector<float>>(audio_.pull(audioSched_.audioFramesForTick(tickIndex_, 48000)));
 
   // One frame per camera per tick — the composited frame's size (spec §4.3). There is no
   // per-output size and no fit. The readback is asynchronous: finish the previous copy if the
@@ -604,20 +621,20 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
   for (auto& s : outputs_) {
     if (!s.out) continue;
     const std::shared_ptr<const CpuImage> outCpu = s.out->needsCpu() ? cpu : nullptr;
-    if (!s.cfg.halfRate) {
-      s.out->submit(OutFrame{index, sched.rate(), frame, outCpu, audio, 48000, 2, hasAlpha});
-      continue;
+    std::shared_ptr<const std::vector<float>> outAudio = audio;
+    if (s.cfg.halfRate) {
+      // Half rate: every second emitted frame, carrying the odd frame's audio so nothing is lost.
+      if (s.emitted++ % 2 == 1) {
+        s.carryAudio = *audio;
+        continue;
+      }
+      auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
+      s.carryAudio.clear();
+      both->insert(both->end(), audio->begin(), audio->end());
+      outAudio = both;
     }
-    // Half rate: even ticks only, carrying the odd tick's audio so nothing is lost.
-    if (index % 2 == 1) {
-      s.carryAudio = *audio;
-      continue;
-    }
-    auto both = std::make_shared<std::vector<float>>(std::move(s.carryAudio));
-    s.carryAudio.clear();
-    both->insert(both->end(), audio->begin(), audio->end());
-    const Rate half{sched.rate().num, sched.rate().den * 2};
-    s.out->submit(OutFrame{index / 2, half, frame, outCpu, both, 48000, 2, hasAlpha});
+    const Rate outRate = s.cfg.halfRate ? Rate{nominalRate().num, nominalRate().den * 2} : nominalRate();
+    s.out->submit(OutFrame{tickIndex_, outRate, frame, outCpu, outAudio, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);

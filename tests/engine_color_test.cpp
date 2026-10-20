@@ -141,7 +141,7 @@ TEST_CASE("Camera: the colour stage publishes its GPU time") {
     const auto now = std::chrono::steady_clock::now();
     camera.onVideo(bc::VideoFrameIn{r.conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, i});
     camera.beginTick(now, slate);
-    camera.endTick(static_cast<uint64_t>(i), sched, now, nullptr);
+    camera.endTick(now, nullptr);
     r.gpu->context()->Flush();
     std::this_thread::sleep_for(2ms);
   }
@@ -257,7 +257,7 @@ TEST_CASE("Camera: Match never writes the stage params (spec D16)") {
   for (uint64_t i = 0; i < 60; ++i) {
     camera.onVideo(solidFrame(r.conv, 155, 172, 218));
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     r.gpu->context()->Flush();
     std::this_thread::sleep_for(1ms);  // let the tiny readbacks land between ticks
     now += 100ms;                       // 10 s of wall time across the run, so the correction eases

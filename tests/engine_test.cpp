@@ -105,21 +105,21 @@ TEST_CASE("Engine: no output frame before the first input frame") {
   CHECK_FALSE(r.factory.output("o1")->seen().empty());
 }
 
-TEST_CASE("Engine: each tick carries exactly its share of audio") {
+TEST_CASE("Engine: each emitted frame carries one frame of audio at the input rate") {
   Rig r;
   bc::Show show = testShow();
-  show.cameras.push_back(cam("a", {out("o1")}));
+  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}}));
   r.engine.apply(show);
   r.engine.start();
   std::this_thread::sleep_for(500ms);
-  for (auto& s : r.factory.output("o1")->seen()) CHECK(s.audioSamples == 800 * 2);
+  for (auto& s : r.factory.output("o1")->seen()) CHECK(s.audioSamples == 1600 * 2);
 }
 
 TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never stop") {
   Rig r;
   bc::Show show = testShow();
   show.settings.holdMs = 500;
-  show.cameras.push_back(cam("a", {out("o1")}));
+  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}}));
   r.engine.apply(show);
   r.engine.start();
   std::this_thread::sleep_for(500ms);
@@ -132,7 +132,9 @@ TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never st
   CHECK(phases.count("holding") == 1);
   CHECK(phaseOf(r.state, "a") == "slate");
   auto seen = r.factory.output("o1")->seen();
-  CHECK(maxGap(seen) < 50ms);
+  CHECK(maxGap(seen) < 300ms);  // live stops, then the first held repeat starts at stallAfter
+  REQUIRE(seen.size() > 2);
+  CHECK(seen.back().at - seen[seen.size() - 2].at < 60ms);  // repeats run at the camera rate
   CHECK(std::abs(seen.back().firstPixel[0] - 79) <= 4);  // blue: 0.06 linear
   CHECK(std::abs(seen.back().firstPixel[2] - 73) <= 4);  // red: 0.05 linear
   r.factory.input("a")->paused = false;
@@ -296,7 +298,14 @@ TEST_CASE("Engine: every output sends the one frame size, and a half-rate output
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
   CHECK(n >= 13);
   CHECK(n <= 17);
-  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 800 * 2);
+  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 1600 * 2);
+}
+
+TEST_CASE("Camera: a coalesced frame advances the emitted index across the dropped frames") {
+  CHECK(bc::Camera::advanceIndex(0, 0, 1, true) == 1);
+  CHECK(bc::Camera::advanceIndex(1, 1, 5, true) == 5);
+  CHECK(bc::Camera::advanceIndex(5, 5, 9, true) == 9);
+  CHECK(bc::Camera::advanceIndex(9, 9, 9, false) == 10);
 }
 
 TEST_CASE("Engine: input health is published") {
@@ -397,7 +406,7 @@ TEST_CASE("Camera: the frame readback is off the tick, never black") {
     camera.onVideo(solidFrame(r.conv, red));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     if (i == 0) CHECK(factory.made->last == nullptr);  // the copy begins this tick; nothing done yet
     if (factory.made->last) {
       const int got = factory.made->last->bgra[2];
@@ -429,7 +438,7 @@ TEST_CASE("Camera: no CPU output means no readback slot and no frame copy") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   }
   CHECK(camera.readbackSlotCount() == 0);
   CHECK(factory.made->last == nullptr);  // a non-CPU output is never handed a CPU image
@@ -448,7 +457,7 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     std::this_thread::sleep_for(3ms);
   };
   tick(0);
@@ -489,7 +498,7 @@ TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
     camera.onVideo(solidFrame(r.conv, static_cast<uint8_t>(30 + (i % 5) * 40)));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     CHECK(a->last == b->last);  // one readback per size per tick: the same image, never a tick apart
     if (a->last) sawImage = true;
     std::this_thread::sleep_for(3ms);
@@ -514,7 +523,7 @@ TEST_CASE("Camera: an input size change never publishes the previous size's imag
     camera.onVideo(solidFrame(r.conv, 120, w, h));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   };
 
   // Run until the 64x36 image has been read back and handed to the output.
@@ -622,7 +631,7 @@ TEST_CASE("GPU-only camera: a visible preview forces one readback") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr, previewWanted);
+    camera.endTick(now, nullptr, previewWanted);
     std::this_thread::sleep_for(3ms);
   };
 

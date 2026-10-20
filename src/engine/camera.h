@@ -47,7 +47,10 @@ class Camera final : public InputSink {
   void start();
   void stop();
   void reconfigure(const CameraConfig& cfg);
-  void setPolicy(SyncPolicy p) { sync_.setPolicy(p); }
+  void setPolicy(SyncPolicy p) {
+    policy_ = p;
+    sync_.setPolicy(p);
+  }
   // The Project rate is the effect-budget reference; it never paces the camera.
   void setBudgetRate(Rate r) { budgetRate_ = r; }
   Rate projectRate() const { return budgetRate_; }
@@ -60,8 +63,16 @@ class Camera final : public InputSink {
   bool hasNominalRate() const { return nominalPacked_.load() != 0; }
   // Wakes the engine when an input frame arrives (called from the input thread).
   void setWake(std::function<void()> wake) { wake_ = std::move(wake); }
-  // True when the engine should process this camera now: a new input frame is pending.
+  // True when the engine should process this camera now: a new input frame is pending, or a
+  // hold/slate repeat is due.
   bool ready(std::chrono::steady_clock::time_point now) const;
+  std::optional<std::chrono::steady_clock::time_point> nextRepeatAt(
+      std::chrono::steady_clock::time_point now) const;
+  // The next emitted index: a fresh frame covers every input superseded since the last one; a
+  // held/slate repeat covers one frame interval.
+  static uint64_t advanceIndex(uint64_t current, uint64_t taken, uint64_t seq, bool fresh) {
+    return fresh ? current + (seq - taken) : current + 1;
+  }
   // The monotonic index of the last emitted frame.
   uint64_t emitIndex() const { return emitIndex_; }
   uint64_t tickIndex() const { return tickIndex_; }
@@ -95,8 +106,8 @@ class Camera final : public InputSink {
   // Second half: rawAlpha (null = no matte this tick) → stages → readback → fan-out.
   // previewWanted forces the one readback even when no output needsCpu(), so a visible preview
   // (D5) still gets the image through the frame tap.
-  void endTick(uint64_t index, const TickSchedule& sched, std::chrono::steady_clock::time_point now,
-               const TextureRef& rawAlpha, bool previewWanted = false);
+  void endTick(std::chrono::steady_clock::time_point now, const TextureRef& rawAlpha,
+               bool previewWanted = false);
   StageGuard& matteGuard() { return matteGuard_; }
   StageGuard& backgroundGuard() { return backgroundGuard_; }
   StageGuard& colorGuard() { return colorGuard_; }
@@ -129,7 +140,8 @@ class Camera final : public InputSink {
     OutputConfig cfg;
     std::unique_ptr<Output> out;
     std::optional<ErrorInfo> createError;
-    std::vector<float> carryAudio;  // half-rate audio from the odd tick
+    std::vector<float> carryAudio;  // half-rate audio from the odd frame
+    uint64_t emitted = 0;           // frames submitted to this output
   };
   // One in-flight readback plus the newest completed image. image is null until the first copy
   // finishes (never a synthetic frame).
@@ -149,9 +161,9 @@ class Camera final : public InputSink {
   // Poll each stage's GpuTimer once a tick; a finished measurement feeds that stage's
   // guard (spec D14). A no-op when tools_.gpu is null (the stages time themselves on CPU).
   void pollColorTimer(std::chrono::steady_clock::time_point now);
-  void pollBackgroundTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
-  void pollUpscaleTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
-  void pollCleanupTimer(const TickSchedule& sched, std::chrono::steady_clock::time_point now);
+  void pollBackgroundTimer(std::chrono::steady_clock::time_point now);
+  void pollUpscaleTimer(std::chrono::steady_clock::time_point now);
+  void pollCleanupTimer(std::chrono::steady_clock::time_point now);
   // Match (Task 7): the grade for Match mode — the params' grade without the LUT, plus the eased
   // correction. Calibrate keeps the stored LUT (rebuilt by loadStageParams).
   ColorGrade matchGrade() const;
@@ -173,6 +185,10 @@ class Camera final : public InputSink {
   GpuTools tools_;
   StateStore& state_;
   FrameSync<Pending> sync_;
+  SyncPolicy policy_;
+  std::optional<std::chrono::steady_clock::time_point> lastArrival_;
+  std::optional<std::chrono::steady_clock::time_point> nextRepeat_;
+  TickSchedule audioSched_{Rate{60, 1}};
   Rate budgetRate_{60, 1};
   std::atomic<uint64_t> nominalPacked_{0};  // packed Rate; 0 = not known yet
   RateEstimator estimator_;
