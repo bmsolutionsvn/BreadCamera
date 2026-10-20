@@ -13,6 +13,7 @@
 #include "core/audio_delay.h"
 #include "core/frame_sync.h"
 #include "core/input_health.h"
+#include "core/rate_estimator.h"
 #include "core/show.h"
 #include "core/skin_match.h"
 #include "core/stage_guard.h"
@@ -46,6 +47,11 @@ class Camera final : public InputSink {
   void stop();
   void reconfigure(const CameraConfig& cfg);
   void setPolicy(SyncPolicy p) { sync_.setPolicy(p); }
+  // The Project rate is the effect-budget reference; it never paces the camera.
+  void setBudgetRate(Rate r) { budgetRate_ = r; }
+  Rate projectRate() const { return budgetRate_; }
+  // The input's declared rate, or the measured one, or the Project rate before either is known.
+  Rate nominalRate() const { return nominalRate_.value_or(budgetRate_); }
   // First half (tick thread): newest frame → linear texture at its own size, or the slate fitted
   // to the camera's size. Never null.
   TextureRef beginTick(std::chrono::steady_clock::time_point now, const TextureRef& slateSource);
@@ -153,6 +159,10 @@ class Camera final : public InputSink {
   GpuTools tools_;
   StateStore& state_;
   FrameSync<Pending> sync_;
+  Rate budgetRate_{60, 1};
+  std::optional<Rate> declaredRate_;
+  std::optional<Rate> nominalRate_;
+  RateEstimator estimator_;
   AudioDelay audio_{48000, 2};
   std::unique_ptr<Input> input_;
   std::vector<OutputSlot> outputs_;

@@ -223,6 +223,9 @@ void Camera::pollCleanupTimer(const TickSchedule& sched, Clock::time_point now) 
 }
 
 void Camera::startInput() {
+  declaredRate_.reset();
+  nominalRate_.reset();
+  estimator_.reset();
   inputState_ = SignalState::Connecting;
   state_.set(path("/input/state"), "connecting");
   state_.set(path("/input/error"), nullptr);
@@ -315,6 +318,13 @@ void Camera::reconfigure(const CameraConfig& next) {
 
 void Camera::onVideo(VideoFrameIn frame) {
   const auto now = Clock::now();
+  if (frame.rate) {
+    declaredRate_ = frame.rate;
+    nominalRate_ = frame.rate;
+  } else if (!nominalRate_) {
+    estimator_.push(now);
+    if (auto r = estimator_.rate()) nominalRate_ = r;
+  }
   sync_.push(Pending{std::move(frame), now}, now);
 }
 

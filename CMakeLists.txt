@@ -151,6 +151,7 @@ message(STATUS "BC_WITH_CHART_DETECT=${BC_WITH_CHART_DETECT}")
 # ---- core (no GPU) ----
 add_library(bc_core STATIC
   src/core/rate.cpp
+  src/core/rate_estimator.cpp
   # Task 2
   src/core/tick_schedule.cpp
   src/core/audio_delay.cpp
@@ -414,6 +415,7 @@ add_executable(bc_tests
   tests/main.cpp
   tests/support/requires.cpp
   tests/rate_test.cpp
+  tests/rate_estimator_test.cpp
   tests/tick_schedule_test.cpp
   tests/frame_sync_test.cpp
   tests/bounded_queue_test.cpp

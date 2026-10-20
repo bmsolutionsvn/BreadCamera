@@ -83,6 +83,7 @@ void Engine::apply(const Show& show) {
         cameras_.push_back(std::move(cam));
       }
     }
+    for (auto& c : cameras_) c->setBudgetRate(show.settings.rate);
     for (auto& [id, cam] : existing) {
       state_.erase("/cameras/" + id);
       lastPhase_.erase(id);
