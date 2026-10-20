@@ -1,5 +1,9 @@
 # BreadCamera — no master clock (project 2b) — Design
 
+> Superseded 2026-10-20 on D3 and D9: the Project frame rate stays, and it is the source of the
+> effect budgets; each camera still emits at its input's rate. See
+> `2026-10-20-project-rate-effect-budget-design.md`.
+
 Date: 2026-10-17. Project 2b of the approved three (3: native Multiview). Project 2a removed the
 show-wide resolution; 2b removes the show-wide **rate**. This is the engine-core rewrite.
 

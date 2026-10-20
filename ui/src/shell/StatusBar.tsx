@@ -33,18 +33,18 @@ export function StatusBar({ snap }: { snap: EngineSnapshot }) {
         {open ? 'Engine running' : <span className="w">Engine restarting…</span>}
       </span>
       <span>
-        <b>{rateLabel(e.rate)}</b> fps
+        Project rate <b>{rateLabel(e.rate)}</b> fps
       </span>
       <span>GPU {e.gpu ?? '—'}</span>
       <span className={e.overruns ? 'w' : ''}>
         {e.overruns ? (
           <>
             <Icon name="warn" size={12} />
-            {e.overruns} tick overruns
+            {e.overruns} budget overruns
             {heaviest && ` · heaviest: CAM ${heaviest.cam} ${heaviest.label} ${heaviest.ms.toFixed(1)} ms`}
           </>
         ) : (
-          'Ticks on time'
+          'Budget on time'
         )}
       </span>
       <span className="r">

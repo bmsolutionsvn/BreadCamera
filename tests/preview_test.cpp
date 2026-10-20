@@ -107,6 +107,7 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
   for (uint64_t t = 0; t < 40; ++t) {
     svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::vector<uint8_t> msg;
   {
@@ -154,6 +155,7 @@ TEST_CASE("the preview caps its encode size at 1280x720" BC_REQUIRES(bc::test::R
   for (uint64_t t = 0; t < 40; ++t) {
     svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::vector<uint8_t> msg;
   {
@@ -195,6 +197,7 @@ TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing"
   for (uint64_t t = 0; t < 40; ++t) {
     svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}, bc::FrameTap{"b", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   REQUIRE(sent["c1"].size() >= 10);
@@ -224,6 +227,7 @@ TEST_CASE("preview cap warns instead of disabling every preview" BC_REQUIRES(bc:
   for (uint64_t t = 0; t < 20; ++t) {
     svc.onTick(t, frames);
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   // The cameras within the cap still encode...

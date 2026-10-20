@@ -30,7 +30,7 @@ interface AjaDevice {
 
 type Kind = 'ndi' | 'omt' | 'srt' | 'fullscreen' | 'decklink' | 'aja' | 'vcam';
 
-const FIXED_FORMAT_NOTE = 'SDI and the virtual camera use a fixed format: 1080p at the show rate (SDI), 1080p30 (virtual camera).';
+const FIXED_FORMAT_NOTE = 'SDI uses 1080p at the camera rate where the card supports it; the virtual camera is 1080p30.';
 
 // Output format per spec §4.3: one frame size per camera (the show size); only the rate is a
 // per-output choice (same or half). M4b adds the SDI and virtual-camera kinds, whose format and

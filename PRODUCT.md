@@ -68,7 +68,9 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
 ## Capabilities and Constraints
 
 - Windows 11 required (the virtual camera uses `MFCreateVirtualCamera`).
-- One show-wide frame rate: 50, 59.94 or 60.
+- Project frame rate: 15, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60,
+  119.88 or 120. It sets the effect time budgets only; inputs and outputs keep
+  their own rates.
 - NVIDIA first (Maxine AI Green Screen, NVENC); an ONNX Runtime/DirectML matte
   works on other GPUs.
 - No Kinde login and no billing in v1.
@@ -78,8 +80,9 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
   tile is visible; 720p for the selected camera while calibrating.
 - **English only (confirmed 2026-10-08).** Names the operator types (cameras,
   outputs, shows) can be in any language and are Unicode end to end.
-- Show format: one frame rate (50, 59.94, 60) and resolution (1280×720,
-  1920×1080); each output may send a smaller size or half the frame rate.
+- Show format: each camera emits one frame per input frame and every output
+  follows that rate; the Project frame rate sets the effect budgets. There is
+  no show-wide resolution. An output may send half the frame rate.
 
 ## Brand Commitments
 
