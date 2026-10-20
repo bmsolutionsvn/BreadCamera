@@ -1,6 +1,7 @@
 #include "io/aja_input.h"
 
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -16,6 +17,20 @@ namespace {
 // (`#define NTV2_AUDIOSIZE_MAX (401 * 1024)`, the per-frame audio space demos/ntv2capture
 // reserves); the library headers do not export it. Same value, defined here.
 constexpr size_t kNtv2AudioSizeMax = 401 * 1024;
+
+std::optional<Rate> ajaRateFor(NTV2VideoFormat f) {
+  switch (f) {
+    case NTV2_FORMAT_1080p_2398: return Rate{24000, 1001};
+    case NTV2_FORMAT_1080p_2400: return Rate{24, 1};
+    case NTV2_FORMAT_1080p_2500: return Rate{25, 1};
+    case NTV2_FORMAT_1080p_2997: return Rate{30000, 1001};
+    case NTV2_FORMAT_1080p_3000: return Rate{30, 1};
+    case NTV2_FORMAT_1080p_5000_A: return Rate{50, 1};
+    case NTV2_FORMAT_1080p_5994_A: return Rate{60000, 1001};
+    case NTV2_FORMAT_1080p_6000_A: return Rate{60, 1};
+    default: return std::nullopt;
+  }
+}
 }  // namespace
 
 void AjaInput::start(InputSink& sink) {
@@ -61,6 +76,7 @@ void AjaInput::runOnce() {
   card.SetSDITransmitEnable(ch, false);
   const NTV2VideoFormat vf = card.GetInputVideoFormat(src);
   if (vf == NTV2_FORMAT_UNKNOWN) throw std::runtime_error("no signal on AJA SDI input " + std::to_string(channel_));
+  const auto rate = ajaRateFor(vf);
   card.SetVideoFormat(vf, false, false, ch);
   card.SetFrameBufferFormat(ch, NTV2_FBF_8BIT_YCBCR);
   card.SetMode(ch, NTV2_MODE_CAPTURE);
@@ -95,6 +111,7 @@ void AjaInput::runOnce() {
     VideoFrameIn f;
     f.layout = PixelLayout::BGRA8;
     f.fullRange = true;
+    f.rate = rate;
     f.tex = pool_.acquire(static_cast<uint32_t>(w), static_cast<uint32_t>(h), DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     {
       auto lock = gpu_.lock();

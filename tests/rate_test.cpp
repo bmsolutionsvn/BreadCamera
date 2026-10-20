@@ -16,6 +16,13 @@ TEST_CASE("Rate: parseShowRate accepts the eleven project rates") {
   }
 }
 
+TEST_CASE("Rate: rationals from protocols reject zero and negative parts") {
+  CHECK(bc::rateFromRational(30000, 1001) == bc::Rate{30000, 1001});
+  CHECK_FALSE(bc::rateFromRational(0, 1));
+  CHECK_FALSE(bc::rateFromRational(30, 0));
+  CHECK_FALSE(bc::rateFromRational(-30, 1));
+}
+
 TEST_CASE("Rate: period and string form") {
   CHECK(bc::Rate{60, 1}.period() == 16'666'666ns);
   CHECK(bc::Rate{50, 1}.period() == 20ms);

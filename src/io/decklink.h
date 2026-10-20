@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,6 +15,7 @@ struct DeckLinkInfo {
   bool hasInput = false, hasOutput = false, externalKeying = false;
 };
 std::vector<DeckLinkInfo> listDeckLinkDevices();
-uint32_t deckLinkModeFor(Rate r);  // 1080p50 / 1080p59.94 / 1080p60
+uint32_t deckLinkModeFor(Rate r);  // 1080p at the supported rates
+std::optional<Rate> deckLinkRateFor(uint32_t displayMode);  // nullopt for a non-1080p mode
 IDeckLink* openDeckLink(int index);  // AddRef'd; throws std::runtime_error when absent
 }  // namespace bc

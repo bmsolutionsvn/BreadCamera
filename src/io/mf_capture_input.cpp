@@ -210,6 +210,7 @@ void MfCaptureInput::runOnce() {
   constexpr DWORD kVideo = static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
   ComPtr<IMFMediaType> best;
   UINT64 bestScore = 0;
+  UINT32 bestNum = 0, bestDen = 1;
   for (DWORD i = 0;; ++i) {
     ComPtr<IMFMediaType> t;
     if (FAILED(reader->GetNativeMediaType(kVideo, i, &t))) break;
@@ -223,6 +224,8 @@ void MfCaptureInput::runOnce() {
     if (score > bestScore) {
       bestScore = score;
       best = t;
+      bestNum = num;
+      bestDen = den;
     }
   }
   if (!best) throw std::runtime_error("the device offers no video mode");
@@ -283,6 +286,7 @@ void MfCaptureInput::runOnce() {
     f.layout = PixelLayout::BGRA8;
     f.fullRange = true;
     f.ptsUs = ts / 10;
+    f.rate = rateFromRational(static_cast<int>(bestNum), static_cast<int>(bestDen));
     f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     const UINT pitch = static_cast<UINT>(std::abs(stride));
     const BYTE* src = data;

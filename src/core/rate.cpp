@@ -25,4 +25,9 @@ std::optional<Rate> parseShowRate(std::string_view s) {
   }
   return std::nullopt;
 }
+
+std::optional<Rate> rateFromRational(int num, int den) {
+  if (num <= 0 || den <= 0) return std::nullopt;
+  return Rate{num, den};
+}
 }  // namespace bc

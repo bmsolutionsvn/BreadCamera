@@ -15,6 +15,19 @@
 
 using namespace std::chrono_literals;
 
+TEST_CASE("DeckLink: display modes map to rates") {
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p2398) == bc::Rate{24000, 1001});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p24) == bc::Rate{24, 1});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p25) == bc::Rate{25, 1});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p2997) == bc::Rate{30000, 1001});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p30) == bc::Rate{30, 1});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p50) == bc::Rate{50, 1});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p5994) == bc::Rate{60000, 1001});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p6000) == bc::Rate{60, 1});
+  CHECK(bc::deckLinkRateFor(bmdModeHD1080p120) == bc::Rate{120, 1});
+  CHECK_FALSE(bc::deckLinkRateFor(bmdModeHD720p50));
+}
+
 TEST_CASE("DeckLink: a missing device index is reported, not fatal") {
   bc::DeckLinkOutput out(99, {60, 1}, false);
   out.start();

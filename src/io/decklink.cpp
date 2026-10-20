@@ -71,6 +71,21 @@ std::vector<DeckLinkInfo> listDeckLinkDevices() {
   return out;
 }
 
+std::optional<Rate> deckLinkRateFor(uint32_t mode) {
+  switch (mode) {
+    case bmdModeHD1080p2398: return Rate{24000, 1001};
+    case bmdModeHD1080p24: return Rate{24, 1};
+    case bmdModeHD1080p25: return Rate{25, 1};
+    case bmdModeHD1080p2997: return Rate{30000, 1001};
+    case bmdModeHD1080p30: return Rate{30, 1};
+    case bmdModeHD1080p50: return Rate{50, 1};
+    case bmdModeHD1080p5994: return Rate{60000, 1001};
+    case bmdModeHD1080p6000: return Rate{60, 1};
+    case bmdModeHD1080p120: return Rate{120, 1};
+    default: return std::nullopt;
+  }
+}
+
 uint32_t deckLinkModeFor(Rate r) {
   if (r == Rate{50, 1}) return bmdModeHD1080p50;
   if (r == Rate{60000, 1001}) return bmdModeHD1080p5994;
