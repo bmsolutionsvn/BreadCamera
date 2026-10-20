@@ -1,6 +1,7 @@
 #include "engine/engine.h"
 
 #include <windows.h>
+#include <timeapi.h>
 
 #include <algorithm>
 #include <stdexcept>
@@ -75,17 +76,15 @@ void Engine::apply(const Show& show) {
         existing.erase(it);
       } else {
         auto cam = std::make_unique<Camera>(cfg, factory_, tools_, state_, policy());
+        cam->setWake([this] {
+          wake_.store(true);
+          wakeCv_.notify_all();
+        });
         cam->start();
         cameras_.push_back(std::move(cam));
       }
     }
-    for (auto& c : cameras_) {
-      c->setWake([this] {
-        wake_.store(true);
-        wakeCv_.notify_all();
-      });
-      c->setBudgetRate(show.settings.rate);
-    }
+    for (auto& c : cameras_) c->setBudgetRate(show.settings.rate);
     for (auto& [id, cam] : existing) {
       state_.erase("/cameras/" + id);
       lastPhase_.erase(id);
@@ -144,6 +143,7 @@ std::map<std::string, std::vector<CpuImage>> Engine::capture(const std::vector<s
 
 void Engine::run() {
   SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+  timeBeginPeriod(1);  // timed waits (hold/slate repeats, SRT pacing) need a fine clock
   uint64_t pass = 0;
   auto lastPublish = Clock::now();
   while (running_) {
@@ -185,11 +185,12 @@ void Engine::run() {
     std::unique_lock wl(wakeMutex_);
     wakeCv_.wait_until(wl, *until, [this] { return !running_ || wake_.exchange(false); });
   }
+  timeEndPeriod(1);
 }
 
 std::vector<FrameTap> Engine::processReady(const std::vector<Camera*>& ready, Clock::time_point now) {
   std::vector<FrameTap> frames;
-  TickSchedule sched(settings_.rate);  // audio and budgets until Task 5 moves them per camera
+  TickSchedule sched(settings_.rate);  // the matte budget comes from the Project rate
 
   // Match wiring (spec D9, Task 7), before half 1: hand every Match camera its reference's
   // measured output, and mark the referenced cameras so they measure their output even when
@@ -223,7 +224,7 @@ std::vector<FrameTap> Engine::processReady(const std::vector<Camera*>& ready, Cl
     for (auto* cam : ready) {
       const auto& id = cam->config().id;
       if (std::find(job.ids.begin(), job.ids.end(), id) == job.ids.end()) continue;
-      if (cam->emitIndex() % static_cast<uint64_t>(job.every) != 0) continue;
+      if (cam->tickIndex() % static_cast<uint64_t>(job.every) != 0) continue;
       if (cam->tickPhase() != FeedPhase::Live) {
         job.error = "camera \"" + cam->config().name + "\" (" + id + ") has no picture";
         break;

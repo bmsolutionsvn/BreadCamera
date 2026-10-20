@@ -223,7 +223,7 @@ void Camera::pollCleanupTimer(Clock::time_point now) {
 }
 
 void Camera::startInput() {
-  nominalPacked_.store(0);
+  rateStale_.store(true);
   estimator_.reset();
   inputState_ = SignalState::Connecting;
   state_.set(path("/input/state"), "connecting");
@@ -323,31 +323,38 @@ void Camera::reconfigure(const CameraConfig& next) {
 
 void Camera::onVideo(VideoFrameIn frame) {
   const auto now = Clock::now();
-  lastArrival_ = now;
+  lastArrivalNs_.store(now.time_since_epoch().count());
   const auto pack = [](Rate r) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(r.num)) << 32) | static_cast<uint32_t>(r.den);
   };
-  if (frame.rate) {
+  if (frame.rate && frame.rate->num > 0 && frame.rate->den > 0) {
     nominalPacked_.store(pack(*frame.rate));
-  } else if (nominalPacked_.load() == 0) {
+    rateStale_.store(false);
+  } else if (rateStale_.load() || nominalPacked_.load() == 0) {
     estimator_.push(now);
-    if (auto r = estimator_.rate()) nominalPacked_.store(pack(*r));
+    if (auto r = estimator_.rate()) {
+      nominalPacked_.store(pack(*r));
+      rateStale_.store(false);
+    }
   }
-  const uint64_t seq = ++arrivals_;
+  const uint64_t seq = arrivals_.load() + 1;
   sync_.push(Pending{std::move(frame), now, seq}, now);
+  arrivals_.store(seq);
   if (wake_) wake_();
 }
 
 bool Camera::ready(Clock::time_point now) const {
   if (arrivals_.load() > taken_) return true;
-  if (!sawFrame_ || !lastArrival_) return false;
+  const int64_t last = lastArrivalNs_.load();
+  if (!sawFrame_ || last == 0) return false;
   if (nextRepeat_) return now >= *nextRepeat_;
-  return now >= *lastArrival_ + policy_.stallAfter;
+  return now >= Clock::time_point(Clock::duration(last)) + policy_.stallAfter;
 }
 
 std::optional<Clock::time_point> Camera::nextRepeatAt(Clock::time_point now) const {
-  if (!sawFrame_ || !lastArrival_) return std::nullopt;
-  const auto stallAt = *lastArrival_ + policy_.stallAfter;
+  const int64_t last = lastArrivalNs_.load();
+  if (!sawFrame_ || last == 0) return std::nullopt;
+  const auto stallAt = Clock::time_point(Clock::duration(last)) + policy_.stallAfter;
   if (now < stallAt) return stallAt;
   return nextRepeat_ ? nextRepeat_ : std::optional<Clock::time_point>{stallAt};
 }
@@ -471,8 +478,11 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   auto pick = sync_.pick(now);
   const uint64_t prevTaken = taken_;
   if (pick.fresh && pick.frame) taken_ = pick.frame->seq;
-  tickIndex_ = emitIndex_;
-  emitIndex_ = advanceIndex(emitIndex_, prevTaken, taken_, pick.fresh);
+  const uint64_t skipped = pick.fresh ? taken_ - prevTaken - 1 : 0;
+  tickIndex_ = stampTick(emitIndex_, prevTaken, taken_, pick.fresh);
+  audioFirstTick_ = emitIndex_;
+  audioIntervals_ = static_cast<uint32_t>(skipped + 1);
+  emitIndex_ = tickIndex_ + 1;
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
@@ -548,7 +558,9 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   if (matchTick_ % 6 == 0) beginMatchRound(entering);  // three tiny readbacks, finished later
   if (!(nominalRate() == audioSched_.rate())) audioSched_ = TickSchedule(nominalRate());
   if (pick.phase == FeedPhase::Holding || pick.phase == FeedPhase::Slate) {
-    nextRepeat_ = now + nominalRate().period();
+    const auto period = nominalRate().period();
+    nextRepeat_ = nextRepeat_ ? *nextRepeat_ + period : now + period;
+    if (*nextRepeat_ < now) *nextRepeat_ = now + period;  // skip missed repeats, never burst
   } else {
     nextRepeat_.reset();
   }
@@ -594,7 +606,8 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
   }
   lastFrame_ = frame;
 
-  auto audio = std::make_shared<std::vector<float>>(audio_.pull(audioSched_.audioFramesForTick(tickIndex_, 48000)));
+  auto audio = std::make_shared<std::vector<float>>(
+      audio_.pull(audioSched_.audioFramesForRange(audioFirstTick_, audioIntervals_, 48000)));
 
   // One frame per camera per tick — the composited frame's size (spec §4.3). There is no
   // per-output size and no fit. The readback is asynchronous: finish the previous copy if the
@@ -631,7 +644,7 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
 
   for (auto& s : outputs_) {
     if (!s.out) continue;
-    if ((s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !(s.outRate == nominalRate())) {
+    if (!rateStale_.load() && (s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !(s.outRate == nominalRate())) {
       // The card's mode is fixed at open; a renegotiated input rate needs the output re-added.
       s.out->stop();
       s.out.reset();
@@ -653,7 +666,8 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
       outAudio = both;
     }
     const Rate outRate = s.cfg.halfRate ? Rate{nominalRate().num, nominalRate().den * 2} : nominalRate();
-    s.out->submit(OutFrame{tickIndex_, outRate, frame, outCpu, outAudio, 48000, 2, hasAlpha});
+    const uint64_t outTick = s.cfg.halfRate ? s.halfTick++ : tickIndex_;
+    s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outAudio, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);

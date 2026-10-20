@@ -113,9 +113,9 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
       </div>
       {confirm && (
         <ConfirmDialog
-          title="Change the show format?"
-          body="Every output restarts and loses picture for about 1 second."
-          confirm="Change format"
+          title="Change the effect budget?"
+          body="Effect time budgets change. Outputs keep running."
+          confirm="Change budget"
           danger={false}
           onCancel={() => setConfirm(false)}
           onConfirm={() => {

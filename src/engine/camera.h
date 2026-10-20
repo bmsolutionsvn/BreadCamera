@@ -58,7 +58,10 @@ class Camera final : public InputSink {
   Rate nominalRate() const {
     const uint64_t p = nominalPacked_.load();
     if (!p) return budgetRate_;
-    return Rate{static_cast<int>(p >> 32), static_cast<int>(p & 0xffffffffu)};
+    const int num = static_cast<int>(p >> 32);
+    const int den = static_cast<int>(p & 0xffffffffu);
+    if (num <= 0 || den <= 0) return budgetRate_;
+    return Rate{num, den};
   }
   bool hasNominalRate() const { return nominalPacked_.load() != 0; }
   // Wakes the engine when an input frame arrives (called from the input thread).
@@ -68,10 +71,10 @@ class Camera final : public InputSink {
   bool ready(std::chrono::steady_clock::time_point now) const;
   std::optional<std::chrono::steady_clock::time_point> nextRepeatAt(
       std::chrono::steady_clock::time_point now) const;
-  // The next emitted index: a fresh frame covers every input superseded since the last one; a
-  // held/slate repeat covers one frame interval.
-  static uint64_t advanceIndex(uint64_t current, uint64_t taken, uint64_t seq, bool fresh) {
-    return fresh ? current + (seq - taken) : current + 1;
+  // The frame's wall-clock tick: a fresh frame covers every input interval superseded since the
+  // last taken one; a held/slate repeat covers one. Audio pulls the same number of intervals.
+  static uint64_t stampTick(uint64_t current, uint64_t taken, uint64_t seq, bool fresh) {
+    return fresh ? current + (seq - taken - 1) : current;
   }
   // The monotonic index of the last emitted frame.
   uint64_t emitIndex() const { return emitIndex_; }
@@ -142,6 +145,7 @@ class Camera final : public InputSink {
     std::optional<ErrorInfo> createError;
     std::vector<float> carryAudio;  // half-rate audio from the odd frame
     uint64_t emitted = 0;           // frames submitted to this output
+    uint64_t halfTick = 0;          // the half-rate output's own consecutive tick
     Rate outRate{0, 1};             // the SDI output's fixed rate; 0 until it starts
     bool deferred = false;          // SDI waits for the camera's first frame
   };
@@ -188,10 +192,13 @@ class Camera final : public InputSink {
   StateStore& state_;
   FrameSync<Pending> sync_;
   SyncPolicy policy_;
-  std::optional<std::chrono::steady_clock::time_point> lastArrival_;
+  std::atomic<int64_t> lastArrivalNs_{0};  // steady_clock ns; 0 = never
   std::optional<std::chrono::steady_clock::time_point> nextRepeat_;
   TickSchedule audioSched_{Rate{60, 1}};
+  uint64_t audioFirstTick_ = 0;
+  uint32_t audioIntervals_ = 1;
   Rate budgetRate_{60, 1};
+  std::atomic<bool> rateStale_{false};  // a new input session is renegotiating its rate
   std::atomic<uint64_t> nominalPacked_{0};  // packed Rate; 0 = not known yet
   RateEstimator estimator_;
   std::function<void()> wake_;

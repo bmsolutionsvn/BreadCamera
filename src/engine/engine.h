@@ -34,8 +34,8 @@ struct FrameTap {
   std::shared_ptr<const CpuImage> cpu;
 };
 
-// Master tick + camera set (spec §3.3). apply() is thread-safe; adapters are torn down
-// outside the tick lock so a slow stop never stalls the tick.
+// Arrival-driven camera set. apply() is thread-safe; adapters are torn down outside the pass
+// lock so a slow stop never stalls the pass.
 class Engine {
  public:
   using FrameTapFn = std::function<void(uint64_t tick, const std::vector<FrameTap>& frames)>;

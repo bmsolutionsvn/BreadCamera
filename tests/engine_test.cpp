@@ -104,6 +104,21 @@ TEST_CASE("Engine: the output frame carries the camera rate, not the Project rat
   CHECK(r.factory.output("o1")->lastRate() == bc::Rate{30000, 1001});
 }
 
+TEST_CASE("Engine: a renegotiated input rate reaches the output") {
+  Rig r;
+  bc::Show show = testShow();
+  show.cameras.push_back(cam("a", {out("o1")}, {{"rateNum", 30000}, {"rateDen", 1001}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(500ms);
+  REQUIRE(r.factory.output("o1")->lastRate() == bc::Rate{30000, 1001});
+  show.cameras[0].input.params["rateNum"] = 60000;
+  show.cameras[0].input.params["rateDen"] = 1001;
+  r.engine.apply(show);
+  std::this_thread::sleep_for(500ms);
+  CHECK(r.factory.output("o1")->lastRate() == bc::Rate{60000, 1001});
+}
+
 TEST_CASE("Engine: no output frame before the first input frame") {
   Rig r;
   bc::Show show = testShow();
@@ -311,14 +326,17 @@ TEST_CASE("Engine: every output sends the one frame size, and a half-rate output
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
   CHECK(n >= 13);
   CHECK(n <= 17);
-  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 1600 * 2);
+  for (size_t i = 1; i < halfSeen.size(); ++i) {
+    CHECK(halfSeen[i].tick == halfSeen[i - 1].tick + 1);  // the half-rate stream's own clock
+    CHECK(halfSeen[i].audioSamples == 2 * 1600 * 2);
+  }
 }
 
-TEST_CASE("Camera: a coalesced frame advances the emitted index across the dropped frames") {
-  CHECK(bc::Camera::advanceIndex(0, 0, 1, true) == 1);
-  CHECK(bc::Camera::advanceIndex(1, 1, 5, true) == 5);
-  CHECK(bc::Camera::advanceIndex(5, 5, 9, true) == 9);
-  CHECK(bc::Camera::advanceIndex(9, 9, 9, false) == 10);
+TEST_CASE("Camera: a coalesced frame stamps its wall-clock tick and covers the gaps") {
+  CHECK(bc::Camera::stampTick(0, 0, 1, true) == 0);
+  CHECK(bc::Camera::stampTick(1, 1, 5, true) == 4);
+  CHECK(bc::Camera::stampTick(5, 5, 9, true) == 8);
+  CHECK(bc::Camera::stampTick(9, 9, 9, false) == 9);
 }
 
 TEST_CASE("Engine: input health is published") {

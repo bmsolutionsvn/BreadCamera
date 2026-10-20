@@ -140,6 +140,44 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
 // (Task 1), so a 4K camera would H.264-encode 4K per visible tile. The preview caps its encode size
 // at 1280x720, downscaling the shared image on the encoder worker (off the tick) and opening the
 // encoder at the capped size.
+TEST_CASE("PreviewService: a second frame inside 33 ms is suppressed" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::mutex mu;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
+  hub.subscribe("c1", {"a"}, PreviewSize::Small);
+  auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+  // Warm the encoder: the first packets can take a frame or two to appear.
+  for (uint64_t t = 0; t < 5; ++t) {
+    svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
+    svc.drain();
+    if (t < 4) std::this_thread::sleep_for(std::chrono::milliseconds(34));
+  }
+  size_t first = 0;
+  {
+    std::lock_guard l(mu);
+    first = sent["c1"].size();
+  }
+  REQUIRE(first > 0);
+  svc.onTick(2, {bc::FrameTap{"a", 0, nullptr, img}});
+  svc.drain();
+  {
+    std::lock_guard l(mu);
+    CHECK(sent["c1"].size() == first);  // within 33 ms: no second encode
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  svc.onTick(4, {bc::FrameTap{"a", 0, nullptr, img}});
+  svc.drain();
+  {
+    std::lock_guard l(mu);
+    CHECK(sent["c1"].size() > first);  // past the cap: the next frame encodes
+  }
+}
+
 TEST_CASE("the preview caps its encode size at 1280x720" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;

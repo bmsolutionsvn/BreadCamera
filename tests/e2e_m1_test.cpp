@@ -136,9 +136,9 @@ TEST_CASE("M1 acceptance: 4x 1080p60 SRT passthrough, then hold and slate on one
     auto* out = factory.fake.output("out" + std::to_string(i));
     const int n = countSince(out, t0, t1);
     MESSAGE(id << ": " << n << " frames in 20 s, latency " << st.cameras.at(id).latencyMs << " ms, fps " << st.cameras.at(id).fps);
-    // The output follows the input: expect the frames the source actually delivered, not a
-    // fixed 60 fps that the old master clock produced by repeating.
-    CHECK(n >= static_cast<int>(st.cameras.at(id).fps * 20 * 0.95));
+    // The output follows the input. A fixed 50 fps floor keeps the gate independent of the
+    // engine's own fps statistic (which is circular when the engine drops frames).
+    CHECK(n >= 1000);
     CHECK(st.cameras.at(id).latencyMs <= 50.0);
     CHECK(phase(state, id) == "live");
   }

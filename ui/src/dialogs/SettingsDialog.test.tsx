@@ -35,7 +35,7 @@ test('a frame-rate change asks first, with a verb button', () => {
   fireEvent.change(screen.getByLabelText('Frame rate'), { target: { value: '50/1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   expect(sent('setSettings')).toHaveLength(0);
-  fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the show format?' })).getByRole('button', { name: 'Change format' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the effect budget?' })).getByRole('button', { name: 'Change budget' }));
   expect(sent('setSettings')[0].args).toEqual({ rate: '50/1' });
 });
 
@@ -49,7 +49,7 @@ test('offers exactly the eleven project rates and sends the stored rational', ()
   expect(screen.getByText(/effect time budgets only/i)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Frame rate'), { target: { value: '30/1' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-  fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the show format?' })).getByRole('button', { name: 'Change format' }));
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'Change the effect budget?' })).getByRole('button', { name: 'Change budget' }));
   expect(sent('setSettings')[0].args).toEqual({ rate: '30/1' });
 });
 
