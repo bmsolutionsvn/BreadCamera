@@ -234,6 +234,28 @@ available for commercial/non-commercial use; downloads require a free NVIDIA Dev
 (NGC) account. **Only the runtime files the SLA marks redistributable are shipped.** When enabled,
 `nvVideoEffects.dll` and the AI Green Screen model files accompany the executables.
 
+## NVIDIA RTX Video SDK runtime
+
+- **Version:** n/a on this machine (RTX Video SDK absent). The SDK ships unpinned; when built, the
+  version is whatever the developer unzipped into `third_party/rtx_video_sdk/` (or `%RTXVIDEO_ROOT%`)
+- **Licence:** NVIDIA RTX SDKs License (v. 2024-02-23, with the RTX supplement v. 2023-12-20)
+- **URL:** <https://developer.nvidia.com/rtx-video-sdk>
+- **Ships only when built:** `BC_WITH_RTXVIDEO=ON` (SDK under `%RTXVIDEO_ROOT%` or
+  `third_party/rtx_video_sdk`). Off for this build.
+
+The RTX Video SDK's runtime (`nvngx_vsr.dll`) is NVIDIA's, shipped in object-code form inside the
+installer under the NVIDIA RTX SDKs License (§1c/§2a). BreadCamera's own wrapper
+(`src/gpu/rtx_video.cpp`) is written from the SDK headers and programming guide, **not** from
+NVIDIA's sample code, and **no SDK file — headers (`nvsdk_ngx*.h`), import libraries, DLLs or
+anything from `samples/` — is committed to this repository**: the SDK is licence-gated behind an
+NVIDIA Developer login and lives in untracked `third_party/rtx_video_sdk/`. The runtime is not to be
+reverse engineered, and is not to be redistributed apart from BreadCamera.
+
+Attribution (supplement §7.1c): BreadCamera credits the RTX Video SDK as plain text in Settings →
+About (using NVIDIA's marks, such as the "NVIDIA RTX" logo, would need NVIDIA's written approval).
+NVIDIA must also be notified before commercial release (supplement §4). Both are **owner actions
+before the first public release**.
+
 ## OpenCV (core, imgproc, dnn, and the contrib `mcc` module)
 
 - **Version:** 4.14.0 (vcpkg port `opencv4`, features `contrib`, `dnn`)
@@ -245,6 +267,38 @@ available for commercial/non-commercial use; downloads require a free NVIDIA Dev
   are shipped.
 
 The full Apache-2.0 text ships with the installer as `licenses\Apache-2.0.txt`.
+
+## AMD FidelityFX Super Resolution 1 (FSR 1)
+
+- **Version:** 1.0.2 (vendored unchanged: `src/gpu/shaders/ffx/ffx_a.h` and
+  `src/gpu/shaders/ffx/ffx_fsr1.h`, from <https://github.com/GPUOpen-Effects/FidelityFX-FSR> at tag
+  `v1.0.2`)
+- **Licence:** MIT
+- **URL:** <https://github.com/GPUOpen-Effects/FidelityFX-FSR>
+- **Shipped as:** compiled into `breadcamera-engine.exe` as `cs_5_0` HLSL compute shaders — the
+  Upscale path on non-NVIDIA GPUs. `src/gpu/shaders/fsr_easu.hlsl` and `src/gpu/shaders/fsr_rcas.hlsl`
+  are BreadCamera's own thin wrappers that call FSR's `FsrEasuF` / `FsrRcasF` from the vendored
+  headers; they are not AMD's sample code.
+
+    Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+    THE SOFTWARE.
 
 ## Blackmagic DeckLink SDK
 
@@ -272,11 +326,12 @@ libajantv2 repository's `LICENSE` file.
 
 ## libomt / libvmx (Open Media Transport)
 
-- **Version:** libomt `bb4b67be8e5964f1017592b9fc5406495e704e5d`, libomtnet
-  `7d29031ff3f355ffa1f0cd08ee24d02e258445dd`, Open Media Transport binaries v1.0.0.19
-  (pinned in `OMT-HX/scripts/build-libomt.ps1`)
+- **Version:** built from source, pinned as the submodules in `OMT-HX/omt/`: forks of Open Media
+  Transport at <https://github.com/bmsolutionsvn> (libomt `bb4b67b`, libomtnet `d7cf026` with the
+  OMT-HX changes on upstream `7d29031`, libvmx `a1828cb`)
 - **Licence:** MIT (libomt, libomtnet and libvmx)
-- **URL:** <https://github.com/openmediatransport/libomt>
+- **URL:** <https://github.com/openmediatransport/libomt>, <https://github.com/openmediatransport/libomtnet>,
+  <https://github.com/openmediatransport/libvmx>
 - **Shipped as:** `libomt.dll`, `libvmx.dll`
 
     MIT License

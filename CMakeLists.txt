@@ -86,15 +86,15 @@ if(BC_WITH_VCAM)
   add_subdirectory(vcam)
 endif()
 
-# Optional OMT-HX output (see ../OMT-HX). The checkout must have run its
-# scripts/build-libomt.ps1 once so third_party/libomt is populated.
+# Optional OMT-HX output (see ../OMT-HX). Its CMake builds libomt and libvmx from its omt/ submodules,
+# so the checkout needs `git submodule update --init` once.
 set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
-if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/third_party/libomt/libomt.lib")
+if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/omt/libomt/libomt.h")
   add_subdirectory("${OMTHX_ROOT}" omthx-build)
   set(BC_WITH_OMT ON)
 else()
   set(BC_WITH_OMT OFF)
-  message(STATUS "OMT output OFF: no built OMT-HX checkout at ${OMTHX_ROOT} (run its scripts/build-libomt.ps1)")
+  message(STATUS "OMT output OFF: no OMT-HX checkout with its submodules at ${OMTHX_ROOT}")
 endif()
 message(STATUS "BC_WITH_OMT=${BC_WITH_OMT}")
 
@@ -105,6 +105,18 @@ if(BC_WITH_MAXINE AND NOT Maxine_FOUND)
   set(BC_WITH_MAXINE OFF)
 endif()
 message(STATUS "BC_WITH_MAXINE=${BC_WITH_MAXINE}")
+
+# webcam-fx Task 4 — optional NVIDIA RTX Video SDK (Clean up and AI Upscale, spec D4). The SDK is
+# behind an NVIDIA Developer login, so it is never fetched or committed (spec "RTX Video SDK
+# licence obligations", §4b/§4e); BC_WITH_RTXVIDEO finds it under third_party/rtx_video_sdk or
+# turns itself off, and CI builds without it.
+find_package(RtxVideo)
+option(BC_WITH_RTXVIDEO "Build the NVIDIA RTX Video SDK Clean up and AI Upscale" ${RtxVideo_FOUND})
+if(BC_WITH_RTXVIDEO AND NOT RtxVideo_FOUND)
+  message(WARNING "BC_WITH_RTXVIDEO=ON but the NVIDIA RTX Video SDK was not found under RTXVIDEO_ROOT; turning it off")
+  set(BC_WITH_RTXVIDEO OFF)
+endif()
+message(STATUS "BC_WITH_RTXVIDEO=${BC_WITH_RTXVIDEO}")
 
 # M6 Task 1 — optional ONNX Runtime (DirectML) matte backend (spec §7.2). The runtime, the
 # DirectML redistributable and the MODNet model are fetched by scripts/fetch-sdks.ps1.
@@ -156,6 +168,8 @@ add_library(bc_core STATIC
   # M3 Task 1
   src/core/color_math.cpp
   src/core/lut.cpp
+  # webcam-fx Task 6
+  src/core/skin_match.cpp
   # M3 Task 2
   src/core/chart.cpp
   src/core/calibration.cpp
@@ -175,9 +189,10 @@ set(BC_SHADER_HEADERS)
 function(bc_shader name profile)
   set(src ${CMAKE_SOURCE_DIR}/src/gpu/shaders/${name}.hlsl)
   set(out ${BC_SHADER_DIR}/${name}.h)
+  # Any extra arguments are header dependencies the shader #includes (e.g. the vendored FSR headers).
   add_custom_command(OUTPUT ${out}
     COMMAND ${FXC} /nologo /O3 /T ${profile} /E main /Vn g_${name} /Fh ${out} ${src}
-    DEPENDS ${src} VERBATIM)
+    DEPENDS ${src} ${ARGN} VERBATIM)
   set(BC_SHADER_HEADERS ${BC_SHADER_HEADERS} ${out} PARENT_SCOPE)
 endfunction()
 bc_shader(yuv_to_linear cs_5_0)
@@ -194,6 +209,10 @@ foreach(s alpha_threshold alpha_morph alpha_blur bg_downsample bg_blur bg_compos
 endforeach()
 # M3 Task 3
 bc_shader(color_grade cs_5_0)
+# webcam-fx Task 3 — the FSR 1 upscaler's two compute shaders; the vendored headers are dependencies
+set(BC_FSR_HEADERS ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_a.h ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_fsr1.h)
+bc_shader(fsr_easu cs_5_0 ${BC_FSR_HEADERS})
+bc_shader(fsr_rcas cs_5_0 ${BC_FSR_HEADERS})
 
 add_library(bc_gpu STATIC
   src/gpu/device.cpp
@@ -204,10 +223,23 @@ add_library(bc_gpu STATIC
   src/gpu/compositor.cpp
   # M3 Task 3
   src/gpu/color_grader.cpp
+  # webcam-fx Task 1
+  src/gpu/gpu_timer.cpp
+  # webcam-fx Task 3
+  src/gpu/upscaler.cpp
+  # webcam-fx Task 4 (compiles to a null path when BC_WITH_RTXVIDEO=0)
+  src/gpu/rtx_video.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
 target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
+if(BC_WITH_RTXVIDEO)
+  target_include_directories(bc_gpu PUBLIC ${RTXVIDEO_INCLUDE_DIR})
+  target_link_libraries(bc_gpu PUBLIC "${RTXVIDEO_NGX_LIB}")
+  target_compile_definitions(bc_gpu PUBLIC BC_WITH_RTXVIDEO=1)
+else()
+  target_compile_definitions(bc_gpu PUBLIC BC_WITH_RTXVIDEO=0)
+endif()
 
 # ---- io ----
 add_library(bc_io STATIC
@@ -316,15 +348,18 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NDI_DLL}" "$<TARGET_FILE_DIR:${target}>")
   endif()
   if(BC_WITH_OMT)
-    add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${OMTHX_LIBOMT_DIR}/libomt.dll" "${OMTHX_LIBOMT_DIR}/libvmx.dll" "$<TARGET_FILE_DIR:${target}>")
+    omthx_copy_runtime(${target})
   endif()
   if(BC_WITH_ONNX)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${ORT_DLL}" "${DML_DLL}" "$<TARGET_FILE_DIR:${target}>"
       COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/modnet.onnx")
+  endif()
+  if(BC_WITH_RTXVIDEO)
+    # webcam-fx Task 4 — the RTX Video SDK's runtime DLL, next to the engine and the tests.
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${RTXVIDEO_NGX_DLL}" "$<TARGET_FILE_DIR:${target}>")
   endif()
 endfunction()
 
@@ -394,6 +429,13 @@ add_executable(bc_tests
   tests/compositor_test.cpp
   # Task 5
   tests/gpu_test.cpp
+  # webcam-fx Task 1
+  tests/gpu_timer_test.cpp
+  # webcam-fx Task 3
+  tests/upscaler_test.cpp
+  tests/engine_upscale_test.cpp
+  # webcam-fx Task 4
+  tests/rtx_video_test.cpp
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp
@@ -436,6 +478,8 @@ add_executable(bc_tests
   # M3 Task 1
   tests/color_math_test.cpp
   tests/lut_test.cpp
+  # webcam-fx Task 6
+  tests/skin_match_test.cpp
   # M3 Task 2
   tests/chart_test.cpp
   tests/calibration_test.cpp

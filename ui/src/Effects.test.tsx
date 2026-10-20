@@ -6,6 +6,28 @@ import { FakeWs } from './test/fakeWs';
 
 const schemas = [
   {
+    kind: 'cleanup',
+    label: 'Clean up',
+    description: 'Removes compression blockiness and webcam noise. Needs an NVIDIA RTX card.',
+    icon: 'cleanup',
+    requires: [],
+    onAdd: { enabled: true },
+    unavailable: 'Needs an NVIDIA RTX card.',
+    fields: [{ key: 'enabled', type: 'bool', default: false, label: 'On' }],
+  },
+  {
+    kind: 'upscale',
+    label: 'Upscale',
+    description: 'Raises a low-resolution camera to 720p or 1080p.',
+    icon: 'upscale',
+    requires: [],
+    onAdd: { enabled: true, target: '1080' },
+    fields: [
+      { key: 'enabled', type: 'bool', default: false, label: 'On' },
+      { key: 'target', type: 'enum', default: '1080', label: 'Target', options: ['720', '1080'], optionLabels: ['720p', '1080p'] },
+    ],
+  },
+  {
     kind: 'matte',
     label: 'Background removal',
     description: 'AI person cut-out without a green screen.',
@@ -129,6 +151,29 @@ test('toggling the effect switch sends setStage immediately', async () => {
     .filter((r) => r.cmd === 'setStage');
   expect(setStages).toHaveLength(1);
   expect(setStages[0].args).toEqual({ cameraId: 'a', stage: 'matte', params: { enabled: false } });
+});
+
+test('shows an unavailable effect dimmed, not selectable, with its reason readable', async () => {
+  const insp = await setup();
+  fireEvent.click(within(insp).getByRole('button', { name: 'Add effect' }));
+  const dlg = screen.getByRole('dialog', { name: 'Add effect to CAM 1' });
+  expect(within(dlg).getByRole('radio', { name: 'Clean up' })).toBeDisabled();
+  const reason = within(dlg).getByText('Needs an NVIDIA RTX card.');
+  expect(reason).toHaveClass('req');
+  expect(reason.closest('.pick-row')).toHaveClass('off');
+  // The dim rule names .ic, b and p only, so the reason keeps full contrast (D8).
+  expect(reason.closest('.ic, b, p')).toBeNull();
+});
+
+test('shows the GPU time and the upscale note', async () => {
+  const insp = await setup({
+    wait: 'RUNNING',
+    show: { ...show, cameras: [{ ...show.cameras[0], stages: { upscale: { enabled: true, target: '1080' } } }] },
+    state: { cameras: { a: { ...state.cameras.a, stages: { upscale: { state: 'active', error: null, gpuMs: 3.24, note: 'Input is already 1080p' } } } } },
+  });
+  const group = within(insp).getByRole('group', { name: 'Upscale' });
+  expect(within(group).getByText('3.2 ms')).toBeInTheDocument();
+  expect(within(group).getByText('Input is already 1080p')).toBeInTheDocument();
 });
 
 test('an effect whose requirement is missing is explained, not hidden', async () => {

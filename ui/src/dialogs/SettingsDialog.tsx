@@ -109,6 +109,7 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
           {page === 'about' && (
             <>
               <h3>BreadCamera 0.1 — BM Solutions</h3>
+              <p className="note">Clean up and Upscale on NVIDIA RTX cards use the NVIDIA RTX Video SDK.</p>
               <p className="note">Third-party licences: THIRD_PARTY_NOTICES.md in the install folder.</p>
             </>
           )}

@@ -90,6 +90,7 @@ export function Effects({ client, snap, cam, n, schemas, onAdd, calib }: {
               </span>
               <b>{s.label}</b>
               <span className="right">
+                {st && st.state === 'active' && (st.gpuMs ?? 0) > 0 && <span className="mono">{(st.gpuMs ?? 0).toFixed(1)} ms</span>}
                 <span className={`st ${cls}`}>{stateLabel}</span>
                 <label className="sw-wrap">
                   <input type="checkbox" role="switch" aria-label={`${s.label} on`} checked={on} onChange={(e) => change(s.kind, { enabled: e.target.checked })} />
@@ -103,8 +104,9 @@ export function Effects({ client, snap, cam, n, schemas, onAdd, calib }: {
             <div className="group-b">
               {st?.error && <ErrorBlock error={st.error} />}
               {errors[s.kind] && <ErrorBlock message={errors[s.kind]} />}
+              {st?.note && <p className="note">{st.note}</p>}
               {missing.length > 0 && <p className="note">Needs {missing.map(labelOf).join(', ')}, which is not on this camera.</p>}
-              {s.kind === 'color' && <ColourPanel client={client} cam={cam} n={n} calib={calib} />}
+              {s.kind === 'color' && <ColourPanel client={client} snap={snap} cam={cam} n={n} calib={calib} />}
               <StageForm schema={s} values={values} onChange={(p) => change(s.kind, p)} />
             </div>
           </div>

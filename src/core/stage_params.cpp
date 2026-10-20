@@ -42,6 +42,20 @@ StageField simple(std::string key, std::string type, json def, std::string label
 }
 
 std::vector<StageSchema> build() {
+  StageSchema cleanup{"cleanup", "Clean up",
+                      "Removes compression blockiness and webcam noise. Needs an NVIDIA RTX card.", "cleanup", {},
+                      json{{"enabled", true}}, {}};
+  cleanup.fields = {
+      simple("enabled", "bool", false, "On"),
+  };
+  StageSchema upscale{"upscale", "Upscale",
+                      "Raises a low-resolution camera to 720p or 1080p. AI on NVIDIA RTX cards; a sharp standard "
+                      "upscaler on other GPUs.",
+                      "upscale", {}, json{{"enabled", true}, {"target", "1080"}}, {}};
+  upscale.fields = {
+      simple("enabled", "bool", false, "On"),
+      enumeration("target", {"720", "1080"}, {"720p", "1080p"}, "1080", "Target"),
+  };
   StageSchema color{"color", "Colour",
                     "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.",
                     "color", {}, json{{"enabled", true}}, {}};
@@ -51,6 +65,10 @@ std::vector<StageSchema> build() {
   };
   color.fields = {
       simple("enabled", "bool", false, "On"),
+      // spec D9: the Colour effect has two modes. Hidden: the Inspector's segmented control
+      // sends them, but they are not rendered as generic fields.
+      hide(enumeration("mode", {"calibrate", "match"}, {"Calibrate", "Match"}, "calibrate", "Mode")),
+      hide(simple("matchTo", "text", "", "Match to")),
       hide(number("exposure", -3, 3, 0.05, 0, "Exposure (EV)")),
       hide(number("temperature", -100, 100, 1, 0, "Temperature")),
       hide(number("tint", -100, 100, 1, 0, "Tint")),
@@ -87,7 +105,7 @@ std::vector<StageSchema> build() {
       simple("color", "color", "#101418", "Colour"),
       simple("image", "path", "", "Image"),
   };
-  return {color, matte, background};
+  return {cleanup, upscale, color, matte, background};
 }
 
 json checkField(const StageField& f, const json& v) {
@@ -119,6 +137,10 @@ json checkField(const StageField& f, const json& v) {
     if (!v.is_string() || v.get<std::string>().size() > 1024) throw std::invalid_argument(where + " must be a path of at most 1024 characters");
     return v;
   }
+  if (f.type == "text") {
+    if (!v.is_string() || v.get<std::string>().size() > 64) throw std::invalid_argument(where + " must be text of at most 64 characters");
+    return v;
+  }
   throw std::invalid_argument("unknown field type " + f.type);
 }
 }  // namespace
@@ -133,7 +155,7 @@ const StageSchema* findStageSchema(std::string_view kind) {
   return nullptr;
 }
 
-json schemaToJson(const StageSchema& s) {
+json schemaToJson(const StageSchema& s, const std::string& unavailable) {
   json fields = json::array();
   for (auto& f : s.fields) {
     json j{{"key", f.key}, {"type", f.type}, {"default", f.def}, {"label", f.label}};
@@ -149,8 +171,10 @@ json schemaToJson(const StageSchema& s) {
     if (f.hidden) j["hidden"] = true;
     fields.push_back(j);
   }
-  return {{"kind", s.kind},     {"label", s.label},       {"description", s.description}, {"icon", s.icon},
-          {"requires", s.needs}, {"onAdd", s.onAdd}, {"fields", fields}};
+  json out = {{"kind", s.kind},     {"label", s.label},       {"description", s.description}, {"icon", s.icon},
+              {"requires", s.needs}, {"onAdd", s.onAdd}, {"fields", fields}};
+  if (!unavailable.empty()) out["unavailable"] = unavailable;
+  return out;
 }
 
 json normalizeStageParams(std::string_view kind, const json& params) {

@@ -61,6 +61,23 @@ test('the status bar no longer shows a show-wide resolution', () => {
   expect(within(bar).queryByText(/1920×1080/)).toBeNull();     // the size label is gone
 });
 
+test('names the heaviest stage when ticks overrun', () => {
+  render(
+    <Workspace
+      client={client({
+        ...state,
+        engine: { ...state.engine, overruns: 12 },
+        cameras: {
+          a: { ...state.cameras.a, stages: { color: { state: 'active', error: null, gpuMs: 0.4 } } },
+          b: { ...state.cameras.b, stages: { upscale: { state: 'active', error: null, gpuMs: 6.2 } } },
+        },
+      })}
+    />,
+  );
+  const bar = screen.getByLabelText('Status bar');
+  expect(within(bar).getByText(/heaviest: CAM 2 Upscale 6\.2 ms/)).toBeInTheDocument();
+});
+
 test('the first camera is selected; arrow keys and clicks move the Inspector', () => {
   render(<Workspace client={client()} />);
   const insp = screen.getByRole('complementary', { name: 'Inspector' });

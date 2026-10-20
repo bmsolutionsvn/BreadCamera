@@ -137,12 +137,12 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
       <Prop label="Input type">
         {(id) => (
           <select id={id} className="ctl" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
-            <option value="srt">SRT (BreadCall feeds, encoders)</option>
+            <option value="srt">SRT</option>
             <option value="ndi">NDI</option>
             <option value="uvc">Device camera</option>
             <option value="decklink">DeckLink (SDI/HDMI)</option>
             <option value="aja">AJA (experimental)</option>
-            <option value="breadcall">BreadCall guest</option>
+            <option value="breadcall">BreadCall Room</option>
           </select>
         )}
       </Prop>

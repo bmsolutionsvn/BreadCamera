@@ -5,6 +5,7 @@
 #include <map>
 
 #include "core/lut.h"
+#include "core/upscale_size.h"
 #include "core/utf8.h"
 #include "gpu/color_grader.h"
 #include "gpu/image_io.h"
@@ -12,15 +13,41 @@
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
+namespace {
+// Match's tiny readbacks (spec §3.1: the main path never copies a full frame to the CPU).
+constexpr uint32_t kMatchW = 128, kMatchH = 72;
+}  // namespace
+
 Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
     : cfg_(std::move(cfg)), factory_(factory), tools_(tools), state_(state), sync_(policy) {
   loadStageParams();
+  if (tools_.gpu) {
+    // Per-stage GPU timing (spec D14). A query failure falls back to the CPU timing.
+    try {
+      colorTimer_.emplace(*tools_.gpu);
+      backgroundTimer_.emplace(*tools_.gpu);
+      upscaleTimer_.emplace(*tools_.gpu);
+      cleanupTimer_.emplace(*tools_.gpu);
+    } catch (const std::exception&) {
+      colorTimer_.reset();
+      backgroundTimer_.reset();
+      upscaleTimer_.reset();
+      cleanupTimer_.reset();
+    }
+  }
 }
 
 Camera::~Camera() { stop(); }
 
 void Camera::loadStageParams() {
+  const nlohmann::json prevColor = colorParams_;
   colorParams_ = normalizeStageParams("color", cfg_.stages.value("color", nlohmann::json::object()));
+  if (colorParams_ != prevColor) {  // spec D16: the correction lives in the camera and resets here
+    correction_ = MatchCorrection{};
+    matchTarget_ = MatchCorrection{};
+    matchOwn_.reset();
+    lastMatchAt_.reset();
+  }
   auto lutKeep = grade_.lut;
   grade_ = gradeFrom(colorParams_);
   const std::string lut = colorParams_.value("lut", std::string());
@@ -63,10 +90,136 @@ void Camera::loadStageParams() {
           ErrorInfo{"background-image", std::string("cannot load the background image; using the colour: ") + e.what()};
     }
   }
+  upscaleParams_ = normalizeStageParams("upscale", cfg_.stages.value("upscale", nlohmann::json::object()));
+  upscaleTargetH_ = upscaleParams_.value("target", std::string("1080")) == "720" ? 720u : 1080u;
+  cleanupParams_ = normalizeStageParams("cleanup", cfg_.stages.value("cleanup", nlohmann::json::object()));
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
   return matteParams_.value("enabled", false) && matteGuard_.shouldRun(now);
+}
+
+double Camera::stageGpuMs(const std::string& kind) const {
+  if (kind == "color") return colorGpuMs_;
+  if (kind == "background") return backgroundGpuMs_;
+  if (kind == "upscale") return upscaleGpuMs_;
+  if (kind == "cleanup") return cleanupGpuMs_;
+  return 0;
+}
+
+bool Camera::matchMode() const {
+  return colorParams_.value("enabled", false) && colorParams_.value("mode", std::string("calibrate")) == "match";
+}
+
+std::string Camera::matchTo() const { return colorParams_.value("matchTo", std::string()); }
+
+void Camera::setMatchReference(std::optional<SkinStats> ref, bool refHasPicture) {
+  matchRef_ = std::move(ref);
+  matchRefLive_ = refHasPicture;
+}
+
+ColorGrade Camera::matchGrade() const {
+  ColorGrade g = gradeFrom(colorParams_);
+  g.lut.reset();  // spec D9: no LUT in Match; the stored LUT returns in Calibrate
+  g.exposure += correction_.exposure;
+  g.temperature += correction_.temperature;
+  g.tint += correction_.tint;
+  return g;
+}
+
+void Camera::updateMatchTarget(const std::optional<SkinStats>& own, Clock::time_point now) {
+  const double dt = lastMatchAt_ ? std::chrono::duration<double>(now - *lastMatchAt_).count() : 0.1;
+  lastMatchAt_ = now;
+  std::optional<MatchCorrection> target;
+  if (!matchTo().empty()) {
+    if (matchRef_ && matchRefLive_ && own) target = solveMatch(*own, *matchRef_);
+  } else if (own) {
+    target = autoBalance(*own);
+  }
+  if (!target) return;  // hold: no skin, or the reference is down (spec D12, review focus 3)
+  matchTarget_ = *target;
+  correction_ = ease(correction_, matchTarget_, dt);
+}
+
+void Camera::finishMatchRound(Clock::time_point now) {
+  if (!matchRound_) return;
+  MatchRound& r = *matchRound_;
+  if (r.wantIn && r.in.tryFinish(tools_.conv, r.inImg)) r.wantIn = false;
+  if (r.wantOut && r.out.tryFinish(tools_.conv, r.outImg)) r.wantOut = false;
+  if (r.wantAlpha && r.alpha.tryFinish(tools_.conv, r.alphaImg)) r.wantAlpha = false;
+  if (r.wantIn || r.wantOut || r.wantAlpha) {
+    // ponytail: a GPU copy that never lands is dropped after ~2 s; a per-round retry budget if a
+    // driver wedges on the tiny copy.
+    if (++matchRoundAge_ > 120) matchRound_.reset();
+    return;
+  }
+  const uint8_t* alpha = r.alphaImg.bgra.empty() ? nullptr : r.alphaImg.bgra.data();
+  if (!r.outImg.bgra.empty()) {
+    matchOutput_ = skinStats(r.outImg.bgra.data(), alpha, kMatchW, kMatchH);
+  }
+  if (matchMode() && !r.inImg.bgra.empty()) {
+    matchOwn_ = skinStats(r.inImg.bgra.data(), alpha, kMatchW, kMatchH);
+    updateMatchTarget(matchOwn_, now);
+  }
+  matchRound_.reset();
+}
+
+void Camera::beginMatchRound(const TextureRef& entering) {
+  if (matchRound_) return;  // one measurement at a time; a re-begin would discard an unfinished frame
+  if (!matchMode() && !matchedBy_) return;
+  MatchRound r;
+  if (matchMode()) {
+    r.in.begin(tools_.conv, *tools_.conv.toBgra8(*entering, kMatchW, kMatchH));
+    r.wantIn = true;
+  }
+  r.out.begin(tools_.conv, *tools_.conv.toBgra8(*tickFrame_, kMatchW, kMatchH));
+  r.wantOut = true;
+  if (lastAlpha_) {
+    r.alpha.begin(tools_.conv, *tools_.conv.toBgra8(*lastAlpha_, kMatchW, kMatchH));
+    r.wantAlpha = true;
+  }
+  matchRoundAge_ = 0;
+  matchRound_ = std::move(r);
+}
+
+void Camera::pollColorTimer(Clock::time_point now) {
+  if (!colorTimer_) return;
+  if (auto took = colorTimer_->poll()) {
+    colorGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    colorGuard_.succeeded(*took, std::chrono::milliseconds(4), now);
+  }
+}
+
+void Camera::pollBackgroundTimer(const TickSchedule& sched, Clock::time_point now) {
+  if (!backgroundTimer_) return;
+  if (auto took = backgroundTimer_->poll()) {
+    backgroundGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    backgroundGuard_.succeeded(*took, sched.rate().period() / 4, now);
+  }
+}
+
+void Camera::pollUpscaleTimer(const TickSchedule& sched, Clock::time_point now) {
+  // ponytail: a fixed quarter-tick budget per camera, the same share Background takes; split it by
+  // camera count if 8+ cameras run the FSR path.
+  const auto budget = sched.rate().period() / 4;
+  upscaleBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
+  if (!upscaleTimer_) return;
+  if (auto took = upscaleTimer_->poll()) {
+    upscaleGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    upscaleGuard_.succeeded(*took, budget, now);
+  }
+}
+
+void Camera::pollCleanupTimer(const TickSchedule& sched, Clock::time_point now) {
+  // ponytail: the same fixed quarter-tick share per camera as Upscale; split by camera count if
+  // 8+ cameras run Clean up (RTX only, so it is zero-cost on every other PC).
+  const auto budget = sched.rate().period() / 4;
+  cleanupBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
+  if (!cleanupTimer_) return;
+  if (auto took = cleanupTimer_->poll()) {
+    cleanupGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
+    cleanupGuard_.succeeded(*took, budget, now);
+  }
 }
 
 void Camera::startInput() {
@@ -130,6 +283,8 @@ void Camera::reconfigure(const CameraConfig& next) {
     matteGuard_ = StageGuard{};
     backgroundGuard_ = StageGuard{};
     colorGuard_ = StageGuard{};
+    upscaleGuard_ = StageGuard{};
+    cleanupGuard_ = StageGuard{};
   }
   loadStageParams();
   if (inputChanged) {
@@ -184,7 +339,101 @@ TextureRef Camera::fittedSlate(const TextureRef& source) {
   return slateFit_;
 }
 
+TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point now) {
+  if (!in) return in;
+  const bool cleanupOn = cleanupParams_.value("enabled", false);
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  if (!cleanupOn && !upscaleOn) return in;
+  const FrameSize want =
+      upscaleOn ? upscaleTarget(in->width, in->height, upscaleTargetH_) : FrameSize{in->width, in->height};
+  const bool resize = upscaleOn && (want.w != in->width || want.h != in->height);
+  // A target not larger than the input, and no Clean up: nothing to do (D3).
+  if (!cleanupOn && !resize) {
+    lastEnhanced_.reset();
+    return in;
+  }
+  // Reuse the last result on a repeat tick, as the grade does.
+  if (!fresh && lastEnhanced_ && lastEnhanced_->width == want.w && lastEnhanced_->height == want.h) {
+    return lastEnhanced_;
+  }
+  TextureRef frame = in;
+
+  // Clean up runs first (spec pipeline order), at 1×: RTX only. On a non-RTX PC (tools_.rtx ==
+  // nullptr) it bypasses with a readable reason and the picture passes through untouched (D7).
+  if (cleanupOn && cleanupGuard_.shouldRun(now)) {
+    if (tools_.rtx) {
+      const bool gpuTimed = cleanupTimer_.has_value();
+      if (gpuTimed) cleanupTimer_->begin();
+      const auto t0 = Clock::now();
+      try {
+        frame = tools_.rtx->run(*frame, frame->width, frame->height);
+        if (gpuTimed) {
+          cleanupTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+        } else {
+          cleanupGuard_.succeeded(Clock::now() - t0, cleanupBudget_, now);
+        }
+      } catch (const std::exception& e) {
+        if (gpuTimed) cleanupTimer_->end();
+        cleanupGuard_.failed(e.what(), now);
+        frame = in;  // a failed Clean up passes the frame through; Upscale still runs below
+      }
+    } else {
+      cleanupGuard_.failed(ErrorInfo{"needs-rtx", "Clean up needs an NVIDIA RTX card; it is bypassed on this PC."},
+                           now);
+    }
+  }
+
+  if (resize) {
+    // Fallback chain, always at the target size (D3a): RTX (spec D4) → FSR 1 (D6) → plain fit. Not
+    // fused: Clean up and Upscale are two VSR passes until an RTX run shows the cost matters.
+    bool done = false;
+    if (tools_.rtx && upscaleGuard_.shouldRun(now)) {
+      const bool gpuTimed = upscaleTimer_.has_value();
+      if (gpuTimed) upscaleTimer_->begin();
+      const auto t0 = Clock::now();
+      try {
+        frame = tools_.rtx->run(*frame, want.w, want.h);
+        done = true;
+        if (gpuTimed) {
+          upscaleTimer_->end();
+        } else {
+          upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+        }
+      } catch (const std::exception& e) {
+        if (gpuTimed) upscaleTimer_->end();
+        upscaleGuard_.failed(e.what(), now);  // fall through to FSR 1 / the fit below
+      }
+    }
+    if (!done) {
+      if (tools_.up && upscaleGuard_.shouldRun(now)) {
+        const bool gpuTimed = upscaleTimer_.has_value();
+        if (gpuTimed) upscaleTimer_->begin();
+        const auto t0 = Clock::now();
+        try {
+          frame = tools_.up->apply(*frame, want.w, want.h);
+          if (gpuTimed) {
+            upscaleTimer_->end();
+          } else {
+            upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
+          }
+        } catch (const std::exception& e) {
+          if (gpuTimed) upscaleTimer_->end();
+          upscaleGuard_.failed(e.what(), now);
+          frame = tools_.conv.fit(*frame, want.w, want.h);  // bypass keeps the target size (D3a)
+        }
+      } else {
+        frame = tools_.conv.fit(*frame, want.w, want.h);  // no RTX/FSR, or bypassed: fit (D3a)
+      }
+    }
+  }
+  lastEnhanced_ = frame;
+  return frame;
+}
+
 TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSource) {
+  pollColorTimer(now);
+  ++matchTick_;
+  finishMatchRound(now);  // never waits: the previous small readbacks may or may not be ready
   auto pick = sync_.pick(now);
   tickArrival_.reset();
   tickPhase_ = pick.phase;
@@ -193,39 +442,75 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
       const auto& f = pick.frame->frame;
       // The frame is the input's own size: there is no show-wide frame size to scale to.
       lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
-      lastSize_.w = lastConverted_->width;
-      lastSize_.h = lastConverted_->height;
+      sawFrame_ = true;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
   }
+  // The camera's own size is the *enhanced* size: the target size derived from the last input, or
+  // the target's 16:9 fallback before any frame has been seen (D2/D3a). Updating lastSize_ here
+  // makes the slate fit to the target size too, so Upscale never has to resize the slate.
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  if (lastConverted_) {
+    const FrameSize s = upscaleOn ? upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_)
+                                  : FrameSize{lastConverted_->width, lastConverted_->height};
+    lastSize_.w = s.w;
+    lastSize_.h = s.h;
+  } else if (upscaleOn && !sawFrame_) {
+    lastSize_.w = upscaleTargetH_ * 16 / 9;
+    lastSize_.h = upscaleTargetH_;
+  }
   tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
-  tickFrame_ = tickRaw_;
+  tickFrame_ = enhance(tickRaw_, pick.fresh, now);
+  const TextureRef entering = tickFrame_;  // the frame entering Colour, for Match's own statistics
   const bool colorOn = colorParams_.value("enabled", false);
+  if (matchMode()) {
+    // spec D11/D16: Match drives the existing grade. Dirty only when a field moves by more than
+    // 1e-3, so a still correction reuses the last graded texture (as Calibrate does).
+    const ColorGrade g = matchGrade();
+    const bool moved = std::abs(g.exposure - grade_.exposure) > 1e-3f ||
+                       std::abs(g.temperature - grade_.temperature) > 1e-3f ||
+                       std::abs(g.tint - grade_.tint) > 1e-3f;
+    if (moved || grade_.lut) {  // the correction moved, or a Calibrate LUT is still attached
+      grade_ = g;
+      gradeDirty_ = true;
+    }
+  }
   if (lastConverted_ && colorOn && colorGuard_.shouldRun(now)) {
     // A size change does not dirty the grade, so the reuse must also match the current frame's
     // size: the colour stage can be bypassed across a renegotiation and leave a stale texture.
-    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == lastConverted_->width &&
-        lastGraded_->height == lastConverted_->height) {
+    if (!pick.fresh && !gradeDirty_ && lastGraded_ && lastGraded_->width == tickFrame_->width &&
+        lastGraded_->height == tickFrame_->height) {
       tickFrame_ = lastGraded_;
     } else {
+      const bool gpuTimed = colorTimer_.has_value();
+      if (gpuTimed) colorTimer_->begin();
       const auto t0 = Clock::now();
       try {
-        lastGraded_ = tools_.grader.apply(tickRaw_, grade_);
+        lastGraded_ = tools_.grader.apply(tickFrame_, grade_);
         gradeDirty_ = false;
         tickFrame_ = lastGraded_;
-        colorGuard_.succeeded(Clock::now() - t0, std::chrono::milliseconds(4), now);
+        if (gpuTimed) {
+          colorTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+        } else {
+          colorGuard_.succeeded(Clock::now() - t0, std::chrono::milliseconds(4), now);
+        }
       } catch (const std::exception& e) {
+        if (gpuTimed) colorTimer_->end();
         colorGuard_.failed(e.what(), now);
       }
     }
   }
+  if (matchTick_ % 6 == 0) beginMatchRound(entering);  // three tiny readbacks, finished later
   return tickFrame_;
 }
 
 void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_point now, const TextureRef& rawAlpha,
                      bool previewWanted) {
+  pollBackgroundTimer(sched, now);
+  pollUpscaleTimer(sched, now);
+  pollCleanupTimer(sched, now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -236,16 +521,24 @@ void Camera::endTick(uint64_t index, const TickSchedule& sched, Clock::time_poin
       matteGuard_.failed(e.what(), now);
     }
   }
+  lastAlpha_ = alpha;  // Match masks skin with the previous tick's refined matte (one-tick lag)
   auto bg = backgroundFrom(backgroundParams_);
   if (bg.mode != BackgroundMode::None && alpha && backgroundGuard_.shouldRun(now)) {
+    const bool gpuTimed = backgroundTimer_.has_value();
+    if (gpuTimed) backgroundTimer_->begin();
     const auto t0 = Clock::now();
     try {
       bg.image = bgImage_;
       frame = tools_.comp.apply(frame, alpha, bg);
       hasAlpha = bg.mode == BackgroundMode::Keyed;
       // ponytail: a fixed quarter-tick budget per camera; share by camera count if 8+ cameras run.
-      backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+      if (gpuTimed) {
+        backgroundTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+      } else {
+        backgroundGuard_.succeeded(Clock::now() - t0, sched.rate().period() / 4, now);
+      }
     } catch (const std::exception& e) {
+      if (gpuTimed) backgroundTimer_->end();
       backgroundGuard_.failed(e.what(), now);
       frame = tickFrame_;
       hasAlpha = false;
@@ -337,11 +630,39 @@ void Camera::publishStatus() {
   state_.set(path("/stages/color/state"), colorGuard_.stateName(colorOn));
   auto colorErr = colorGuard_.error() ? colorGuard_.error() : lutError_;
   state_.set(path("/stages/color/error"), errorToJson(colorOn ? colorErr : std::nullopt));
+  // spec D9/D12: the Match state the Inspector shows. Null in Calibrate.
+  std::optional<std::string> matchState;
+  if (matchMode()) {
+    if (!matchOwn_) matchState = "holding-no-face";
+    else if (matchTo().empty()) matchState = "auto";
+    else if (!matchRef_ || !matchRefLive_) matchState = "holding-reference-down";
+    else matchState = "matching";
+  }
+  state_.set(path("/stages/color/match"), matchState ? nlohmann::json(*matchState) : nlohmann::json(nullptr));
   state_.set(path("/stages/matte/state"), matteGuard_.stateName(matteOn));
   state_.set(path("/stages/matte/error"), errorToJson(matteOn ? matteGuard_.error() : std::optional<ErrorInfo>{}));
   state_.set(path("/stages/background/state"), backgroundGuard_.stateName(bgOn));
   auto bgErr = backgroundGuard_.error() ? backgroundGuard_.error() : bgImageError_;
   state_.set(path("/stages/background/error"), errorToJson(bgOn ? bgErr : std::nullopt));
+  if (colorTimer_) state_.set(path("/stages/color/gpuMs"), std::round(colorGpuMs_ * 10.0) / 10.0);
+  if (backgroundTimer_) state_.set(path("/stages/background/gpuMs"), std::round(backgroundGpuMs_ * 10.0) / 10.0);
+  const bool upscaleOn = upscaleParams_.value("enabled", false);
+  state_.set(path("/stages/upscale/state"), upscaleGuard_.stateName(upscaleOn));
+  state_.set(path("/stages/upscale/error"), errorToJson(upscaleOn ? upscaleGuard_.error() : std::optional<ErrorInfo>{}));
+  if (upscaleTimer_) state_.set(path("/stages/upscale/gpuMs"), std::round(upscaleGpuMs_ * 10.0) / 10.0);
+  std::optional<std::string> upscaleNote;
+  if (upscaleOn && lastConverted_) {
+    const FrameSize want = upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_);
+    if (want.w == lastConverted_->width && want.h == lastConverted_->height) {
+      upscaleNote = upscaleTargetH_ == 720 ? "Input is already 720p" : "Input is already 1080p";
+    }
+  }
+  state_.set(path("/stages/upscale/note"), upscaleNote ? nlohmann::json(*upscaleNote) : nlohmann::json(nullptr));
+  const bool cleanupOn = cleanupParams_.value("enabled", false);
+  state_.set(path("/stages/cleanup/state"), cleanupGuard_.stateName(cleanupOn));
+  state_.set(path("/stages/cleanup/error"),
+             errorToJson(cleanupOn ? cleanupGuard_.error() : std::optional<ErrorInfo>{}));
+  if (cleanupTimer_) state_.set(path("/stages/cleanup/gpuMs"), std::round(cleanupGpuMs_ * 10.0) / 10.0);
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

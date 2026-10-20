@@ -104,6 +104,29 @@ void checkDeviceFree(const Show& show, const InputConfig& in, const std::string&
     }
 }
 
+// spec D9: a Match camera may not match itself, an unknown camera, or a camera whose own match
+// chain (directly or through others) leads back to it. Needs the whole show, so it is not part of
+// normalizeStageParams. Removing a matched camera is allowed: its matchers hold.
+void checkMatchTarget(const Show& show, const CameraConfig& self, const json& colorParams) {
+  if (colorParams.value("mode", std::string("calibrate")) != "match") return;
+  const std::string to = colorParams.value("matchTo", std::string());
+  if (to.empty()) return;  // Auto balance
+  if (to == self.id) throw CmdError("invalid", "A camera cannot match itself.");
+  const auto* target = show.findCamera(to);
+  if (!target) throw CmdError("invalid", "No camera " + to + ".");
+  std::string cur = to;
+  for (int guard = 0; guard < 256; ++guard) {
+    const auto* next = show.findCamera(cur);
+    if (!next) break;
+    const std::string matchTo = next->stages.value("color", json::object()).value("matchTo", std::string());
+    if (matchTo.empty()) break;
+    if (matchTo == self.id) {
+      throw CmdError("invalid", target->name + " already matches this camera, directly or through another camera.");
+    }
+    cur = matchTo;
+  }
+}
+
 PreviewSize sizeArg(const json& args) {
   auto s = parsePreviewSize(args.value("size", std::string("small")));
   if (!s) throw CmdError("invalid", "size must be small or large");
@@ -292,7 +315,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
 
   if (cmd == "getStageSchemas") {
     json out = json::array();
-    for (auto& s : stageSchemas()) out.push_back(schemaToJson(s));
+    for (auto& s : stageSchemas()) out.push_back(schemaToJson(s, fx_.stageUnavailable(s.kind)));
     return out;
   }
 
@@ -405,14 +428,23 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   } else if (cmd == "setStage") {
     auto& c = findCam(str(args, "cameraId"));
     const auto stage = str(args, "stage");
+    // Adding an effect this PC cannot run is refused; changing one already on the camera (a show
+    // moved from an RTX PC) stays editable.
+    if (!c.stages.contains(stage)) {
+      const auto why = fx_.stageUnavailable(stage);
+      if (!why.empty()) throw CmdError("unavailable", why);
+    }
     const auto& params = obj(args, "params");
     json merged = c.stages.value(stage, json::object());
     for (auto& [k, v] : params.items()) merged[k] = v;
+    json normalized;
     try {
-      c.stages[stage] = normalizeStageParams(stage, merged);
+      normalized = normalizeStageParams(stage, merged);
     } catch (const std::invalid_argument& e) {
       throw CmdError("invalid", e.what());
     }
+    if (stage == "color") checkMatchTarget(next, c, normalized);
+    c.stages[stage] = std::move(normalized);
   } else if (cmd == "removeStage") {
     auto& c = findCam(str(args, "cameraId"));
     const auto stage = str(args, "stage");

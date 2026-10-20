@@ -9,7 +9,7 @@
 namespace bc {
 struct StageField {
   std::string key;
-  std::string type;  // number | enum | bool | color | path
+  std::string type;  // number | enum | bool | color | path | text
   double min = 0, max = 0, step = 0;
   std::vector<std::string> options;
   std::vector<std::string> optionLabels;
@@ -33,7 +33,7 @@ struct StageSchema {
 // In pipeline order (spec §3.2).
 const std::vector<StageSchema>& stageSchemas();
 const StageSchema* findStageSchema(std::string_view kind);
-nlohmann::json schemaToJson(const StageSchema& s);
+nlohmann::json schemaToJson(const StageSchema& s, const std::string& unavailable = "");
 // Fills defaults; throws std::invalid_argument on unknown keys, wrong types or bad values.
 nlohmann::json normalizeStageParams(std::string_view kind, const nlohmann::json& params);
 }  // namespace bc

@@ -24,6 +24,8 @@
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
+#include "gpu/rtx_video.h"
+#include "gpu/upscaler.h"
 #include "io/aja.h"
 #include "io/decklink.h"
 #include "io/mf_capture_input.h"
@@ -95,6 +97,11 @@ int wmain(int argc, wchar_t** argv) {
   bc::Converter conv(*gpu, pool);
   bc::Compositor comp(*gpu, pool);
   bc::ColorGrader grader(*gpu, pool);
+  bc::Upscaler up(*gpu, pool);
+  // The RTX Video SDK path (spec D4). Null on every non-NVIDIA PC, with the exact reason the UI
+  // shows on the Clean up row; a missing SDK never fails the build (spec §7.2).
+  std::string rtxWhy;
+  auto rtx = bc::RtxVideo::create(*gpu, pool, conv, rtxWhy);
   bc::StateStore state;
   bc::DefaultAdapterFactory factory(*gpu, pool);
   bc::ShowStore store(showDir);
@@ -102,7 +109,8 @@ int wmain(int argc, wchar_t** argv) {
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
 
-  bc::Engine engine(bc::GpuTools{conv, comp, grader}, state, factory);
+  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .up = &up, .rtx = rtx.get(), .gpu = gpu.get()}, state,
+                    factory);
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);
   engine.apply(loaded.show);
@@ -127,9 +135,11 @@ int wmain(int argc, wchar_t** argv) {
     bc::PreviewHub& hub;
     bc::PreviewService& previews;
     bc::ColorCalibrationService& calib;
+    bc::RtxVideo* rtx;
+    std::string cleanupWhy;
     Fx(bc::Engine& e, bc::ShowStore& s, bc::ControlServer& sv, bc::PreviewHub& h, bc::PreviewService& p,
-       bc::ColorCalibrationService& c)
-        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c) {}
+       bc::ColorCalibrationService& c, bc::RtxVideo* r, std::string why)
+        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c), rtx(r), cleanupWhy(std::move(why)) {}
     void showChanged(const bc::Show& s) override {
       engine.apply(s);
       store.scheduleSave(s);
@@ -180,8 +190,14 @@ int wmain(int argc, wchar_t** argv) {
       return {{"lutPath", r.lutPath}, {"deltaEBefore", r.deltaEBefore}, {"deltaE", r.deltaE}, {"rating", r.rating}, {"reference", r.reference}};
     }
     void forgetColor(const std::string& id) override { calib.forget(id); }
+    // Task 4: Clean up is RTX-only. When the RTX Video SDK could not start (no NVIDIA card, no SDK
+    // in this build, an old driver) the Add effect row is dimmed with this exact reason (spec D7).
+    std::string stageUnavailable(const std::string& kind) override {
+      if (kind == "cleanup") return rtx ? std::string() : cleanupWhy;
+      return "";
+    }
     void shutdown() override { g_quit = true; }
-  } fx(engine, store, server, hub, previews, calib);
+  } fx(engine, store, server, hub, previews, calib, rtx.get(), rtxWhy);
   bc::CommandRouter router(loaded.show, fx);
 
   server.setHandlers({

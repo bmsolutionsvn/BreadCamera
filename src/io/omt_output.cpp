@@ -18,8 +18,8 @@ void OmthOutput::open() {
 }
 
 void OmthOutput::deliver(const OutFrame& f) {
-  if (consumeDrop()) send_->requestKeyframe();  // the tick outran us: ask for a fresh keyframe
-
+  // A tick the queue dropped needs no keyframe: the encoder never saw it, and omthx numbers the coded
+  // frames, so the receiver plays on.
   if (f.bgra && !f.bgra->bgra.empty()) {
     format_.width = static_cast<int>(f.bgra->width);
     format_.height = static_cast<int>(f.bgra->height);
