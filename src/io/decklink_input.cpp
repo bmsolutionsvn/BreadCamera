@@ -88,6 +88,7 @@ void DeckLinkInput::onFormatChanged(uint32_t mode, bool rgb) {
     if (input) input->AddRef();
   }
   if (!input) return;
+  mode_ = mode;
   input->PauseStreams();
   input->EnableVideoInput(static_cast<BMDDisplayMode>(mode), rgb ? bmdFormat8BitBGRA : bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection);
   input->FlushStreams();
@@ -114,6 +115,7 @@ void DeckLinkInput::onFrame(const uint8_t* bytes, int w, int h, int rowBytes, bo
   VideoFrameIn f;
   f.layout = PixelLayout::BGRA8;
   f.fullRange = true;
+  f.rate = deckLinkRateFor(mode_.load());
   f.tex = pool_.acquire(static_cast<uint32_t>(w), static_cast<uint32_t>(h), DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
   {
     auto lock = gpu_.lock();
@@ -140,6 +142,7 @@ void DeckLinkInput::run() {
       }
       cb = new Callback(this);
       input_->SetCallback(cb);
+      mode_ = bmdModeHD1080p6000;
       if (input_->EnableVideoInput(bmdModeHD1080p6000, bmdFormat8BitYUV, bmdVideoInputEnableFormatDetection) != S_OK ||
           input_->EnableAudioInput(bmdAudioSampleRate48kHz, bmdAudioSampleType32bitInteger, 2) != S_OK ||
           input_->StartStreams() != S_OK) {

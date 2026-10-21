@@ -3,6 +3,7 @@
 #include <optional>
 #include <vector>
 
+#include "core/rate.h"
 #include "core/signal_state.h"
 #include "gpu/converter.h"
 #include "gpu/texture_pool.h"
@@ -13,6 +14,7 @@ struct VideoFrameIn {
   PixelLayout layout = PixelLayout::NV12;
   bool fullRange = false;
   int64_t ptsUs = 0;
+  std::optional<Rate> rate;  // the source's declared nominal rate; empty when unknown
 };
 
 struct AudioBlock {

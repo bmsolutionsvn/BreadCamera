@@ -17,7 +17,7 @@ export function StatusBar({ snap }: { snap: EngineSnapshot }) {
   const outs = Object.values(snap.state.cameras ?? {}).flatMap((c) => Object.values(c.outputs ?? {}));
   const live = open ? outs.filter((o) => o.state === 'live').length : 0;
   const failing = open ? outs.filter((o) => o.error).length : 0;
-  // D15: when ticks overrun, name the most expensive stage across every camera (by GPU time).
+  // D15: when budget overruns, name the most expensive stage across every camera (by GPU time).
   const ids = snap.show?.cameras?.map((c) => c.id) ?? Object.keys(snap.state.cameras ?? {});
   let heaviest: { cam: number; label: string; ms: number } | null = null;
   for (let i = 0; i < ids.length; i++) {
@@ -32,19 +32,19 @@ export function StatusBar({ snap }: { snap: EngineSnapshot }) {
         <i className={`dot${open ? '' : ' warn'}`} />
         {open ? 'Engine running' : <span className="w">Engine restarting…</span>}
       </span>
-      <span>
-        <b>{rateLabel(e.rate)}</b> fps
+      <span title="Sets effect time budgets only; inputs and outputs keep their own rates">
+        Project rate <b>{rateLabel(e.rate)}</b> fps
       </span>
       <span>GPU {e.gpu ?? '—'}</span>
       <span className={e.overruns ? 'w' : ''}>
         {e.overruns ? (
           <>
             <Icon name="warn" size={12} />
-            {e.overruns} tick overruns
+            {e.overruns} budget overruns
             {heaviest && ` · heaviest: CAM ${heaviest.cam} ${heaviest.label} ${heaviest.ms.toFixed(1)} ms`}
           </>
         ) : (
-          'Ticks on time'
+          'Budget on time'
         )}
       </span>
       <span className="r">

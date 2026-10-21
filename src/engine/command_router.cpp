@@ -470,7 +470,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   } else if (cmd == "setSettings") {
     if (args.contains("rate")) {
       auto r = parseShowRate(str(args, "rate"));
-      if (!r) throw CmdError("invalid", "rate must be 50/1, 60000/1001 or 60/1");
+      if (!r) throw CmdError("invalid", "rate must be 15, 23.976, 24, 25, 29.97, 30, 50, 59.94, 60, 119.88 or 120 fps");
       next.settings.rate = *r;
     }
     // A legacy "resolution" is ignored, not validated (there is no show-wide size any more, D3).

@@ -17,8 +17,8 @@ namespace bc::test {
 class FakeInput final : public bc::Input {
  public:
   FakeInput(bc::Converter& conv, int fps, uint32_t w, uint32_t h, std::array<uint8_t, 4> bgra,
-            bool startPaused = false)
-      : conv_(conv), fps_(fps), color_(bgra) {
+            bool startPaused = false, bc::Rate rate = bc::Rate{0, 1})
+      : conv_(conv), fps_(fps), color_(bgra), rate_(rate.num > 0 ? rate : bc::Rate{fps, 1}) {
     width = w;
     height = h;
     paused = startPaused;  // construction-time; re-read in start(), before any thread runs
@@ -71,6 +71,7 @@ class FakeInput final : public bc::Input {
       }
     }
     bc::VideoFrameIn f{conv_.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, n * 1'000'000 / fps_};
+    f.rate = rate_;
     sink.onVideo(std::move(f));
     sink.onAudio(bc::AudioBlock{48000, 2, std::vector<float>(48000 / fps_ * 2, 0.1f)});
   }
@@ -78,6 +79,7 @@ class FakeInput final : public bc::Input {
   bc::Converter& conv_;
   int fps_;
   std::array<uint8_t, 4> color_;
+  bc::Rate rate_;
   std::atomic<bool> running_{false};
   std::thread thread_;
 };
@@ -93,9 +95,12 @@ class FakeFactory final : public bc::AdapterFactory {
     if (cfg.kind != "fake") throw std::invalid_argument("unknown input kind " + cfg.kind);
     auto& p = cfg.params;
     auto c = p.value("bgra", std::vector<int>{0, 0, 200, 255});
+    const auto rate = p.contains("rateNum")
+                          ? bc::Rate{p.value("rateNum", 30), p.value("rateDen", 1)}
+                          : bc::Rate{p.value("fps", 30), 1};
     auto in = std::make_unique<FakeInput>(conv_, p.value("fps", 30), p.value("width", 64u), p.value("height", 36u),
                                           std::array<uint8_t, 4>{uint8_t(c[0]), uint8_t(c[1]), uint8_t(c[2]), uint8_t(c[3])},
-                                          p.value("paused", false));
+                                          p.value("paused", false), rate);
     in->gradient = p.value("gradient", false);
     if (p.value("chart", false)) {
       auto cast = p.value("cast", std::vector<float>{1, 1, 1});
@@ -106,7 +111,7 @@ class FakeFactory final : public bc::AdapterFactory {
     inputs[p.value("tag", std::string("in"))] = in.get();
     return in;
   }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig&) override {
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig&, bc::Rate) override {
     if (cfg.kind != "fake") throw std::invalid_argument("unknown output kind " + cfg.kind);
     auto out = std::make_unique<FakeOutput>(cfg.params.value("cpu", true));
     out->delayMs = cfg.params.value("delayMs", 0);

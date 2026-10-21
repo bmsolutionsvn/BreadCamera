@@ -43,6 +43,11 @@ class FakeOutput final : public bc::QueuedOutput {
     return lastImage_;
   }
 
+  bc::Rate lastRate() const {
+    std::lock_guard l(m_);
+    return lastRate_;
+  }
+
  protected:
   void open() override { ++opens; }
   void deliver(const bc::OutFrame& f) override {
@@ -59,6 +64,7 @@ class FakeOutput final : public bc::QueuedOutput {
       s.width = f.linear->width;
     }
     std::lock_guard l(m_);
+    lastRate_ = f.rate;
     if (f.bgra) lastImage_ = f.bgra;
     seen_.push_back(s);
   }
@@ -69,5 +75,6 @@ class FakeOutput final : public bc::QueuedOutput {
   mutable std::mutex m_;
   std::vector<Seen> seen_;
   std::shared_ptr<const bc::CpuImage> lastImage_;
+  bc::Rate lastRate_{0, 1};
 };
 }  // namespace bc::test

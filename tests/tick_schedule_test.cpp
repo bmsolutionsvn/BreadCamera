@@ -22,6 +22,16 @@ TEST_CASE("TickSchedule: nextIndexAtOrAfter skips missed ticks instead of bursti
   CHECK(s.nextIndexAtOrAfter(51ms) == 4);
 }
 
+TEST_CASE("TickSchedule: a range covers every interval, including coalesced frames") {
+  bc::TickSchedule s60({60, 1});
+  CHECK(s60.audioFramesForRange(0, 1, 48000) == 800);
+  CHECK(s60.audioFramesForRange(0, 4, 48000) == 3200);
+  CHECK(s60.audioFramesForRange(1, 4, 48000) == 3200);
+  bc::TickSchedule n({60000, 1001});
+  CHECK(s60.audioFramesForRange(0, 60, 48000) == 48000);
+  CHECK(n.audioFramesForRange(0, 60000, 48000) == 48000 * 1001);  // 1001 s at 59.94
+}
+
 TEST_CASE("TickSchedule: audio frames per tick sum exactly to the sample rate") {
   bc::TickSchedule s({60000, 1001});
   uint64_t sum = 0;

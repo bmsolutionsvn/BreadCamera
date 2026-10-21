@@ -29,4 +29,13 @@ uint32_t TickSchedule::audioFramesForTick(uint64_t index, int sampleRate) const 
   };
   return static_cast<uint32_t>(total(index + 1) - total(index));
 }
+
+uint32_t TickSchedule::audioFramesForRange(uint64_t first, uint64_t count, int sampleRate) const {
+  if (count == 0) return 0;
+  auto total = [&](uint64_t i) {
+    return i * static_cast<uint64_t>(sampleRate) * static_cast<uint64_t>(rate_.den) /
+           static_cast<uint64_t>(rate_.num);
+  };
+  return static_cast<uint32_t>(total(first + count) - total(first));
+}
 }  // namespace bc

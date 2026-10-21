@@ -44,6 +44,7 @@ struct PreviewService::EncoderSlot {
   std::atomic<bool> failed{false};
   std::shared_ptr<const CpuImage> pending;
   int64_t ptsUs = 0;
+  std::chrono::steady_clock::time_point lastEncode{};  // tick-thread throttle, 30 fps cap
   uint32_t w = 0, h = 0;
   std::unique_ptr<PreviewEncoder> enc;
   std::atomic<bool> done{false};
@@ -168,7 +169,7 @@ void PreviewService::run(EncoderSlot* s) {
 }
 
 void PreviewService::onTick(uint64_t tick, const std::vector<FrameTap>& frames) {
-  if (tick % 2 != 0) return;  // half-rate (D6): previews encode every 2nd tick
+  (void)tick;  // the preview is rate-capped per camera, not by the engine pass counter
   reap();
   const auto wanted = hub_.wanted();
   std::set<std::string> cams;
@@ -230,6 +231,8 @@ void PreviewService::onTick(uint64_t tick, const std::vector<FrameTap>& frames) 
     }
     if (!tap || !tap->cpu) continue;
     it = slots_.find(cam);
+    const auto now = std::chrono::steady_clock::now();
+    if (it != slots_.end() && now - it->second->lastEncode < std::chrono::milliseconds(33)) continue;
     if (it == slots_.end()) {
       if (slots_.size() >= kMaxPreviewEncoders) {
         ++skipped;  // past the cap: skip this tile, keep the others running (D9)
@@ -248,6 +251,7 @@ void PreviewService::onTick(uint64_t tick, const std::vector<FrameTap>& frames) 
       s->ptsUs = ptsUs;
       if (forceCams.contains(cam)) s->forceKey = true;
     }
+    s->lastEncode = now;
     s->cv.notify_one();
   }
 

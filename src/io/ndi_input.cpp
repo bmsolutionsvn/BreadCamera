@@ -63,6 +63,7 @@ void NdiInput::run() {
         f.layout = PixelLayout::BGRA8;
         f.fullRange = true;
         f.ptsUs = v.timestamp == NDIlib_recv_timestamp_undefined ? 0 : v.timestamp / 10;
+        f.rate = rateFromRational(v.frame_rate_N, v.frame_rate_D);
         f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
         if (v.line_stride_in_bytes < 0) {  // bottom-up source; we did not ask for the _flipped format
           if (!flipReported) {

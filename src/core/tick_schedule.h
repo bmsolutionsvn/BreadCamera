@@ -18,6 +18,9 @@ class TickSchedule {
   // Audio sample frames that belong to tick `index`, so the total per second is exact
   // (800.8 per tick at 59.94).
   uint32_t audioFramesForTick(uint64_t index, int sampleRate) const;
+  // Audio sample frames for `count` consecutive ticks starting at `first`, so a coalesced frame
+  // that stands for several intervals pulls all of them.
+  uint32_t audioFramesForRange(uint64_t first, uint64_t count, int sampleRate) const;
 
  private:
   Rate rate_;

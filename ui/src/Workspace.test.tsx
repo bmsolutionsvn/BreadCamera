@@ -54,14 +54,16 @@ test('strips show input health, names and every output state', () => {
   expect(screen.getAllByText('Khách mời').length).toBeGreaterThan(0);
 });
 
-test('the status bar no longer shows a show-wide resolution', () => {
+test('the status bar shows the Project rate and no show-wide resolution', () => {
   render(<Workspace client={client()} />);
   const bar = screen.getByLabelText('Status bar');
+  expect(within(bar).getByText(/Project rate/)).toBeInTheDocument();
   expect(within(bar).getByText('59.94')).toBeInTheDocument();  // the rate stays
+  expect(within(bar).getByText('Budget on time')).toBeInTheDocument();
   expect(within(bar).queryByText(/1920×1080/)).toBeNull();     // the size label is gone
 });
 
-test('names the heaviest stage when ticks overrun', () => {
+test('names the heaviest stage when budget overruns', () => {
   render(
     <Workspace
       client={client({
@@ -75,6 +77,7 @@ test('names the heaviest stage when ticks overrun', () => {
     />,
   );
   const bar = screen.getByLabelText('Status bar');
+  expect(within(bar).getByText(/budget overruns/)).toBeInTheDocument();
   expect(within(bar).getByText(/heaviest: CAM 2 Upscale 6\.2 ms/)).toBeInTheDocument();
 });
 

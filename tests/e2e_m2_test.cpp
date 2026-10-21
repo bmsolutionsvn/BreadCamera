@@ -25,8 +25,8 @@ struct HybridFactory : bc::AdapterFactory {
   bc::test::FakeFactory fake;
   HybridFactory(bc::GpuDevice& g, bc::TexturePool& p, bc::Converter& c) : real(g, p), fake(c) {}
   std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override { return real.makeInput(cfg); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig& cam) override {
-    return fake.makeOutput(cfg, cam);
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig& cam, bc::Rate rate) override {
+    return fake.makeOutput(cfg, cam, rate);
   }
 };
 }  // namespace

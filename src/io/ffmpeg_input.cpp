@@ -266,6 +266,7 @@ void FfmpegInput::emitVideo(AVFrame* f, AVStream* st) {
   VideoFrameIn out;
   out.fullRange = f->color_range == AVCOL_RANGE_JPEG;
   out.ptsUs = f->best_effort_timestamp == AV_NOPTS_VALUE ? 0 : av_rescale_q(f->best_effort_timestamp, st->time_base, {1, 1'000'000});
+  out.rate = rateFromRational(st->avg_frame_rate.num, st->avg_frame_rate.den);
   const uint32_t w = static_cast<uint32_t>(f->width) & ~1u;
   const uint32_t h = static_cast<uint32_t>(f->height) & ~1u;
   if (f->format == AV_PIX_FMT_D3D11) {

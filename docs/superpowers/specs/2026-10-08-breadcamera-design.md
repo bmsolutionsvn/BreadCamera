@@ -7,6 +7,9 @@ layout with a docked Inspector (§6.4), effects as per-camera add-ins (§5.4), o
 of reference matching (§5.3), show resolution and per-output frame rate (§3.2, §4.3), three-state input health (§6.1).
 Amended 2026-10-16: the show-wide resolution is removed — each camera's frame is its input's size (§1.2, §1.3, §3.2;
 `docs/superpowers/specs/2026-10-16-per-camera-size-design.md`).
+Amended 2026-10-20: the Project frame rate is an effect-budget reference only — 15, 23.976, 24, 25, 29.97, 30, 50,
+59.94, 60, 119.88 or 120; inputs and outputs keep their own rates
+(`docs/superpowers/specs/2026-10-20-project-rate-effect-budget-design.md`).
 Reference mockups: `docs/design/mockups/index.html`; Multiview brief: `docs/design/multiview.md`.
 
 ## 1. Purpose
@@ -60,9 +63,9 @@ does not fail*: a camera's output never goes black because of BreadCamera.
 
 - Standalone tool: no Kinde login and no billing in v1.
 - Windows 11 is required, because the virtual camera uses `MFCreateVirtualCamera`.
-- Every camera runs at a single show-wide frame rate (50, 59.94 or 60). The
-  frame size is each camera's input size; there is no show-wide resolution
-  (removed 2026-10-16; `docs/superpowers/specs/2026-10-16-per-camera-size-design.md`).
+- Every camera emits one frame per input frame; the input and output rates are
+  the source's own. The Project frame rate (15, 23.976, 24, 25, 29.97, 30, 50,
+  59.94, 60, 119.88 or 120) only sets the effect time budgets.
 
 ## 2. Architecture
 

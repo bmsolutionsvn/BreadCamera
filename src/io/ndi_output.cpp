@@ -13,7 +13,7 @@ void NdiOutput::open() {
   if (!ok) throw std::runtime_error("the NDI runtime could not start on this CPU");
   NDIlib_send_create_t c{};
   c.p_ndi_name = name_.c_str();
-  c.clock_video = false;  // the master tick paces us
+  c.clock_video = false;  // the camera's input paces us
   c.clock_audio = false;
   send_ = NDIlib_send_create(&c);
   if (!send_) throw std::runtime_error("cannot create NDI source '" + name_ + "'");

@@ -1,5 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <chrono>
+#include <thread>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
@@ -102,8 +105,9 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
   auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
   // The encode happens off the tick (D4): drain each tick so the worker consumes every frame.
   for (uint64_t t = 0; t < 40; ++t) {
-    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
+    svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::vector<uint8_t> msg;
   {
@@ -136,6 +140,44 @@ TEST_CASE("preview encodes the shared image at the frame size" BC_REQUIRES(bc::t
 // (Task 1), so a 4K camera would H.264-encode 4K per visible tile. The preview caps its encode size
 // at 1280x720, downscaling the shared image on the encoder worker (off the tick) and opening the
 // encoder at the capped size.
+TEST_CASE("PreviewService: a second frame inside 33 ms is suppressed" BC_REQUIRES(bc::test::Req::H264Encoder)) {
+  bc::StateStore state;
+  bc::PreviewHub hub;
+  std::mutex mu;
+  std::map<std::string, std::vector<std::vector<uint8_t>>> sent;
+  bc::PreviewService svc(state, hub, [&](const std::string& c, std::vector<uint8_t> m) {
+    std::lock_guard l(mu);
+    sent[c].push_back(std::move(m));
+  });
+  hub.subscribe("c1", {"a"}, PreviewSize::Small);
+  auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
+  // Warm the encoder: the first packets can take a frame or two to appear.
+  for (uint64_t t = 0; t < 5; ++t) {
+    svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
+    svc.drain();
+    if (t < 4) std::this_thread::sleep_for(std::chrono::milliseconds(34));
+  }
+  size_t first = 0;
+  {
+    std::lock_guard l(mu);
+    first = sent["c1"].size();
+  }
+  REQUIRE(first > 0);
+  svc.onTick(2, {bc::FrameTap{"a", 0, nullptr, img}});
+  svc.drain();
+  {
+    std::lock_guard l(mu);
+    CHECK(sent["c1"].size() == first);  // within 33 ms: no second encode
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  svc.onTick(4, {bc::FrameTap{"a", 0, nullptr, img}});
+  svc.drain();
+  {
+    std::lock_guard l(mu);
+    CHECK(sent["c1"].size() > first);  // past the cap: the next frame encodes
+  }
+}
+
 TEST_CASE("the preview caps its encode size at 1280x720" BC_REQUIRES(bc::test::Req::H264Encoder)) {
   bc::StateStore state;
   bc::PreviewHub hub;
@@ -149,8 +191,9 @@ TEST_CASE("the preview caps its encode size at 1280x720" BC_REQUIRES(bc::test::R
   auto img = std::make_shared<const bc::CpuImage>(
       bc::CpuImage{3840, 2160, std::vector<uint8_t>(3840 * 2160 * 4, 128)});
   for (uint64_t t = 0; t < 40; ++t) {
-    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}});
+    svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::vector<uint8_t> msg;
   {
@@ -190,8 +233,9 @@ TEST_CASE("PreviewService: subscribers get a keyframe first; others get nothing"
   hub.subscribe("c1", {"a"}, PreviewSize::Small);
   auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
   for (uint64_t t = 0; t < 40; ++t) {
-    svc.onTick(t, {bc::FrameTap{"a", nullptr, img}, bc::FrameTap{"b", nullptr, img}});
+    svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}, bc::FrameTap{"b", 0, nullptr, img}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   REQUIRE(sent["c1"].size() >= 10);
@@ -216,11 +260,12 @@ TEST_CASE("preview cap warns instead of disabling every preview" BC_REQUIRES(bc:
   std::vector<bc::FrameTap> frames;
   for (size_t i = 0; i < n; ++i) {
     hub.subscribe("c" + std::to_string(i), {"cam" + std::to_string(i)}, PreviewSize::Small);
-    frames.push_back(bc::FrameTap{"cam" + std::to_string(i), nullptr, img});
+    frames.push_back(bc::FrameTap{"cam" + std::to_string(i), 0, nullptr, img});
   }
   for (uint64_t t = 0; t < 20; ++t) {
     svc.onTick(t, frames);
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   // The cameras within the cap still encode...
@@ -250,15 +295,17 @@ TEST_CASE("preview: one camera failing to open keeps the others encoding" BC_REQ
   // First only the camera whose encoder cannot open. It fails and is dropped; a warning is set.
   hub.subscribe("c1", {"bad"}, PreviewSize::Small);
   for (uint64_t t = 0; t < 8; t += 2) {
-    svc.onTick(t, {bc::FrameTap{"bad", nullptr, bad}});
+    svc.onTick(t, {bc::FrameTap{"bad", 0, nullptr, bad}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   // Now a healthy camera starts streaming: the earlier failure must not blank it. (Under the old
   // global broken_ flag no later camera would ever encode, so the check below would fail.)
   hub.subscribe("c0", {"good"}, PreviewSize::Small);
   for (uint64_t t = 8; t < 48; t += 2) {
-    svc.onTick(t, {bc::FrameTap{"bad", nullptr, bad}, bc::FrameTap{"good", nullptr, good}});
+    svc.onTick(t, {bc::FrameTap{"bad", 0, nullptr, bad}, bc::FrameTap{"good", 0, nullptr, good}});
     svc.drain();
+    std::this_thread::sleep_for(std::chrono::milliseconds(34));  // the preview is wall-clock capped
   }
   std::lock_guard l(mu);
   CHECK_FALSE(sent["c0"].empty());   // the good camera keeps encoding

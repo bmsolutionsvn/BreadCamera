@@ -41,6 +41,7 @@ void SrtOutput::openEncoders(const OutFrame& f) {
   // existing stream's parameters are refreshed so the muxer follows the geometry.
   encW_ = static_cast<int>(f.bgra->width) & ~1;  // H.264 4:2:0 needs even sizes
   encH_ = static_cast<int>(f.bgra->height) & ~1;
+  encRate_ = f.rate;
   avcodec_free_context(&venc_);
   av_frame_free(&vframe_);
   sws_freeContext(sws_);
@@ -104,7 +105,7 @@ void SrtOutput::deliver(const OutFrame& f) {
   if (!f.bgra || f.bgra->bgra.empty()) return;
   const int w = static_cast<int>(f.bgra->width) & ~1;
   const int h = static_cast<int>(f.bgra->height) & ~1;
-  if (!venc_ || w != encW_ || h != encH_) openEncoders(f);  // first frame, or the size changed
+  if (!venc_ || w != encW_ || h != encH_ || !(f.rate == encRate_)) openEncoders(f);  // first frame, size or rate changed
   if (!sws_ || swsW_ != f.bgra->width || swsH_ != f.bgra->height) {
     sws_ = sws_getCachedContext(sws_, static_cast<int>(f.bgra->width), static_cast<int>(f.bgra->height), AV_PIX_FMT_BGRA,
                                 encW_, encH_, AV_PIX_FMT_NV12, SWS_BILINEAR, nullptr, nullptr, nullptr);

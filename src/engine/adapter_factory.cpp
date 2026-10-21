@@ -89,7 +89,7 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
   throw std::invalid_argument("unknown input kind '" + cfg.kind + "'");
 }
 
-std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cfg, const CameraConfig& cam) {
+std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cfg, const CameraConfig& cam, Rate videoRate) {
   if (cfg.kind == "ndi") {
     // Same rule as CommandRouter::validateOutput: a hand-edited show file with a
     // non-string name is rejected here too instead of silently using the default.
@@ -135,14 +135,14 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
   }
   if (cfg.kind == "decklink") {
 #if BC_WITH_DECKLINK
-    return std::make_unique<DeckLinkOutput>(cfg.params.at("device").get<int>(), rate_, cfg.keyed);
+    return std::make_unique<DeckLinkOutput>(cfg.params.at("device").get<int>(), videoRate, cfg.keyed);
 #else
     throw std::invalid_argument("DeckLink support is not installed in this build");
 #endif
   }
   if (cfg.kind == "aja") {
 #if BC_WITH_AJA
-    return std::make_unique<AjaOutput>(cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>(), rate_);
+    return std::make_unique<AjaOutput>(cfg.params.at("device").get<int>(), cfg.params.at("channel").get<int>(), videoRate);
 #else
     throw std::invalid_argument("AJA support is not installed in this build");
 #endif

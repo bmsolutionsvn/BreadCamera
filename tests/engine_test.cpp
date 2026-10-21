@@ -72,40 +72,82 @@ std::string phaseOf(bc::StateStore& s, const std::string& id) {
 }
 }  // namespace
 
-TEST_CASE("Engine: a 30 fps input becomes a steady 60 fps output") {
-  Rig r;
-  bc::Show show = testShow();
-  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}, {"bgra", {10, 20, 200, 255}}}));
-  r.engine.apply(show);
-  r.engine.start();
-  auto t0 = Clock::now();
-  std::this_thread::sleep_for(1600ms);
-  auto seen = r.factory.output("o1")->seen();
-  int n = countBetween(seen, t0 + 500ms, t0 + 1500ms);
-  CHECK(n >= 55);
-  CHECK(n <= 62);
-  CHECK(maxGap(seen) < 50ms);
-  auto& last = seen.back();
-  CHECK(std::abs(last.firstPixel[0] - 10) <= 2);
-  CHECK(std::abs(last.firstPixel[2] - 200) <= 2);
-  CHECK(r.engine.stats().cameras.at("a").repeats > 0);
+TEST_CASE("Engine: a 30 fps input stays 30 fps at any Project rate") {
+  for (const auto& project : {bc::Rate{15, 1}, bc::Rate{60, 1}}) {
+    Rig r;
+    bc::Show show = testShow();
+    show.settings.rate = project;
+    show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}, {"bgra", {10, 20, 200, 255}}}));
+    r.engine.apply(show);
+    r.engine.start();
+    auto t0 = Clock::now();
+    std::this_thread::sleep_for(1500ms);
+    auto seen = r.factory.output("o1")->seen();
+    int n = countBetween(seen, t0 + 500ms, t0 + 1500ms);
+    CHECK(n >= 27);
+    CHECK(n <= 33);
+    CHECK(maxGap(seen) < 60ms);
+    CHECK(r.engine.stats().cameras.at("a").repeats == 0);
+  }
 }
 
-TEST_CASE("Engine: each tick carries exactly its share of audio") {
+TEST_CASE("Engine: the output frame carries the camera rate, not the Project rate") {
   Rig r;
   bc::Show show = testShow();
-  show.cameras.push_back(cam("a", {out("o1")}));
+  show.settings.rate = bc::Rate{15, 1};
+  show.cameras.push_back(cam("a", {out("o1")}, {{"rateNum", 30000}, {"rateDen", 1001}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(700ms);
+  auto seen = r.factory.output("o1")->seen();
+  REQUIRE_FALSE(seen.empty());
+  CHECK(r.factory.output("o1")->lastRate() == bc::Rate{30000, 1001});
+}
+
+TEST_CASE("Engine: a renegotiated input rate reaches the output") {
+  Rig r;
+  bc::Show show = testShow();
+  show.cameras.push_back(cam("a", {out("o1")}, {{"rateNum", 30000}, {"rateDen", 1001}}));
   r.engine.apply(show);
   r.engine.start();
   std::this_thread::sleep_for(500ms);
-  for (auto& s : r.factory.output("o1")->seen()) CHECK(s.audioSamples == 800 * 2);
+  REQUIRE(r.factory.output("o1")->lastRate() == bc::Rate{30000, 1001});
+  show.cameras[0].input.params["rateNum"] = 60000;
+  show.cameras[0].input.params["rateDen"] = 1001;
+  r.engine.apply(show);
+  std::this_thread::sleep_for(500ms);
+  CHECK(r.factory.output("o1")->lastRate() == bc::Rate{60000, 1001});
+}
+
+TEST_CASE("Engine: no output frame before the first input frame") {
+  Rig r;
+  bc::Show show = testShow();
+  show.cameras.push_back(cam("a", {out("o1")}, {{"paused", true}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(300ms);
+  CHECK(r.factory.output("o1")->seen().empty());
+  CHECK(phaseOf(r.state, "a") == "nosignal");
+  r.factory.input("a")->paused = false;
+  std::this_thread::sleep_for(300ms);
+  CHECK_FALSE(r.factory.output("o1")->seen().empty());
+}
+
+TEST_CASE("Engine: each emitted frame carries one frame of audio at the input rate") {
+  Rig r;
+  bc::Show show = testShow();
+  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(500ms);
+  for (auto& s : r.factory.output("o1")->seen()) CHECK(s.audioSamples == 1600 * 2);
 }
 
 TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never stop") {
   Rig r;
   bc::Show show = testShow();
   show.settings.holdMs = 500;
-  show.cameras.push_back(cam("a", {out("o1")}));
+  show.cameras.push_back(cam("a", {out("o1")}, {{"fps", 30}}));
   r.engine.apply(show);
   r.engine.start();
   std::this_thread::sleep_for(500ms);
@@ -118,7 +160,9 @@ TEST_CASE("Engine: a stalled input holds, then shows the slate; outputs never st
   CHECK(phases.count("holding") == 1);
   CHECK(phaseOf(r.state, "a") == "slate");
   auto seen = r.factory.output("o1")->seen();
-  CHECK(maxGap(seen) < 50ms);
+  CHECK(maxGap(seen) < 300ms);  // live stops, then the first held repeat starts at stallAfter
+  REQUIRE(seen.size() > 2);
+  CHECK(seen.back().at - seen[seen.size() - 2].at < 60ms);  // repeats run at the camera rate
   CHECK(std::abs(seen.back().firstPixel[0] - 79) <= 4);  // blue: 0.06 linear
   CHECK(std::abs(seen.back().firstPixel[2] - 73) <= 4);  // red: 0.05 linear
   r.factory.input("a")->paused = false;
@@ -134,7 +178,7 @@ TEST_CASE("Engine: a slow output does not slow its neighbour") {
   r.engine.start();
   auto t0 = Clock::now();
   std::this_thread::sleep_for(1600ms);
-  CHECK(countBetween(r.factory.output("fast")->seen(), t0 + 500ms, t0 + 1500ms) >= 55);
+  CHECK(countBetween(r.factory.output("fast")->seen(), t0 + 500ms, t0 + 1500ms) >= 25);
   CHECK(r.factory.output("slow")->status().dropped > 0);
 }
 
@@ -199,27 +243,25 @@ class ThrowingOutput final : public bc::Output {
   bc::OutputStatus status() const override { return {}; }
 };
 
-class NoFrameInput final : public bc::Input {
- public:
-  void start(bc::InputSink&) override {}
-  void stop() override {}
-};
-
 class ThrowingFactory final : public bc::AdapterFactory {
  public:
-  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoFrameInput>(); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+  explicit ThrowingFactory(bc::test::FakeFactory& real) : real_(real) {}
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override { return real_.makeInput(cfg); }
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
     auto o = std::make_unique<ThrowingOutput>();
     out = o.get();
     return o;
   }
   ThrowingOutput* out = nullptr;
+
+ private:
+  bc::test::FakeFactory& real_;
 };
 }  // namespace
 
 TEST_CASE("Engine: tickError is set by a throwing tick and cleared by the next clean tick") {
   Rig r;
-  ThrowingFactory factory;
+  ThrowingFactory factory{r.factory};
   bc::Engine engine{bc::GpuTools{r.conv, r.comp, r.grader}, r.state, factory};
   bc::Show show = testShow();
   show.cameras.push_back(cam("a", {out("o1")}));
@@ -251,8 +293,8 @@ TEST_CASE("Engine: a missing slate image falls back to the built-in slate with a
   auto snap = r.state.snapshot();
   CHECK_FALSE(snap["engine"]["warnings"]["slate"].get<std::string>().empty());
   auto seen = r.factory.output("o1")->seen();
-  REQUIRE_FALSE(seen.empty());
-  CHECK(std::abs(seen.back().firstPixel[2] - 73) <= 4);
+  CHECK(seen.empty());  // D16: a camera with no input frame sends no picture, not a slate
+  CHECK(snap["cameras"]["a"]["phase"] == "nosignal");
 }
 
 TEST_CASE("Engine: a bad output config is reported and the camera keeps running") {
@@ -282,9 +324,19 @@ TEST_CASE("Engine: every output sends the one frame size, and a half-rate output
   CHECK(r.factory.output("full")->seen().back().width == 64);  // one frame size: the input's size
   auto halfSeen = r.factory.output("half")->seen();
   const int n = countBetween(halfSeen, t0 + 500ms, t0 + 1500ms);
-  CHECK(n >= 27);
-  CHECK(n <= 31);
-  for (size_t i = 1; i < halfSeen.size(); ++i) CHECK(halfSeen[i].audioSamples == 2 * 800 * 2);
+  CHECK(n >= 13);
+  CHECK(n <= 17);
+  for (size_t i = 1; i < halfSeen.size(); ++i) {
+    CHECK(halfSeen[i].tick == halfSeen[i - 1].tick + 1);  // the half-rate stream's own clock
+    CHECK(halfSeen[i].audioSamples == 2 * 1600 * 2);
+  }
+}
+
+TEST_CASE("Camera: a coalesced frame stamps its wall-clock tick and covers the gaps") {
+  CHECK(bc::Camera::stampTick(0, 0, 1, true) == 0);
+  CHECK(bc::Camera::stampTick(1, 1, 5, true) == 4);
+  CHECK(bc::Camera::stampTick(5, 5, 9, true) == 8);
+  CHECK(bc::Camera::stampTick(9, 9, 9, false) == 9);
 }
 
 TEST_CASE("Engine: input health is published") {
@@ -341,7 +393,7 @@ class RecordingFactory final : public bc::AdapterFactory {
  public:
   explicit RecordingFactory(bool needsCpu) : needsCpu_(needsCpu) {}
   std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoInput>(); }
-  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&) override {
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
     auto o = std::make_unique<RecordingOutput>(needsCpu_);
     made = o.get();
     all.push_back(o.get());
@@ -385,7 +437,7 @@ TEST_CASE("Camera: the frame readback is off the tick, never black") {
     camera.onVideo(solidFrame(r.conv, red));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     if (i == 0) CHECK(factory.made->last == nullptr);  // the copy begins this tick; nothing done yet
     if (factory.made->last) {
       const int got = factory.made->last->bgra[2];
@@ -417,7 +469,7 @@ TEST_CASE("Camera: no CPU output means no readback slot and no frame copy") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   }
   CHECK(camera.readbackSlotCount() == 0);
   CHECK(factory.made->last == nullptr);  // a non-CPU output is never handed a CPU image
@@ -436,7 +488,7 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     std::this_thread::sleep_for(3ms);
   };
   tick(0);
@@ -477,7 +529,7 @@ TEST_CASE("Camera: two CPU outputs of one size share one readback a tick") {
     camera.onVideo(solidFrame(r.conv, static_cast<uint8_t>(30 + (i % 5) * 40)));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
     CHECK(a->last == b->last);  // one readback per size per tick: the same image, never a tick apart
     if (a->last) sawImage = true;
     std::this_thread::sleep_for(3ms);
@@ -502,7 +554,7 @@ TEST_CASE("Camera: an input size change never publishes the previous size's imag
     camera.onVideo(solidFrame(r.conv, 120, w, h));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr);
+    camera.endTick(now, nullptr);
   };
 
   // Run until the 64x36 image has been read back and handed to the output.
@@ -610,7 +662,7 @@ TEST_CASE("GPU-only camera: a visible preview forces one readback") {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(i, sched, now, nullptr, previewWanted);
+    camera.endTick(now, nullptr, previewWanted);
     std::this_thread::sleep_for(3ms);
   };
 
@@ -643,7 +695,7 @@ TEST_CASE("Factory: a non-string NDI name is rejected with the router's message"
   o.params["name"] = 7;  // hand-edited show file: name is not text
   // Both validation sites must reject the same value with the same words.
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "NDI name must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "NDI name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "NDI name must be text", std::invalid_argument);
 }
 
 TEST_CASE("Factory: a breadcall input with a missing or non-integer slot is rejected clearly") {
@@ -669,15 +721,15 @@ TEST_CASE("Factory: an omt output is built from its mode and name") {
   o.kind = "omt";
   o.params = {{"mode", "full"}, {"name", "Stage"}};
 #if BC_WITH_OMT
-  CHECK(factory.makeOutput(o, c) != nullptr);
+  CHECK(factory.makeOutput(o, c, {60, 1}) != nullptr);
   o.params["name"] = 7;  // hand-edited show file: name is not text
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT name must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT name must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT name must be text", std::invalid_argument);
   o.params["name"] = "Stage";
   o.params["mode"] = 5;  // hand-edited show file: mode is not text
   CHECK_THROWS_WITH_AS(bc::validateOutput(o), "OMT mode must be text", std::invalid_argument);
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT mode must be text", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT mode must be text", std::invalid_argument);
 #else
-  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c), "OMT support is not built (BC_WITH_OMT=OFF)", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, c, {60, 1}), "OMT support is not built (BC_WITH_OMT=OFF)", std::invalid_argument);
 #endif
 }

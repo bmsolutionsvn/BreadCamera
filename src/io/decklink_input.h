@@ -35,5 +35,6 @@ class DeckLinkInput final : public Input {
   IDeckLinkInput* input_ = nullptr;
   std::mutex m_;
   bool live_ = false;
+  std::atomic<uint32_t> mode_{0};  // BMDDisplayMode; 0 until the input starts
 };
 }  // namespace bc

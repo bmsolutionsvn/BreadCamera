@@ -5,13 +5,9 @@ import { useEngine } from '../api/useEngine';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Modal } from '../components/Modal';
 import { Prop } from '../components/Prop';
+import { RATE_OPTIONS } from '../state/labels';
 import { ConfirmDialog } from './ConfirmDialog';
 
-const RATES = [
-  ['50/1', '50'],
-  ['60000/1001', '59.94'],
-  ['60/1', '60'],
-] as const;
 type Page = 'show' | 'engine' | 'about';
 
 // Settings is a dialog, not a page (spec §6.4).
@@ -73,10 +69,10 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
           {page === 'show' && (
             <>
               <h3>Show format</h3>
-              <Prop label="Frame rate">
+              <Prop label="Frame rate" hint="Sets effect time budgets only — inputs and outputs keep their own rates.">
                 {(id) => (
                   <select id={id} className="ctl mono" value={rate} onChange={(e) => setRate(e.target.value)}>
-                    {RATES.map(([v, l]) => (
+                    {RATE_OPTIONS.map(([v, l]) => (
                       <option key={v} value={v}>
                         {l}
                       </option>
@@ -117,9 +113,9 @@ export function SettingsDialog({ client, onClose }: { client: EngineClient; onCl
       </div>
       {confirm && (
         <ConfirmDialog
-          title="Change the show format?"
-          body="Every output restarts and loses picture for about 1 second."
-          confirm="Change format"
+          title="Change the effect budget?"
+          body="Effect time budgets change. Outputs keep running."
+          confirm="Change budget"
           danger={false}
           onCancel={() => setConfirm(false)}
           onConfirm={() => {
