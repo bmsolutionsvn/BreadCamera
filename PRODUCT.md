@@ -38,7 +38,7 @@ RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most
 ## Positioning
 
 - **Like NVIDIA Broadcast, but for a whole camera rig.** Several professional
-  inputs (SRT/BreadCall, NDI, SDI capture cards, USB) processed together on one
+  inputs (SRT/BreadCall, NDI and NDI|HX, OMT and OMT HX, SDI capture cards, USB) processed together on one
   GPU, and sent on to production outputs (NDI, OMT, SRT, SDI key+fill, virtual
   camera, fullscreen).
 - **Keyed output.** Outputs can carry fill plus alpha (NDI, OMT, SDI key+fill),

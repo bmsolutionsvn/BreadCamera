@@ -168,6 +168,12 @@ void validateInput(const InputConfig& in) {
   }
   if (in.kind == "ndi") {
     strParam(in.params, "source", 1, 256, "NDI source");
+    if (in.params.contains("hx") && !in.params["hx"].is_boolean()) throw std::invalid_argument("NDI HX must be true or false");
+    return;
+  }
+  if (in.kind == "omt") {
+    // OMT and OMT HX share one source name; the receiver reads the mode from the sender.
+    strParam(in.params, "source", 1, 256, "OMT source");
     return;
   }
   if (in.kind == "uvc") {
@@ -291,6 +297,7 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
   if (cmd == "ping") return {{"pong", true}, {"pid", GetCurrentProcessId()}};
   if (cmd == "listMonitors") return fx_.listMonitors();
   if (cmd == "listNdiSources") return fx_.listNdiSources();
+  if (cmd == "listOmtSources") return fx_.listOmtSources();
   if (cmd == "listCaptureDevices") return fx_.listCaptureDevices();
   if (cmd == "listDeckLinkDevices") return fx_.listDeckLinkDevices();
   if (cmd == "listAjaDevices") return fx_.listAjaDevices();

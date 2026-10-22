@@ -14,6 +14,7 @@
 #include "io/ndi_output.h"
 #endif
 #if BC_WITH_OMT
+#include "io/omt_input.h"
 #include "io/omt_output.h"
 #include "omthx/omthx.h"
 #endif
@@ -41,9 +42,20 @@ std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) 
     // here too (same rule as the NDI output below).
     if (!cfg.params.contains("source") || !cfg.params["source"].is_string())
       throw std::invalid_argument("NDI source is required");
-    return std::make_unique<NdiInput>(gpu_, pool_, cfg.params["source"].get<std::string>());
+    if (cfg.params.contains("hx") && !cfg.params["hx"].is_boolean()) throw std::invalid_argument("NDI HX must be true or false");
+    return std::make_unique<NdiInput>(gpu_, pool_, cfg.params["source"].get<std::string>(),
+                                      cfg.params.value("hx", false));
 #else
     throw std::invalid_argument("NDI support is not installed in this build");
+#endif
+  }
+  if (cfg.kind == "omt") {
+#if BC_WITH_OMT
+    if (!cfg.params.contains("source") || !cfg.params["source"].is_string())
+      throw std::invalid_argument("OMT source is required");
+    return std::make_unique<OmtInput>(gpu_, pool_, cfg.params["source"].get<std::string>());
+#else
+    throw std::invalid_argument("OMT support is not installed in this build");
 #endif
   }
   if (cfg.kind == "uvc") {

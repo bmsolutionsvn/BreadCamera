@@ -33,6 +33,9 @@
 #include "io/decklink.h"
 #include "io/mf_capture_input.h"
 #include "io/monitors.h"
+#if BC_WITH_OMT
+#include "omthx/omthx.h"
+#endif
 #if BC_WITH_NDI
 #include "io/ndi_discovery.h"
 #endif
@@ -171,6 +174,14 @@ int wmain(int argc, wchar_t** argv) {
     json listNdiSources() override {
 #if BC_WITH_NDI
       return bc::listNdiSources();
+#else
+      return json::array();
+#endif
+    }
+    json listOmtSources() override {
+#if BC_WITH_OMT
+      const auto names = omthx::discover();
+      return json(names);
 #else
       return json::array();
 #endif

@@ -23,7 +23,7 @@ test('NDI cameras pick a discovered source', async () => {
   fireEvent.change(screen.getByLabelText('NDI source'), { target: { value: 'STUDIO (vMix - Output 1)' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add camera' }));
   const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addCamera');
-  expect(add.args).toEqual({ name: 'Khách mời', input: { kind: 'ndi', params: { source: 'STUDIO (vMix - Output 1)' } } });
+  expect(add.args).toEqual({ name: 'Khách mời', input: { kind: 'ndi', params: { source: 'STUDIO (vMix - Output 1)', hx: false } } });
 });
 
 test('a BreadCall guest slot is sent as a breadcall input', async () => {

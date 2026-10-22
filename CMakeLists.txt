@@ -306,7 +306,7 @@ else()
 endif()
 
 if(BC_WITH_OMT)
-  target_sources(bc_io PRIVATE src/io/omt_output.cpp)
+  target_sources(bc_io PRIVATE src/io/omt_output.cpp src/io/omt_input.cpp)
   target_link_libraries(bc_io PUBLIC omthx)
   target_compile_definitions(bc_io PUBLIC BC_WITH_OMT=1)
 else()
@@ -447,6 +447,8 @@ add_executable(bc_tests
   tests/rate_estimator_test.cpp
   # Auto frame
   tests/autoframe_test.cpp
+  # OMT input
+  tests/omt_input_test.cpp
   tests/tick_schedule_test.cpp
   tests/frame_sync_test.cpp
   tests/bounded_queue_test.cpp

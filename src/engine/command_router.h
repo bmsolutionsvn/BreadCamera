@@ -29,6 +29,8 @@ class CommandRouter {
     virtual void requestKeyframe(const std::string& cameraId, PreviewSize size) = 0;
     virtual nlohmann::json listMonitors() = 0;
     virtual nlohmann::json listNdiSources() = 0;
+    // OMT source names seen on the network. Non-pure: a fake without an OMT radio returns none.
+    virtual nlohmann::json listOmtSources() { return nlohmann::json::array(); }
     virtual nlohmann::json listCaptureDevices() = 0;
     virtual nlohmann::json listDeckLinkDevices() = 0;
     virtual nlohmann::json listAjaDevices() = 0;

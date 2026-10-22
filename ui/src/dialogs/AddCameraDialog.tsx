@@ -9,7 +9,7 @@ import { Prop } from '../components/Prop';
 
 const chars = (s: string) => [...s].length;
 
-type Kind = 'srt' | 'ndi' | 'uvc' | 'decklink' | 'aja' | 'breadcall';
+type Kind = 'srt' | 'ndi' | 'omt' | 'uvc' | 'decklink' | 'aja' | 'breadcall';
 
 interface DeckLinkDevice {
   index: number;
@@ -36,6 +36,9 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const [streamId, setStreamId] = useState('');
   const [ndiSources, setNdiSources] = useState<string[]>([]);
   const [ndiSource, setNdiSource] = useState('');
+  const [ndiHx, setNdiHx] = useState(false);
+  const [omtSources, setOmtSources] = useState<string[]>([]);
+  const [omtSource, setOmtSource] = useState('');
   const [devices, setDevices] = useState<{ name: string; id: string }[]>([]);
   const [device, setDevice] = useState('');
   const [decklinkDevices, setDecklinkDevices] = useState<DeckLinkDevice[]>([]);
@@ -53,6 +56,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
     if (c.input.kind === 'uvc' && c.input.params.device) usedBy.set(String(c.input.params.device), c.name);
 
   const refreshNdi = () => client.request<string[]>('listNdiSources').then(setNdiSources).catch(() => setNdiSources([]));
+  const refreshOmt = () => client.request<string[]>('listOmtSources').then(setOmtSources).catch(() => setOmtSources([]));
   const refreshDevices = () =>
     client.request<{ name: string; id: string }[]>('listCaptureDevices').then(setDevices).catch(() => setDevices([]));
   const refreshDeckLink = () =>
@@ -60,6 +64,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   const refreshAja = () => client.request<AjaDevice[]>('listAjaDevices').then(setAjaDevices).catch(() => setAjaDevices([]));
   useEffect(() => {
     if (kind === 'ndi') refreshNdi();
+    if (kind === 'omt') refreshOmt();
     if (kind === 'uvc') refreshDevices();
     if (kind === 'decklink') refreshDeckLink();
     if (kind === 'aja') refreshAja();
@@ -73,6 +78,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
     passphrase: kind === 'srt' && passphrase && (passphrase.length < 10 || passphrase.length > 79) ? 'Passphrase is empty or 10 to 79 characters' : '',
     host: kind === 'srt' && mode === 'caller' && !url && !host ? 'Caller mode needs a host or a URL' : '',
     ndi: kind === 'ndi' && !ndiSource ? 'Choose an NDI source' : '',
+    omt: kind === 'omt' && !omtSource ? 'Choose an OMT source' : '',
     device: kind === 'uvc' && !device ? 'Choose a device' : '',
     decklinkDevice: kind === 'decklink' && !decklinkDevice ? 'Choose a card' : '',
     aja: kind === 'aja' && !ajaDevice ? 'Choose a card' : '',
@@ -96,8 +102,10 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
   async function submit() {
     const input =
       kind === 'ndi'
-        ? { kind: 'ndi', params: { source: ndiSource } }
-        : kind === 'uvc'
+        ? { kind: 'ndi', params: { source: ndiSource, hx: ndiHx } }
+        : kind === 'omt'
+          ? { kind: 'omt', params: { source: omtSource } }
+          : kind === 'uvc'
           ? { kind: 'uvc', params: { device } }
           : kind === 'decklink'
             ? { kind: 'decklink', params: { device: Number(decklinkDevice) } }
@@ -139,6 +147,7 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
           <select id={id} className="ctl" value={kind} onChange={(e) => setKind(e.target.value as Kind)}>
             <option value="srt">SRT</option>
             <option value="ndi">NDI</option>
+            <option value="omt">OMT / OMT HX</option>
             <option value="uvc">Device camera</option>
             <option value="decklink">DeckLink (SDI/HDMI)</option>
             <option value="aja">AJA (experimental)</option>
@@ -159,6 +168,35 @@ export function AddCameraDialog({ client, onClose }: { client: EngineClient; onC
                 ))}
               </select>
               <button className="btn" onClick={refreshNdi}>
+                Refresh
+              </button>
+            </div>
+          )}
+        </Prop>
+      )}
+      {kind === 'ndi' && (
+        <Prop label="NDI mode" hint="NDI|HX asks the source for its lowest-bandwidth stream; Full uses the whole NDI stream.">
+          {(id) => (
+            <select id={id} className="ctl" value={ndiHx ? 'hx' : 'full'} onChange={(e) => setNdiHx(e.target.value === 'hx')}>
+              <option value="full">Full bandwidth</option>
+              <option value="hx">NDI|HX (low bandwidth)</option>
+            </select>
+          )}
+        </Prop>
+      )}
+      {kind === 'omt' && (
+        <Prop label="OMT source" hint={errors.omt || 'Plain OMT and OMT HX both appear here; the mode is detected.'}>
+          {(id) => (
+            <div className="row-btns">
+              <select id={id} className="ctl" value={omtSource} onChange={(e) => setOmtSource(e.target.value)}>
+                <option value="">Choose a source…</option>
+                {omtSources.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <button className="btn" onClick={refreshOmt}>
                 Refresh
               </button>
             </div>

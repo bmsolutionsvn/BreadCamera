@@ -48,7 +48,10 @@ void NdiInput::run() {
       NDIlib_recv_create_v3_t rc{};
       rc.source_to_connect_to = *pick;
       rc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
-      rc.bandwidth = NDIlib_recv_bandwidth_highest;
+      // NDI|HX is an NDI source like any other (the SDK decodes it); HX mode asks for the
+      // source's lowest-bandwidth stream, which is the HX one, instead of full bandwidth.
+      rc.bandwidth = hx_ ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
+      rc.allow_video_fields = !hx_;
       rc.p_ndi_recv_name = "BreadCamera";
       recv = NDIlib_recv_create_v3(&rc);
       lastVideo = Clock::now();

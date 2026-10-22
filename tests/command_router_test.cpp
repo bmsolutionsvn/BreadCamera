@@ -68,6 +68,19 @@ TEST_CASE("CommandRouter: invalid input is refused and the show is unchanged") {
   CHECK(noName["error"]["code"] == "invalid");
 }
 
+TEST_CASE("CommandRouter: OMT and NDI HX inputs are validated") {
+  FakeFx fx;
+  bc::CommandRouter r({}, fx);
+  auto add = [&](json input) {
+    return call(r, {{"cmd", "addCamera"}, {"args", {{"name", "Cam"}, {"input", input}}}});
+  };
+  CHECK(add({{"kind", "omt"}, {"params", {{"source", "STUDIO (OBS Output)"}}}})["ok"] == true);
+  CHECK(add({{"kind", "omt"}, {"params", json::object()}})["error"]["code"] == "invalid");
+  CHECK(add({{"kind", "omt"}, {"params", {{"source", ""}}}})["error"]["code"] == "invalid");
+  CHECK(add({{"kind", "ndi"}, {"params", {{"source", "STUDIO"}, {"hx", true}}}})["ok"] == true);
+  CHECK(add({{"kind", "ndi"}, {"params", {{"source", "STUDIO"}, {"hx", "yes"}}}})["error"]["code"] == "invalid");
+}
+
 TEST_CASE("CommandRouter: updateCamera keeps or clears a redacted secret") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);
@@ -252,7 +265,7 @@ TEST_CASE("CommandRouter: setStage merges, normalizes and validates") {
   auto bad = call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", cam}, {"stage", "matte"}, {"params", {{"choke", 50}}}}}});
   CHECK(bad["error"]["code"] == "invalid");
   CHECK(call(r, {{"cmd", "setStage"}, {"args", {{"cameraId", "nope"}, {"stage", "matte"}, {"params", json::object()}}}})["error"]["code"] == "not-found");
-  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 5);
+  CHECK(call(r, {{"cmd", "getStageSchemas"}})["result"].size() == 6);
 }
 
 TEST_CASE("CommandRouter: an unavailable effect cannot be added, but one already on a camera can be changed") {
