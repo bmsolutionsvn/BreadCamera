@@ -64,7 +64,7 @@ std::unique_ptr<RtxVideo> RtxVideo::create(GpuDevice& gpu, TexturePool& pool, Co
   whyNot = kNoBuild;
   return nullptr;
 #else
-  if (NVSDK_NGX_D3D11_Init(kAppId, gpu.device(), dataPath().c_str()) != NVSDK_NGX_Result_Success) {
+  if (NVSDK_NGX_D3D11_Init(kAppId, dataPath().c_str(), gpu.device()) != NVSDK_NGX_Result_Success) {
     whyNot = kOldDriver;
     return nullptr;
   }
@@ -80,6 +80,7 @@ std::unique_ptr<RtxVideo> RtxVideo::create(GpuDevice& gpu, TexturePool& pool, Co
     return nullptr;
   }
   // One VSR feature, reused by every Clean up and Upscale call on this device.
+  auto lock = gpu.lock();
   if (NVSDK_NGX_D3D11_CreateFeature(gpu.context(), NVSDK_NGX_Feature_VSR, out->impl_->params,
                                     &out->impl_->feature) != NVSDK_NGX_Result_Success) {
     whyNot = kOldDriver;
@@ -100,17 +101,19 @@ TextureRef RtxVideo::run(const GpuTexture& linear, uint32_t w, uint32_t h) {
   auto in = conv_.toBgra8(linear, linear.width, linear.height);
   auto out = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM,
                            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
-  auto lock = gpu_.lock();  // the three calls below are one immediate-context sequence
+  auto lock = gpu_.lock();  // the calls below are one immediate-context sequence
   auto* ctx = gpu_.context();
-  NVSDK_NGX_Parameter* p = impl_->params;
-  p->Set(NVSDK_NGX_Parameter_Width, static_cast<int>(linear.width));
-  p->Set(NVSDK_NGX_Parameter_Height, static_cast<int>(linear.height));
-  p->Set(NVSDK_NGX_Parameter_OutWidth, static_cast<int>(w));
-  p->Set(NVSDK_NGX_Parameter_OutHeight, static_cast<int>(h));
-  p->Set(NVSDK_NGX_Parameter_VSR_Quality, static_cast<int>(NVSDK_NGX_VSR_Quality_High));  // spec D4
-  NVSDK_NGX_Parameter_SetD3d11Resource(p, NVSDK_NGX_Parameter_Input, in->tex.Get());
-  NVSDK_NGX_Parameter_SetD3d11Resource(p, NVSDK_NGX_Parameter_Output, out->tex.Get());
-  const NVSDK_NGX_Result rc = NGX_D3D11_EVALUATE_VSR_EXT(ctx, impl_->feature, p);
+  // RTX Video SDK 1.1: the helper fills the parameter block from the eval struct, so the
+  // sub-rects and the quality are the only inputs; Width/Height on the params are not used.
+  NVSDK_NGX_D3D11_VSR_Eval_Params eval{};
+  eval.pInput = in->tex.Get();
+  eval.pOutput = out->tex.Get();
+  eval.InputSubrectSize.Width = linear.width;
+  eval.InputSubrectSize.Height = linear.height;
+  eval.OutputSubrectSize.Width = w;
+  eval.OutputSubrectSize.Height = h;
+  eval.QualityLevel = NVSDK_NGX_VSR_Quality_High;  // spec D4
+  const NVSDK_NGX_Result rc = NGX_D3D11_EVALUATE_VSR_EXT(ctx, impl_->feature, impl_->params, &eval);
   if (rc != NVSDK_NGX_Result_Success) {
     throw std::runtime_error("NGX VSR evaluate failed (" + std::to_string(static_cast<int>(rc)) + ")");
   }
