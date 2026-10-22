@@ -42,6 +42,17 @@ StageField simple(std::string key, std::string type, json def, std::string label
 }
 
 std::vector<StageSchema> build() {
+  StageSchema autoframe{"autoframe", "Auto frame",
+                        "Keeps the speaker's face in the shot. AI face detection moves a smooth crop; small moves "
+                        "are ignored, so the picture glides instead of hunting.",
+                        "autoframe", {}, json{{"enabled", true}, {"framing", "medium"}, {"position", "centre"}, {"smoothing", 350}},
+                        {}};
+  autoframe.fields = {
+      simple("enabled", "bool", false, "On"),
+      enumeration("framing", {"wide", "medium", "close"}, {"Wide", "Medium", "Close"}, "medium", "Framing"),
+      enumeration("position", {"centre", "left", "right"}, {"Centre", "Left third", "Right third"}, "centre", "Position"),
+      number("smoothing", 100, 1500, 50, 350, "Smoothing (ms)"),
+  };
   StageSchema cleanup{"cleanup", "Clean up",
                       "Removes compression blockiness and webcam noise. Needs an NVIDIA RTX card.", "cleanup", {},
                       json{{"enabled", true}}, {}};
@@ -105,7 +116,7 @@ std::vector<StageSchema> build() {
       simple("color", "color", "#101418", "Colour"),
       simple("image", "path", "", "Image"),
   };
-  return {cleanup, upscale, color, matte, background};
+  return {autoframe, cleanup, upscale, color, matte, background};
 }
 
 json checkField(const StageField& f, const json& v) {

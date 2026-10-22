@@ -7,6 +7,8 @@
 #include "gpu/upscaler.h"
 
 namespace bc {
+class FaceDetector;
+
 // The GPU helpers every camera stage uses, passed as one bundle.
 struct GpuTools {
   Converter& conv;
@@ -19,5 +21,7 @@ struct GpuTools {
   RtxVideo* rtx = nullptr;
   // The shared device, for per-stage GPU timing (spec D14). Null keeps the CPU timing.
   GpuDevice* gpu = nullptr;
+  // AI face detection for Auto frame. Null makes the stage report why it cannot run.
+  FaceDetector* faces = nullptr;
 };
 }  // namespace bc

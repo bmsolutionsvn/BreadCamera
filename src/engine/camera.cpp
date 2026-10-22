@@ -7,6 +7,7 @@
 #include "core/lut.h"
 #include "core/upscale_size.h"
 #include "core/utf8.h"
+#include "engine/face_detector.h"
 #include "gpu/color_grader.h"
 #include "gpu/image_io.h"
 
@@ -16,6 +17,16 @@ using Clock = std::chrono::steady_clock;
 namespace {
 // Match's tiny readbacks (spec §3.1: the main path never copies a full frame to the CPU).
 constexpr uint32_t kMatchW = 128, kMatchH = 72;
+
+AutoFrameSettings autoFrameFrom(const nlohmann::json& p) {
+  AutoFrameSettings s;
+  const std::string framing = p.value("framing", std::string("medium"));
+  s.targetFace = framing == "wide" ? 0.26f : framing == "close" ? 0.52f : 0.38f;
+  const std::string pos = p.value("position", std::string("centre"));
+  s.anchorX = pos == "left" ? 0.33f : pos == "right" ? 0.67f : 0.5f;
+  s.smoothingMs = static_cast<float>(p.value("smoothing", 350.0));
+  return s;
+}
 }  // namespace
 
 Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateStore& state, SyncPolicy policy)
@@ -93,6 +104,11 @@ void Camera::loadStageParams() {
   upscaleParams_ = normalizeStageParams("upscale", cfg_.stages.value("upscale", nlohmann::json::object()));
   upscaleTargetH_ = upscaleParams_.value("target", std::string("1080")) == "720" ? 720u : 1080u;
   cleanupParams_ = normalizeStageParams("cleanup", cfg_.stages.value("cleanup", nlohmann::json::object()));
+  autoframeParams_ = normalizeStageParams("autoframe", cfg_.stages.value("autoframe", nlohmann::json::object()));
+  if (!autoframeParams_.value("enabled", false)) {
+    framer_.reset();
+    lastFramerAt_.reset();
+  }
 }
 
 bool Camera::wantsMatte(Clock::time_point now) const {
@@ -225,6 +241,9 @@ void Camera::pollCleanupTimer(Clock::time_point now) {
 void Camera::startInput() {
   rateStale_.store(true);
   estimator_.reset();
+  framer_.reset();
+  lastFramerAt_.reset();
+  if (tools_.faces) tools_.faces->forget(cfg_.id);
   inputState_ = SignalState::Connecting;
   state_.set(path("/input/state"), "connecting");
   state_.set(path("/input/error"), nullptr);
@@ -515,6 +534,25 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
     lastSize_.h = upscaleTargetH_;
   }
   tickRaw_ = lastConverted_ ? lastConverted_ : fittedSlate(slateSource);
+  if (autoframeParams_.value("enabled", false) && lastConverted_ && tools_.faces) {
+    // Ask for a face on every third tick: the detector reads back a 320x180 copy off the tick,
+    // and the last answer frames the ticks in between.
+    if (framerTick_++ % 3 == 0) {
+      std::vector<FaceJob*> jobs;
+      FaceJob job{cfg_.id, lastConverted_};
+      jobs.push_back(&job);
+      try {
+        tools_.faces->process(jobs);
+      } catch (const std::exception&) {
+        // A failed readback leaves the last framing in place; the next tick tries again.
+      }
+    }
+    double dt = 1.0 / 60.0;
+    if (lastFramerAt_) dt = std::chrono::duration<double>(now - *lastFramerAt_).count();
+    lastFramerAt_ = now;
+    const CropRect c = framer_.update(tools_.faces->face(cfg_.id), autoFrameFrom(autoframeParams_), dt);
+    tickRaw_ = tools_.conv.crop(*lastConverted_, c.x, c.y, c.w, c.h);
+  }
   tickFrame_ = enhance(tickRaw_, pick.fresh, now);
   const TextureRef entering = tickFrame_;  // the frame entering Colour, for Match's own statistics
   const bool colorOn = colorParams_.value("enabled", false);
@@ -733,6 +771,9 @@ void Camera::publishStatus() {
   state_.set(path("/stages/cleanup/error"),
              errorToJson(cleanupOn ? cleanupGuard_.error() : std::optional<ErrorInfo>{}));
   if (cleanupTimer_) state_.set(path("/stages/cleanup/gpuMs"), std::round(cleanupGpuMs_ * 10.0) / 10.0);
+  const bool autoOn = autoframeParams_.value("enabled", false);
+  state_.set(path("/stages/autoframe/state"),
+             !autoOn ? "off" : tools_.faces ? "on" : "unavailable (run scripts/fetch-sdks.ps1)");
   state_.set(path("/input/health"), std::string(inputHealth(inputState_.load(), phase, stutter)));
   const auto target = std::chrono::milliseconds(static_cast<int64_t>(std::lround(latency / 5.0) * 5));
   if (audioDelaySet_.count() < 0 || std::abs((target - audioDelaySet_).count()) > 10) {

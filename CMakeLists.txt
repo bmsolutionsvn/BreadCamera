@@ -138,8 +138,8 @@ if(BC_WITH_LIVECALL AND NOT LibDataChannel_FOUND)
 endif()
 message(STATUS "BC_WITH_LIVECALL=${BC_WITH_LIVECALL}")
 
-# M3 Task 5 — optional chart detection (OpenCV mcc)
-find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc)
+# M3 Task 5 – optional chart detection (OpenCV mcc); Auto frame needs OpenCV's objdetect (YuNet).
+find_package(OpenCV CONFIG QUIET COMPONENTS core imgproc mcc objdetect)
 if(OpenCV_FOUND)
   set(BC_WITH_CHART_DETECT ON)
 else()
@@ -148,10 +148,22 @@ else()
 endif()
 message(STATUS "BC_WITH_CHART_DETECT=${BC_WITH_CHART_DETECT}")
 
+# Auto frame (AI face detection). The YuNet model is fetched by scripts/fetch-sdks.ps1; without
+# OpenCV's objdetect the stage reports itself unavailable and nothing else changes.
+if(OpenCV_FOUND)
+  set(BC_WITH_FACE_DETECT ON)
+else()
+  set(BC_WITH_FACE_DETECT OFF)
+  message(STATUS "Auto frame OFF: OpenCV with the objdetect module not found")
+endif()
+message(STATUS "BC_WITH_FACE_DETECT=${BC_WITH_FACE_DETECT}")
+
 # ---- core (no GPU) ----
 add_library(bc_core STATIC
   src/core/rate.cpp
   src/core/rate_estimator.cpp
+  # Auto frame
+  src/core/autoframe.cpp
   # Task 2
   src/core/tick_schedule.cpp
   src/core/audio_delay.cpp
@@ -201,6 +213,8 @@ bc_shader(bgra_to_linear cs_5_0)
 bc_shader(linear_to_bgra8 cs_5_0)
 # Task 11A
 bc_shader(fit_linear cs_5_0)
+# Auto frame
+bc_shader(crop_linear cs_5_0)
 # Task 7
 bc_shader(fullscreen_vs vs_5_0)
 bc_shader(fullscreen_ps ps_5_0)
@@ -357,6 +371,11 @@ function(bc_copy_runtime target)
       COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
       COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MODNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/modnet.onnx")
   endif()
+  if(BC_WITH_FACE_DETECT AND EXISTS "${YUNET_ONNX}")
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${target}>/models"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${YUNET_ONNX}" "$<TARGET_FILE_DIR:${target}>/models/yunet.onnx")
+  endif()
   if(BC_WITH_RTXVIDEO)
     # webcam-fx Task 4 — the RTX Video SDK's runtime DLL, next to the engine and the tests.
     add_custom_command(TARGET ${target} POST_BUILD
@@ -382,6 +401,8 @@ add_library(bc_engine STATIC
   src/engine/chart_detector.cpp
   # M3 Task 6
   src/engine/color_calibration_service.cpp
+  # Auto frame
+  src/engine/face_detector.cpp
 )
 target_include_directories(bc_engine PUBLIC src)
 target_link_libraries(bc_engine PUBLIC bc_io winmm)
@@ -410,12 +431,22 @@ if(BC_WITH_CHART_DETECT)
   target_link_libraries(bc_engine PUBLIC opencv_core opencv_imgproc opencv_mcc)
 endif()
 
+target_compile_definitions(bc_engine PUBLIC BC_WITH_FACE_DETECT=$<BOOL:${BC_WITH_FACE_DETECT}>)
+if(BC_WITH_FACE_DETECT)
+  target_link_libraries(bc_engine PUBLIC opencv_objdetect opencv_core opencv_imgproc)
+endif()
+
+# <exe folder>/models/yunet.onnx, when the fetch script has run.
+set(YUNET_ONNX "${CMAKE_SOURCE_DIR}/third_party/models/yunet.onnx")
+
 # ---- tests ----
 add_executable(bc_tests
   tests/main.cpp
   tests/support/requires.cpp
   tests/rate_test.cpp
   tests/rate_estimator_test.cpp
+  # Auto frame
+  tests/autoframe_test.cpp
   tests/tick_schedule_test.cpp
   tests/frame_sync_test.cpp
   tests/bounded_queue_test.cpp

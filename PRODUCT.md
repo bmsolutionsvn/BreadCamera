@@ -27,8 +27,9 @@ The UI is a React app hosted in WebView2 inside the Windows desktop shell
 ## Product Purpose
 
 Multi-camera GPU processing for live production: AI background removal without a
-green screen, background blur or replacement, and one-time colour calibration of
-each camera against a colour chart, with more effects added later as add-ins.
+green screen, background blur or replacement, one-time colour calibration of
+each camera against a colour chart, and AI auto framing that keeps the speaker's
+face in the shot with no camera operator, with more effects added later as add-ins.
 
 Success means a camera's output never goes black because of BreadCamera, and one
 RTX 4070-class PC runs 4 cameras at 1080p60 with every effect on, adding at most

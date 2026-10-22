@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/audio_delay.h"
+#include "core/autoframe.h"
 #include "core/frame_sync.h"
 #include "core/input_health.h"
 #include "core/rate_estimator.h"
@@ -231,6 +232,10 @@ class Camera final : public InputSink {
   nlohmann::json colorParams_;
   nlohmann::json upscaleParams_;
   nlohmann::json cleanupParams_;
+  nlohmann::json autoframeParams_;
+  AutoFramer framer_;
+  std::optional<std::chrono::steady_clock::time_point> lastFramerAt_;
+  uint64_t framerTick_ = 0;
   uint32_t upscaleTargetH_ = 1080;  // the Upscale target height: 720 or 1080 (spec D2)
   bool sawFrame_ = false;           // a frame has been converted at least once (the slate fallback)
   std::chrono::nanoseconds upscaleBudget_{4000000};  // sched.rate().period() / 4, for the CPU-fit path

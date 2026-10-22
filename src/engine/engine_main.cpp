@@ -4,9 +4,11 @@
 #include <ixwebsocket/IXNetSystem.h>
 
 #include <atomic>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <thread>
 
 #include "core/show_store.h"
@@ -17,6 +19,7 @@
 #include "engine/color_calibration_service.h"
 #include "engine/control_server.h"
 #include "engine/engine.h"
+#include "engine/face_detector.h"
 #include "engine/gpu_tools.h"
 #include "engine/matte.h"
 #include "engine/preview_service.h"
@@ -102,6 +105,15 @@ int wmain(int argc, wchar_t** argv) {
   // shows on the Clean up row; a missing SDK never fails the build (spec §7.2).
   std::string rtxWhy;
   auto rtx = bc::RtxVideo::create(*gpu, pool, conv, rtxWhy);
+  // Auto frame's AI detector. A missing model or OpenCV module only costs this one stage.
+  std::unique_ptr<bc::FaceDetector> faces;
+#if BC_WITH_FACE_DETECT
+  try {
+    faces = std::make_unique<bc::FaceDetector>(conv, bc::defaultFaceModel());
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[breadcamera] auto frame is unavailable: %s\n", e.what());
+  }
+#endif
   bc::StateStore state;
   bc::DefaultAdapterFactory factory(*gpu, pool);
   bc::ShowStore store(showDir);
@@ -109,7 +121,7 @@ int wmain(int argc, wchar_t** argv) {
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
 
-  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .up = &up, .rtx = rtx.get(), .gpu = gpu.get()}, state,
+  bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .up = &up, .rtx = rtx.get(), .gpu = gpu.get(), .faces = faces.get()}, state,
                     factory);
   auto matte = bc::makeMatteBackend(*gpu, pool, conv);
   engine.setMatteBackend(std::move(matte.backend), matte.unavailableReason);

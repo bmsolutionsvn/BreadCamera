@@ -36,3 +36,12 @@ if (-not (Test-Path $model)) {
 }
 $h = (Get-FileHash $model -Algorithm SHA256).Hash.ToLower()
 if ($h -ne '07c308cf0fc7e6e8b2065a12ed7fc07e1de8febb7dc7839d7b7f15dd66584df9') { Remove-Item $model; throw "modnet.onnx: SHA-256 mismatch ($h)" }
+
+# Auto frame's face detector: YuNet (OpenCV Zoo, MIT). Small and accurate on a 320x180 copy.
+$yunet = Join-Path $root 'models\yunet.onnx'
+if (-not (Test-Path $yunet)) {
+  New-Item -ItemType Directory -Force (Split-Path $yunet) | Out-Null
+  Invoke-WebRequest -Uri 'https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx' -OutFile $yunet
+}
+$hy = (Get-FileHash $yunet -Algorithm SHA256).Hash.ToLower()
+if ($hy -ne '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4') { Remove-Item $yunet; throw "yunet.onnx: SHA-256 mismatch ($hy)" }
