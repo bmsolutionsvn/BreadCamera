@@ -7,7 +7,7 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-      "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows" }
+      "cacheVariables": { "VCPKG_TARGET_TRIPLET": "x64-windows", "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports" }
     },
     { "name": "release", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" } },
     { "name": "debug", "inherits": "base", "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" } }
