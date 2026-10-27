@@ -41,6 +41,7 @@ struct ShowSettings {
   Rate rate{60, 1};
   int holdMs = 5000;
   std::string slatePath;  // empty = built-in slate
+  std::string matteEngine = "auto";  // auto | maxine | directml | cpu (Background removal engine)
   bool operator==(const ShowSettings&) const = default;
 };
 
