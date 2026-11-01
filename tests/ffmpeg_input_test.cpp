@@ -138,6 +138,63 @@ TEST_CASE("FfmpegInput: the software path delivers BGRA8") {
   CHECK(sink.layout == bc::PixelLayout::BGRA8);
 }
 
+namespace {
+// A recorder-shaped sink: CPU pictures only, no textures.
+struct CpuSink : bc::InputSink {
+  std::mutex m;
+  std::condition_variable cv;
+  int cpu = 0;
+  int gpu = 0;
+  bool allUyvy = true;
+  bool allSize = true;
+  bool increasing = true;
+  int64_t lastPts = INT64_MIN;
+
+  void onVideo(bc::VideoFrameIn) override {
+    std::lock_guard l(m);
+    ++gpu;
+  }
+  void onAudio(bc::AudioBlock) override {}
+  void onState(bc::SignalState, std::optional<bc::ErrorInfo>) override {}
+  bool wantsCpuVideo() const override { return true; }
+  bool wantsGpuVideo() const override { return false; }
+  void onCpuVideo(const bc::CpuVideoFrame& f) override {
+    std::lock_guard l(m);
+    ++cpu;
+    allUyvy = allUyvy && f.format == bc::CpuPixel::UYVY;
+    allSize = allSize && f.width == 1280 && f.height == 720;
+    increasing = increasing && f.ptsUs > lastPts;
+    lastPts = f.ptsUs;
+    cv.notify_all();
+  }
+  bool waitFor(const std::function<bool()>& pred, std::chrono::milliseconds t) {
+    std::unique_lock l(m);
+    return cv.wait_for(l, t, pred);
+  }
+};
+}  // namespace
+
+TEST_CASE("FfmpegInput: a CPU-video sink gets UYVY frames and no textures") {
+  bc::test::TempDir dir;
+  const auto ts = dir.path / "hd.ts";
+  bc::test::writeTestTs(ts, 1280, 720, 30, 2);
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool{*gpu};
+  bc::FfmpegInputOptions o;
+  o.url = ts.string();
+  o.reconnect = false;
+  bc::FfmpegInput in(*gpu, pool, o);
+  CpuSink sink;
+  in.start(sink);
+  CHECK(sink.waitFor([&] { return sink.cpu >= 45; }, 15s));
+  in.stop();
+  CHECK(sink.cpu >= 45);
+  CHECK(sink.gpu == 0);
+  CHECK(sink.allUyvy);
+  CHECK(sink.allSize);
+  CHECK(sink.increasing);
+}
+
 TEST_CASE("FfmpegInput: the hardware path delivers NV12" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   Fixture f;
   bc::FfmpegInputOptions o;

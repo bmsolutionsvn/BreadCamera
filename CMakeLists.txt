@@ -1,9 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
 project(BreadCamera LANGUAGES C CXX)
 
+# BreadReplay builds these libraries from this checkout through add_subdirectory (BreadReplay
+# spec §3). BC_LIBS_ONLY stops this file after bc_io, so its engine, tests and exes stay out.
+option(BC_LIBS_ONLY "Build only bc_core/bc_gpu/bc_io" OFF)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 add_compile_options(/W4 /permissive- /utf-8 /EHsc)
 add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _WIN32_WINNT=0x0A00)
 
@@ -88,7 +92,7 @@ endif()
 
 # Optional OMT-HX output (see ../OMT-HX). Its CMake builds libomt and libvmx from its omt/ submodules,
 # so the checkout needs `git submodule update --init` once.
-set(OMTHX_ROOT "${CMAKE_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
+set(OMTHX_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../OMT-HX" CACHE PATH "OMT-HX checkout")
 if(EXISTS "${OMTHX_ROOT}/include/omthx/omthx.h" AND EXISTS "${OMTHX_ROOT}/omt/libomt/libomt.h")
   add_subdirectory("${OMTHX_ROOT}" omthx-build)
   set(BC_WITH_OMT ON)
@@ -196,11 +200,11 @@ target_link_libraries(bc_core PUBLIC advapi32)
 
 # ---- gpu ----
 find_program(FXC fxc REQUIRED)  # Windows SDK; on PATH in the VS developer shell
-set(BC_SHADER_DIR ${CMAKE_BINARY_DIR}/shaders)
+set(BC_SHADER_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 file(MAKE_DIRECTORY ${BC_SHADER_DIR})
 set(BC_SHADER_HEADERS)
 function(bc_shader name profile)
-  set(src ${CMAKE_SOURCE_DIR}/src/gpu/shaders/${name}.hlsl)
+  set(src ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/${name}.hlsl)
   set(out ${BC_SHADER_DIR}/${name}.h)
   # Any extra arguments are header dependencies the shader #includes (e.g. the vendored FSR headers).
   add_custom_command(OUTPUT ${out}
@@ -225,7 +229,7 @@ endforeach()
 # M3 Task 3
 bc_shader(color_grade cs_5_0)
 # webcam-fx Task 3 — the FSR 1 upscaler's two compute shaders; the vendored headers are dependencies
-set(BC_FSR_HEADERS ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_a.h ${CMAKE_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_fsr1.h)
+set(BC_FSR_HEADERS ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_a.h ${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/ffx/ffx_fsr1.h)
 bc_shader(fsr_easu cs_5_0 ${BC_FSR_HEADERS})
 bc_shader(fsr_rcas cs_5_0 ${BC_FSR_HEADERS})
 
@@ -317,7 +321,7 @@ endif()
 # DeckLinkAPI.idl into DeckLinkAPI_h.h + DeckLinkAPI_i.c, which the adapters use through
 # CoCreateInstance.
 if(BC_WITH_DECKLINK)
-  set(_dlgen ${CMAKE_BINARY_DIR}/decklink)
+  set(_dlgen ${CMAKE_CURRENT_BINARY_DIR}/decklink)
   file(MAKE_DIRECTORY ${_dlgen})
   get_filename_component(_dlinc ${DECKLINK_IDL} DIRECTORY)
   add_custom_command(
@@ -383,6 +387,11 @@ function(bc_copy_runtime target)
   endif()
 endfunction()
 
+if(BC_LIBS_ONLY)
+  message(STATUS "BC_LIBS_ONLY=ON: stopping BreadCamera's CMakeLists after bc_io")
+  return()
+endif()
+
 # ---- engine ----
 add_library(bc_engine STATIC
   src/engine/adapter_factory.cpp
@@ -437,7 +446,7 @@ if(BC_WITH_FACE_DETECT)
 endif()
 
 # <exe folder>/models/yunet.onnx, when the fetch script has run.
-set(YUNET_ONNX "${CMAKE_SOURCE_DIR}/third_party/models/yunet.onnx")
+set(YUNET_ONNX "${CMAKE_CURRENT_SOURCE_DIR}/third_party/models/yunet.onnx")
 
 # ---- tests ----
 add_executable(bc_tests
@@ -587,5 +596,5 @@ add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
 target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
 
 add_custom_command(TARGET BreadCamera POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/ui/dist -DDST=$<TARGET_FILE_DIR:BreadCamera>/ui
-          -P ${CMAKE_SOURCE_DIR}/cmake/CopyUi.cmake)
+  COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/ui/dist -DDST=$<TARGET_FILE_DIR:BreadCamera>/ui
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyUi.cmake)

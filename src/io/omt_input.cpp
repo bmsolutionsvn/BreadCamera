@@ -23,13 +23,16 @@ void OmtInput::stop() {
 void OmtInput::run() {
   sink_->onState(SignalState::Connecting, std::nullopt);
   std::unique_ptr<omthx::Receiver> receiver;
+  // A recorder takes full OMT (VMX) frames as they are; an Hx source cannot be passed through,
+  // so it reopens as decoded pictures (the same path a Camera sink uses).
+  bool coded = sink_->wantsCodedVmx();
   bool live = false;
   auto lastVideo = Clock::now();
 
   while (!stopping_) {
     if (!receiver) {
       try {
-        receiver = std::make_unique<omthx::Receiver>(source_, omthx::PixelFormat::Bgra);
+        receiver = std::make_unique<omthx::Receiver>(source_, coded ? omthx::PixelFormat::Coded : omthx::PixelFormat::Bgra);
         receiver->requestKeyframe();
         lastVideo = Clock::now();
       } catch (const std::exception& e) {
@@ -42,28 +45,72 @@ void OmtInput::run() {
     }
 
     try {
-      omthx::VideoFrame v;
-      if (receiver->receiveVideo(v, 20)) {
-        const uint32_t w = static_cast<uint32_t>(v.format.width);
-        const uint32_t h = static_cast<uint32_t>(v.format.height);
-        if (w == 0 || h == 0 || v.bgra.size() < static_cast<size_t>(w) * h * 4) continue;
-
-        VideoFrameIn f;
-        f.layout = PixelLayout::BGRA8;
-        f.fullRange = true;  // omthx hands back the source's display-referred BGRA
-        f.ptsUs = v.timestamp / 10;  // omthx timestamps are 100 ns units
-        f.rate = rateFromRational(v.format.fpsN, v.format.fpsD);
-        f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-        {
-          auto lock = gpu_.lock();
-          gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.bgra.data(), w * 4, 0);
+      if (coded) {
+        omthx::CodedFrame c;
+        if (receiver->receiveCoded(c, 20)) {
+          if (c.mode != omthx::Mode::Full) {
+            coded = false;  // Hx (HEVC/H.264): reopen with the picture receiver
+            receiver.reset();
+            live = false;
+            continue;
+          }
+          const uint32_t w = static_cast<uint32_t>(c.format.width);
+          const uint32_t h = static_cast<uint32_t>(c.format.height);
+          if (w == 0 || h == 0 || c.data.empty()) {
+            // nothing to pass on
+          } else {
+            CodedVideoFrame f;
+            f.data = c.data;
+            f.codec = "vmx";
+            f.width = w;
+            f.height = h;
+            f.ptsUs = c.timestamp / 10;  // omthx timestamps are 100 ns units
+            lastVideo = Clock::now();
+            if (!live) {
+              live = true;
+              sink_->onState(SignalState::Live, std::nullopt);
+            }
+            sink_->onCodedVideo(f);
+          }
         }
-        lastVideo = Clock::now();
-        if (!live) {
-          live = true;
-          sink_->onState(SignalState::Live, std::nullopt);
+      } else {
+        omthx::VideoFrame v;
+        if (receiver->receiveVideo(v, 20)) {
+          const uint32_t w = static_cast<uint32_t>(v.format.width);
+          const uint32_t h = static_cast<uint32_t>(v.format.height);
+          if (w != 0 && h != 0 && v.bgra.size() >= static_cast<size_t>(w) * h * 4) {
+            VideoFrameIn f;
+            f.layout = PixelLayout::BGRA8;
+            f.fullRange = true;  // omthx hands back the source's display-referred BGRA
+            f.ptsUs = v.timestamp / 10;  // omthx timestamps are 100 ns units
+            f.rate = rateFromRational(v.format.fpsN, v.format.fpsD);
+            if (sink_->wantsCpuVideo()) {
+              CpuVideoFrame cf;
+              cf.data = v.bgra.data();
+              cf.stride = static_cast<int>(w * 4);
+              cf.width = w;
+              cf.height = h;
+              cf.format = CpuPixel::BGRA;
+              cf.fullRange = true;
+              cf.ptsUs = f.ptsUs;
+              cf.rate = f.rate;
+              sink_->onCpuVideo(cf);
+            }
+            lastVideo = Clock::now();
+            if (!live) {
+              live = true;
+              sink_->onState(SignalState::Live, std::nullopt);
+            }
+            if (sink_->wantsGpuVideo()) {
+              f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+              {
+                auto lock = gpu_.lock();
+                gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.bgra.data(), w * 4, 0);
+              }
+              sink_->onVideo(std::move(f));
+            }
+          }
         }
-        sink_->onVideo(std::move(f));
       }
 
       // Audio is drained with a zero timeout; anything slower than the picture falls behind, so

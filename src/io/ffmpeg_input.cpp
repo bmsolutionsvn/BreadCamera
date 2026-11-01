@@ -178,7 +178,9 @@ void FfmpegInput::runOnce() {
   const int ai = av_find_best_stream(fmt.get(), AVMEDIA_TYPE_AUDIO, -1, vi, nullptr, 0);
 
   AVBufferRef* hw = nullptr;
-  if (opts_.allowHwDecode && gpu_.supportsVideoDecode()) {
+  // A CPU sink needs a frame in memory, so the hardware decode path (which leaves it in a
+  // texture) is not taken; swscale converts the software frame to UYVY instead.
+  if (opts_.allowHwDecode && gpu_.supportsVideoDecode() && !sink_->wantsCpuVideo()) {
     try {
       hw = makeHwDevice();
     } catch (const std::exception&) {
@@ -269,6 +271,38 @@ void FfmpegInput::emitVideo(AVFrame* f, AVStream* st) {
   out.rate = rateFromRational(st->avg_frame_rate.num, st->avg_frame_rate.den);
   const uint32_t w = static_cast<uint32_t>(f->width) & ~1u;
   const uint32_t h = static_cast<uint32_t>(f->height) & ~1u;
+  const int cs = f->height >= 720 ? SWS_CS_ITU709 : SWS_CS_ITU601;
+
+  // The recorder tap: UYVY in CPU memory, before any texture exists (spec §4.1).
+  if (sink_->wantsCpuVideo() && f->format != AV_PIX_FMT_D3D11) {
+    sws_ = sws_getCachedContext(sws_, f->width, f->height, static_cast<AVPixelFormat>(f->format), static_cast<int>(w),
+                                static_cast<int>(h), AV_PIX_FMT_UYVY422, SWS_BILINEAR, nullptr, nullptr, nullptr);
+    if (!sws_) throw std::runtime_error("cannot convert pixel format to UYVY");
+    sws_setColorspaceDetails(sws_, sws_getCoefficients(cs), f->color_range == AVCOL_RANGE_JPEG,
+                             sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
+    swBuf_.resize(static_cast<size_t>(w) * h * 2);
+    uint8_t* dst[1] = {swBuf_.data()};
+    const int dstStride[1] = {static_cast<int>(w * 2)};
+    sws_scale(sws_, f->data, f->linesize, 0, f->height, dst, dstStride);
+    bc::CpuVideoFrame cf;
+    cf.data = swBuf_.data();
+    cf.stride = static_cast<int>(w * 2);
+    cf.width = w;
+    cf.height = h;
+    cf.format = bc::CpuPixel::UYVY;
+    cf.fullRange = out.fullRange;
+    cf.ptsUs = out.ptsUs;
+    cf.rate = out.rate;
+    sink_->onCpuVideo(cf);
+  }
+
+  pace(out.ptsUs);
+  if (!wentLive_) {
+    wentLive_ = true;
+    sink_->onState(SignalState::Live, std::nullopt);
+  }
+  if (!sink_->wantsGpuVideo()) return;
+
   if (f->format == AV_PIX_FMT_D3D11) {
     auto* src = reinterpret_cast<ID3D11Texture2D*>(f->data[0]);
     const UINT index = static_cast<UINT>(reinterpret_cast<intptr_t>(f->data[1]));
@@ -283,7 +317,6 @@ void FfmpegInput::emitVideo(AVFrame* f, AVStream* st) {
     sws_ = sws_getCachedContext(sws_, f->width, f->height, static_cast<AVPixelFormat>(f->format), static_cast<int>(w),
                                 static_cast<int>(h), AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!sws_) throw std::runtime_error("cannot convert pixel format");
-    const int cs = f->height >= 720 ? SWS_CS_ITU709 : SWS_CS_ITU601;
     sws_setColorspaceDetails(sws_, sws_getCoefficients(cs), f->color_range == AVCOL_RANGE_JPEG,
                              sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
     swBuf_.resize(static_cast<size_t>(w) * h * 4);
@@ -297,11 +330,6 @@ void FfmpegInput::emitVideo(AVFrame* f, AVStream* st) {
     }
     out.layout = PixelLayout::BGRA8;
     out.fullRange = true;
-  }
-  pace(out.ptsUs);
-  if (!wentLive_) {
-    wentLive_ = true;
-    sink_->onState(SignalState::Live, std::nullopt);
   }
   sink_->onVideo(std::move(out));
 }

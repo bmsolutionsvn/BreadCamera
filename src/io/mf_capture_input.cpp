@@ -287,7 +287,6 @@ void MfCaptureInput::runOnce() {
     f.fullRange = true;
     f.ptsUs = ts / 10;
     f.rate = rateFromRational(static_cast<int>(bestNum), static_cast<int>(bestDen));
-    f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     const UINT pitch = static_cast<UINT>(std::abs(stride));
     const BYTE* src = data;
     if (stride < 0) {  // bottom-up RGB32: row y of the picture is at data + (h-1-y)*pitch
@@ -295,16 +294,31 @@ void MfCaptureInput::runOnce() {
       for (UINT32 y = 0; y < h; ++y) std::memcpy(&flip_[static_cast<size_t>(y) * pitch], data + static_cast<size_t>(h - 1 - y) * pitch, pitch);
       src = flip_.data();
     }
-    {
-      auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, src, pitch, 0);
+    if (sink_->wantsCpuVideo()) {
+      CpuVideoFrame cf;
+      cf.data = src;
+      cf.stride = static_cast<int>(pitch);
+      cf.width = w;
+      cf.height = h;
+      cf.format = CpuPixel::BGRA;
+      cf.fullRange = true;
+      cf.ptsUs = f.ptsUs;
+      cf.rate = f.rate;
+      sink_->onCpuVideo(cf);
     }
-    buf->Unlock();
     if (!live) {
       live = true;
       sink_->onState(SignalState::Live, std::nullopt);
     }
-    sink_->onVideo(std::move(f));
+    if (sink_->wantsGpuVideo()) {
+      f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+      {
+        auto lock = gpu_.lock();
+        gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, src, pitch, 0);
+      }
+      sink_->onVideo(std::move(f));
+    }
+    buf->Unlock();
     if (!stopping_) reader->ReadSample(kVideo, 0, nullptr, nullptr, nullptr, nullptr);
   }
 }

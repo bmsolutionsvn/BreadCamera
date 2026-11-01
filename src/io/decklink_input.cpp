@@ -111,7 +111,25 @@ void DeckLinkInput::onFrame(const uint8_t* bytes, int w, int h, int rowBytes, bo
     return;
   }
   // rowBytes == w*4 means the card delivered BGRA (RGB 4:4:4 detected); else UYVY.
-  std::vector<uint8_t> bgra = rowBytes >= w * 4 ? std::vector<uint8_t>() : uyvyToBgra(bytes, w, h, rowBytes, h >= 720);
+  const bool bgraInput = rowBytes >= w * 4;
+  if (sink_->wantsCpuVideo()) {
+    CpuVideoFrame cf;
+    cf.data = bytes;
+    cf.stride = rowBytes;
+    cf.width = static_cast<uint32_t>(w);
+    cf.height = static_cast<uint32_t>(h);
+    cf.format = bgraInput ? CpuPixel::BGRA : CpuPixel::UYVY;
+    cf.fullRange = bgraInput;  // SDI UYVY is limited range
+    cf.rate = deckLinkRateFor(mode_.load());
+    sink_->onCpuVideo(cf);
+  }
+  if (!live_) {
+    live_ = true;
+    sink_->onState(SignalState::Live, std::nullopt);
+  }
+  if (!sink_->wantsGpuVideo()) return;
+
+  std::vector<uint8_t> bgra = bgraInput ? std::vector<uint8_t>() : uyvyToBgra(bytes, w, h, rowBytes, h >= 720);
   VideoFrameIn f;
   f.layout = PixelLayout::BGRA8;
   f.fullRange = true;
@@ -121,10 +139,6 @@ void DeckLinkInput::onFrame(const uint8_t* bytes, int w, int h, int rowBytes, bo
     auto lock = gpu_.lock();
     gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.empty() ? bytes : bgra.data(),
                                       static_cast<UINT>(bgra.empty() ? rowBytes : w * 4), 0);
-  }
-  if (!live_) {
-    live_ = true;
-    sink_->onState(SignalState::Live, std::nullopt);
   }
   sink_->onVideo(std::move(f));
 }

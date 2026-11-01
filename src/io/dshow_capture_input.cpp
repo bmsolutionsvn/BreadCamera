@@ -276,14 +276,25 @@ void DShowCaptureInput::runOnce(bool forceRgb32) {
     f.layout = PixelLayout::BGRA8;
     f.fullRange = true;
     f.ptsUs = 0;
-    f.tex = pool_.acquire(width_, height_, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
-    {
-      auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.data(), pitch, 0);
+    if (sink_->wantsCpuVideo()) {
+      CpuVideoFrame cf;
+      cf.data = bgra.data();
+      cf.stride = static_cast<int>(pitch);
+      cf.width = static_cast<uint32_t>(width_);
+      cf.height = static_cast<uint32_t>(height_);
+      cf.format = CpuPixel::BGRA;
+      cf.fullRange = true;
+      sink_->onCpuVideo(cf);
     }
     if (!live) {
       live = true;
       sink_->onState(SignalState::Live, std::nullopt);
+    }
+    if (!sink_->wantsGpuVideo()) continue;
+    f.tex = pool_.acquire(width_, height_, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+    {
+      auto lock = gpu_.lock();
+      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.data(), pitch, 0);
     }
     sink_->onVideo(std::move(f));
   }
