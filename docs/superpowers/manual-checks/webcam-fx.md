@@ -3,9 +3,8 @@
 Approved 2026-10-18, amended 2026-10-27 (Enhance replaces Clean up and Upscale) — not tested yet.
 
 The owner runs this on real hardware; a robot cannot judge a picture. The build PC here is an AMD
-Radeon RX 6600 with no NVIDIA card, so checks 1, 2, 3 and 6 are **human gates** and checks 4 and 5
-are the ones this PC can answer. Every automated half is already pinned by the webcam-fx tests
-(named below).
+Radeon RX 6600 with no NVIDIA card, so checks 1, 2, 3 and 6 are **human gates** and check 4 is the
+one this PC can answer. Every automated half is already pinned by the webcam-fx tests (named below).
 
 ## Checks
 
@@ -21,7 +20,8 @@ are the ones this PC can answer. Every automated half is already pinned by the w
 
 3. **Fallback on RTX.** Start BreadCamera with `nvngx_vsr.dll` moved out of the install folder:
    a resize still delivers the target size (FSR 1) and Enhance is still offered in Add effect (E9);
-   at Same size the picture passes through with the `AI clean-up only` note gone (nothing runs).
+   at Same size the picture passes through and the note becomes
+   `Same size needs an NVIDIA RTX card` (nothing runs).
    (Mid-show bypass keeping the size is pinned by the Enhance tests.)
    *Result:* ______
 
