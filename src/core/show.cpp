@@ -58,6 +58,20 @@ std::string str(const json& j, const char* key) {
   if (!j.contains(key) || !j[key].is_string()) throw ShowError(std::string("missing string '") + key + "'");
   return j[key].get<std::string>();
 }
+
+// E8: Clean up became part of Enhance. A camera that only had Clean up gets Enhance at Same size,
+// keeping the on/off state; one that also had Upscale keeps Upscale's settings. The cleanup entry
+// is dropped either way. A non-object cleanup value counts as enabled: false.
+json migrateLegacyStages(json stages) {
+  if (!stages.is_object() || !stages.contains("cleanup")) return stages;
+  const json cleanup = stages["cleanup"];
+  stages.erase("cleanup");
+  if (!stages.contains("upscale")) {
+    stages["upscale"] = json{{"enabled", cleanup.is_object() ? cleanup.value("enabled", false) : false},
+                             {"target", "native"}};
+  }
+  return stages;
+}
 }  // namespace
 
 CameraConfig* Show::findCamera(std::string_view id) {
@@ -125,7 +139,7 @@ CameraConfig cameraFromJson(const json& j) {
       if (!ids.insert(out.id).second) throw ShowError("duplicate output id " + out.id);
       c.outputs.push_back(std::move(out));
     }
-    const auto stages = j.value("stages", json::object());
+    const auto stages = migrateLegacyStages(j.value("stages", json::object()));
     if (!stages.is_object()) throw ShowError("stages must be an object");
     for (auto& [kind, params] : stages.items()) {
       try {

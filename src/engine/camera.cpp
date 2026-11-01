@@ -38,12 +38,10 @@ Camera::Camera(CameraConfig cfg, AdapterFactory& factory, GpuTools tools, StateS
       colorTimer_.emplace(*tools_.gpu);
       backgroundTimer_.emplace(*tools_.gpu);
       upscaleTimer_.emplace(*tools_.gpu);
-      cleanupTimer_.emplace(*tools_.gpu);
     } catch (const std::exception&) {
       colorTimer_.reset();
       backgroundTimer_.reset();
       upscaleTimer_.reset();
-      cleanupTimer_.reset();
     }
   }
 }
@@ -105,7 +103,6 @@ void Camera::loadStageParams() {
   const std::string target = upscaleParams_.value("target", std::string("1080"));
   upscaleTargetH_ = target == "native" ? 0u : (target == "720" ? 720u : 1080u);  // 0 = Same size (E4)
   upscaleQuality_ = vsrLevel(upscaleParams_.value("quality", std::string("high")));
-  cleanupParams_ = normalizeStageParams("cleanup", cfg_.stages.value("cleanup", nlohmann::json::object()));
   autoframeParams_ = normalizeStageParams("autoframe", cfg_.stages.value("autoframe", nlohmann::json::object()));
   if (!autoframeParams_.value("enabled", false)) {
     framer_.reset();
@@ -121,7 +118,6 @@ double Camera::stageGpuMs(const std::string& kind) const {
   if (kind == "color") return colorGpuMs_;
   if (kind == "background") return backgroundGpuMs_;
   if (kind == "upscale") return upscaleGpuMs_;
-  if (kind == "cleanup") return cleanupGpuMs_;
   return 0;
 }
 
@@ -228,18 +224,6 @@ void Camera::pollUpscaleTimer(Clock::time_point now) {
   }
 }
 
-void Camera::pollCleanupTimer(Clock::time_point now) {
-  // ponytail: the same fixed quarter-budget share per camera as Upscale; split by camera count if
-  // 8+ cameras run Clean up (RTX only, so it is zero-cost on every other PC).
-  const auto budget = projectRate().period() / 4;
-  cleanupBudget_ = budget;  // enhance() runs in beginTick, before this, and uses the last value
-  if (!cleanupTimer_) return;
-  if (auto took = cleanupTimer_->poll()) {
-    cleanupGpuMs_ = std::chrono::duration<double, std::milli>(*took).count();
-    cleanupGuard_.succeeded(*took, budget, now);
-  }
-}
-
 void Camera::startInput() {
   rateStale_.store(true);
   estimator_.reset();
@@ -313,7 +297,6 @@ void Camera::reconfigure(const CameraConfig& next) {
     backgroundGuard_ = StageGuard{};
     colorGuard_ = StageGuard{};
     upscaleGuard_ = StageGuard{};
-    cleanupGuard_ = StageGuard{};
   }
   loadStageParams();
   if (inputChanged) {
@@ -583,7 +566,6 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
 void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool previewWanted) {
   pollBackgroundTimer(now);
   pollUpscaleTimer(now);
-  pollCleanupTimer(now);
   TextureRef frame = tickFrame_;
   bool hasAlpha = false;
   TextureRef alpha;
@@ -739,11 +721,6 @@ void Camera::publishStatus() {
                               tools_.rtx != nullptr);
   }
   state_.set(path("/stages/upscale/note"), upscaleNote ? nlohmann::json(*upscaleNote) : nlohmann::json(nullptr));
-  const bool cleanupOn = cleanupParams_.value("enabled", false);
-  state_.set(path("/stages/cleanup/state"), cleanupGuard_.stateName(cleanupOn));
-  state_.set(path("/stages/cleanup/error"),
-             errorToJson(cleanupOn ? cleanupGuard_.error() : std::optional<ErrorInfo>{}));
-  if (cleanupTimer_) state_.set(path("/stages/cleanup/gpuMs"), std::round(cleanupGpuMs_ * 10.0) / 10.0);
   const bool autoOn = autoframeParams_.value("enabled", false);
   state_.set(path("/stages/autoframe/state"),
              !autoOn ? "off" : tools_.faces ? "on" : "unavailable (run scripts/fetch-sdks.ps1)");

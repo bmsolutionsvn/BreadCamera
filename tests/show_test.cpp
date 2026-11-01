@@ -84,6 +84,27 @@ TEST_CASE("Show: outputFromJson reports ShowError, not nlohmann exceptions") {
   CHECK_THROWS_AS(bc::outputFromJson(badEnabled), bc::ShowError);
 }
 
+TEST_CASE("Show: a Clean up camera loads as Enhance at Same size") {
+  // Review Focus 1: the typical 1080p webcam show, written before Enhance existed.
+  auto cam = bc::cameraFromJson(nlohmann::json::parse(R"({"id": "a", "name": "A",
+      "input": {"kind": "srt", "params": {"url": "srt://x"}},
+      "stages": {"cleanup": {"enabled": true}}})"));
+  CHECK_FALSE(cam.stages.contains("cleanup"));
+  CHECK(cam.stages["upscale"]["target"] == "native");
+  CHECK(cam.stages["upscale"]["enabled"] == true);
+  CHECK(cam.stages["upscale"]["quality"] == "high");
+}
+
+TEST_CASE("Show: Clean up and Upscale together load as the Upscale settings") {
+  // Review Focus 2: the old show keeps Enhance's own settings and loses Clean up.
+  auto cam = bc::cameraFromJson(nlohmann::json::parse(R"({"id": "a", "name": "A",
+      "input": {"kind": "srt", "params": {"url": "srt://x"}},
+      "stages": {"cleanup": {"enabled": true}, "upscale": {"enabled": false, "target": "720"}}})"));
+  CHECK_FALSE(cam.stages.contains("cleanup"));
+  CHECK(cam.stages["upscale"] ==
+        bc::normalizeStageParams("upscale", {{"enabled", false}, {"target", "720"}}));
+}
+
 TEST_CASE("Show: newId gives 8 lowercase hex chars and differs") {
   auto a = bc::newId(), b = bc::newId();
   CHECK(a.size() == 8);

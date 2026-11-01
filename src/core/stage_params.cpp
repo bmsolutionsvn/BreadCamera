@@ -53,12 +53,6 @@ std::vector<StageSchema> build() {
       enumeration("position", {"centre", "left", "right"}, {"Centre", "Left third", "Right third"}, "centre", "Position"),
       number("smoothing", 100, 1500, 50, 350, "Smoothing (ms)"),
   };
-  StageSchema cleanup{"cleanup", "Clean up",
-                      "Removes compression blockiness and webcam noise. Needs an NVIDIA RTX card.", "cleanup", {},
-                      json{{"enabled", true}}, {}};
-  cleanup.fields = {
-      simple("enabled", "bool", false, "On"),
-  };
   StageSchema upscale{"upscale", "Enhance",
                       "Sharpens and removes compression blockiness, and raises a low-resolution camera to 720p or "
                       "1080p. AI on NVIDIA RTX cards; a sharp standard upscaler on other GPUs.",
@@ -118,7 +112,7 @@ std::vector<StageSchema> build() {
       simple("color", "color", "#101418", "Colour"),
       simple("image", "path", "", "Image"),
   };
-  return {autoframe, cleanup, upscale, color, matte, background};
+  return {autoframe, upscale, color, matte, background};
 }
 
 json checkField(const StageField& f, const json& v) {

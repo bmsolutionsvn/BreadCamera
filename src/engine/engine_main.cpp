@@ -104,10 +104,11 @@ int wmain(int argc, wchar_t** argv) {
   bc::Compositor comp(*gpu, pool);
   bc::ColorGrader grader(*gpu, pool);
   bc::Upscaler up(*gpu, pool);
-  // The RTX Video SDK path (spec D4). Null on every non-NVIDIA PC, with the exact reason the UI
-  // shows on the Clean up row; a missing SDK never fails the build (spec §7.2).
+  // The RTX Video SDK path (spec D4). Null on every non-NVIDIA PC, with the reason printed once
+  // below; a missing SDK never fails the build (spec §7.2).
   std::string rtxWhy;
   auto rtx = bc::RtxVideo::create(*gpu, pool, conv, rtxWhy);
+  if (!rtx) std::fprintf(stderr, "[breadcamera] Enhance runs without RTX Video: %s\n", rtxWhy.c_str());
   // Auto frame's AI detector. A missing model or OpenCV module only costs this one stage.
   std::unique_ptr<bc::FaceDetector> faces;
 #if BC_WITH_FACE_DETECT
@@ -150,11 +151,9 @@ int wmain(int argc, wchar_t** argv) {
     bc::PreviewHub& hub;
     bc::PreviewService& previews;
     bc::ColorCalibrationService& calib;
-    bc::RtxVideo* rtx;
-    std::string cleanupWhy;
     Fx(bc::Engine& e, bc::ShowStore& s, bc::ControlServer& sv, bc::PreviewHub& h, bc::PreviewService& p,
-       bc::ColorCalibrationService& c, bc::RtxVideo* r, std::string why)
-        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c), rtx(r), cleanupWhy(std::move(why)) {}
+       bc::ColorCalibrationService& c)
+        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c) {}
     void showChanged(const bc::Show& s) override {
       engine.apply(s);
       store.scheduleSave(s);
@@ -213,14 +212,8 @@ int wmain(int argc, wchar_t** argv) {
       return {{"lutPath", r.lutPath}, {"deltaEBefore", r.deltaEBefore}, {"deltaE", r.deltaE}, {"rating", r.rating}, {"reference", r.reference}};
     }
     void forgetColor(const std::string& id) override { calib.forget(id); }
-    // Task 4: Clean up is RTX-only. When the RTX Video SDK could not start (no NVIDIA card, no SDK
-    // in this build, an old driver) the Add effect row is dimmed with this exact reason (spec D7).
-    std::string stageUnavailable(const std::string& kind) override {
-      if (kind == "cleanup") return rtx ? std::string() : cleanupWhy;
-      return "";
-    }
     void shutdown() override { g_quit = true; }
-  } fx(engine, store, server, hub, previews, calib, rtx.get(), rtxWhy);
+  } fx(engine, store, server, hub, previews, calib);
   bc::CommandRouter router(loaded.show, fx);
 
   server.setHandlers({

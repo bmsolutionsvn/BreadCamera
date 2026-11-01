@@ -41,10 +41,10 @@ TEST_CASE("stage schemas: pipeline order, labels, add-in metadata, enabled first
   auto& mode = j["fields"][1];
   CHECK(mode["key"] == "mode");
   CHECK(mode["options"].size() == mode["optionLabels"].size());
-  REQUIRE(bc::stageSchemas().size() == 6);
+  REQUIRE(bc::stageSchemas().size() == 5);
   CHECK(bc::stageSchemas()[0].kind == "autoframe");  // pipeline order: Auto frame's crop runs first
-  CHECK(bc::stageSchemas()[1].kind == "cleanup");
-  CHECK(bc::stageSchemas()[2].kind == "upscale");
+  CHECK(bc::stageSchemas()[1].kind == "upscale");
+  CHECK(bc::stageSchemas()[2].kind == "color");
   for (auto& s : bc::stageSchemas()) CHECK(s.fields.front().key == "enabled");
 }
 
@@ -61,17 +61,18 @@ TEST_CASE("Enhance schema: one effect with a target and a quality level") {
   CHECK_THROWS(bc::normalizeStageParams("upscale", {{"quality", "best"}}));
 }
 
-TEST_CASE("stage schemas: auto frame crops, then clean up and upscale, in pipeline order") {
+TEST_CASE("stage schemas: auto frame crops, then Enhance, in pipeline order") {
   std::vector<std::string> kinds;
   for (auto& s : bc::stageSchemas()) kinds.push_back(s.kind);
-  CHECK(kinds == std::vector<std::string>{"autoframe", "cleanup", "upscale", "color", "matte", "background"});
+  CHECK(kinds == std::vector<std::string>{"autoframe", "upscale", "color", "matte", "background"});
   auto up = bc::normalizeStageParams("upscale", {{"enabled", true}});
   CHECK(up["target"] == "1080");
   CHECK_THROWS(bc::normalizeStageParams("upscale", {{"target", "2160"}}));
+  CHECK_THROWS(bc::normalizeStageParams("cleanup", {}));  // Clean up is part of Enhance (E8)
 }
 
 TEST_CASE("schemaToJson: unavailable appears only when set") {
-  auto* s = bc::findStageSchema("cleanup");
+  auto* s = bc::findStageSchema("matte");
   CHECK_FALSE(bc::schemaToJson(*s).contains("unavailable"));
   CHECK(bc::schemaToJson(*s, "Needs an NVIDIA RTX card.")["unavailable"] == "Needs an NVIDIA RTX card.");
 }
@@ -88,7 +89,7 @@ TEST_CASE("colour stage: defaults, hidden LUT fields, order") {
   CHECK(c["enabled"] == false);
   CHECK(c["gamma"] == 1);
   CHECK(c["lut"] == "");
-  CHECK(bc::stageSchemas()[3].kind == "color");  // colour runs after auto frame, clean up and upscale
+  CHECK(bc::stageSchemas()[2].kind == "color");  // colour runs after auto frame and Enhance
   auto j = bc::schemaToJson(*bc::findStageSchema("color"));
   bool lutHidden = false;
   for (auto& f : j["fields"]) if (f["key"] == "lut") lutHidden = f.value("hidden", false);

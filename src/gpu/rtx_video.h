@@ -9,15 +9,16 @@
 #include "gpu/texture_pool.h"
 
 namespace bc {
-// NVIDIA RTX Video SDK (NGX VSR, spec D4): Clean up at 1× and AI Upscale, on D3D11 textures with
-// no CPU round-trip. RTX 20+ only, and only when the SDK is present (BC_WITH_RTXVIDEO); a missing
-// SDK never fails the build (spec §7.2). This wrapper is written from the SDK headers and
-// programming guide, not from the SDK's samples (spec "RTX Video SDK licence obligations").
+// NVIDIA RTX Video SDK (NGX VSR, spec D4): one AI pass at 1× (clean up) or at a larger size
+// (upscale), on D3D11 textures with no CPU round-trip. RTX 20+ only, and only when the SDK is
+// present (BC_WITH_RTXVIDEO); a missing SDK never fails the build (spec §7.2). This wrapper is
+// written from the SDK headers and programming guide, not from the SDK's samples (spec "RTX Video
+// SDK licence obligations").
 class RtxVideo {
  public:
   // Null and a plain reason when this PC cannot run it: no NVIDIA card (or WARP), no SDK in this
   // build, or NGX refusing to start (a driver older than R550). `whyNot` is one of the exact
-  // strings in the .cpp and is what Add effect shows on the Clean up row (spec D7).
+  // strings in the .cpp and is printed once at engine start.
   static std::unique_ptr<RtxVideo> create(GpuDevice& gpu, TexturePool& pool, Converter& conv, std::string& whyNot);
   ~RtxVideo();
   RtxVideo(const RtxVideo&) = delete;

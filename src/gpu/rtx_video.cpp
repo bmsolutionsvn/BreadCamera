@@ -14,7 +14,7 @@
 
 namespace bc {
 namespace {
-// The exact strings the Add effect row shows (spec D7 / D8): one per unmet prerequisite.
+// One reason per unmet prerequisite, printed once at engine start (spec D7 / D8).
 constexpr const char* kNoCard = "Needs an NVIDIA RTX card.";
 constexpr const char* kNoBuild = "This build has no NVIDIA RTX Video support.";
 constexpr const char* kOldDriver = "Needs an NVIDIA RTX card with driver R550 or later.";
@@ -83,7 +83,7 @@ std::unique_ptr<RtxVideo> RtxVideo::create(GpuDevice& gpu, TexturePool& pool, Co
     whyNot = kOldDriver;
     return nullptr;
   }
-  // One VSR feature, reused by every Clean up and Upscale call on this device.
+  // One VSR feature, reused by every Enhance pass on this device.
   auto lock = gpu.lock();
   if (NVSDK_NGX_D3D11_CreateFeature(gpu.context(), NVSDK_NGX_Feature_VSR, out->impl_->params,
                                     &out->impl_->feature) != NVSDK_NGX_Result_Success) {
