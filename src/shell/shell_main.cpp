@@ -41,7 +41,8 @@ struct App {
   ix::WebSocket ws;
   std::atomic<bool> quitting{false};
   std::thread worker;
-  int port = 47810;
+  // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47810 failed to bind).
+  int port = 38810;
   std::string token;
   std::filesystem::path exeDir;
 } g;

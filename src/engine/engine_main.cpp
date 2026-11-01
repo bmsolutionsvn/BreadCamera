@@ -64,7 +64,8 @@ void writeDiscovery(const std::filesystem::path& file, int port, const std::stri
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
-  int port = 47810;
+  // Below 44620-48715, which WSL2 mirrored networking holds on Windows (47810 failed to bind).
+  int port = 38810;
   std::string token;
   std::filesystem::path showDir = knownFolder(FOLDERID_RoamingAppData) / L"BreadCamera" / L"shows";
   std::filesystem::path discovery = knownFolder(FOLDERID_LocalAppData) / L"BreadCamera" / L"engine.json";
