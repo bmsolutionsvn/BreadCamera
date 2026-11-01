@@ -40,6 +40,40 @@ TEST_CASE("upscaleTarget: keeps aspect, rounds to even, never shrinks") {
   CHECK(big.h == 1080);
 }
 
+TEST_CASE("enhancePlan: one VSR pass, clean-only at the same size, nothing above 1080") {
+  auto p = bc::enhancePlan(640, 360, 1080, true);
+  CHECK(p.resize);
+  CHECK(p.vsr);
+  CHECK(p.want.w == 1920);
+  CHECK(p.want.h == 1080);
+  p = bc::enhancePlan(1920, 1080, 1080, true);
+  CHECK_FALSE(p.resize);
+  CHECK(p.vsr);
+  p = bc::enhancePlan(1280, 720, 0, true);  // native
+  CHECK_FALSE(p.resize);
+  CHECK(p.vsr);
+  CHECK(p.want.w == 1280);
+  p = bc::enhancePlan(3840, 2160, 0, true);
+  CHECK_FALSE(p.vsr);
+  p = bc::enhancePlan(640, 360, 1080, false);
+  CHECK(p.resize);
+  CHECK_FALSE(p.vsr);
+  CHECK(bc::vsrLevel("fast") == 1);
+  CHECK(bc::vsrLevel("balanced") == 2);
+  CHECK(bc::vsrLevel("high") == 3);
+  CHECK(bc::vsrLevel("ultra") == 4);
+}
+
+TEST_CASE("enhanceNote: exact texts") {
+  CHECK_FALSE(bc::enhanceNote(640, 360, 1080, true));
+  CHECK(*bc::enhanceNote(1920, 1080, 1080, true) == "AI clean-up only");
+  CHECK(*bc::enhanceNote(1280, 720, 0, false) == "Same size needs an NVIDIA RTX card");
+  CHECK(*bc::enhanceNote(1280, 720, 720, false) == "Input is already 720p");
+  CHECK(*bc::enhanceNote(1920, 1080, 1080, false) == "Input is already 1080p");
+  CHECK(*bc::enhanceNote(3840, 2160, 0, true) == "Input is above 1080p");
+  CHECK(*bc::enhanceNote(3840, 2160, 0, false) == "Same size needs an NVIDIA RTX card");
+}
+
 TEST_CASE("Upscaler: output is the asked size and a flat colour stays flat") {
   Rig r;
   auto in = r.conv.solid(640, 360, {0.2f, 0.4f, 0.1f, 1});

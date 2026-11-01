@@ -102,7 +102,9 @@ void Camera::loadStageParams() {
     }
   }
   upscaleParams_ = normalizeStageParams("upscale", cfg_.stages.value("upscale", nlohmann::json::object()));
-  upscaleTargetH_ = upscaleParams_.value("target", std::string("1080")) == "720" ? 720u : 1080u;
+  const std::string target = upscaleParams_.value("target", std::string("1080"));
+  upscaleTargetH_ = target == "native" ? 0u : (target == "720" ? 720u : 1080u);  // 0 = Same size (E4)
+  upscaleQuality_ = vsrLevel(upscaleParams_.value("quality", std::string("high")));
   cleanupParams_ = normalizeStageParams("cleanup", cfg_.stages.value("cleanup", nlohmann::json::object()));
   autoframeParams_ = normalizeStageParams("autoframe", cfg_.stages.value("autoframe", nlohmann::json::object()));
   if (!autoframeParams_.value("enabled", false)) {
@@ -401,58 +403,46 @@ TextureRef Camera::fittedSlate(const TextureRef& source) {
 
 TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point now) {
   if (!in) return in;
-  const bool cleanupOn = cleanupParams_.value("enabled", false);
-  const bool upscaleOn = upscaleParams_.value("enabled", false);
-  if (!cleanupOn && !upscaleOn) return in;
-  const FrameSize want =
-      upscaleOn ? upscaleTarget(in->width, in->height, upscaleTargetH_) : FrameSize{in->width, in->height};
-  const bool resize = upscaleOn && (want.w != in->width || want.h != in->height);
-  // A target not larger than the input, and no Clean up: nothing to do (D3).
-  if (!cleanupOn && !resize) {
+  if (!upscaleParams_.value("enabled", false)) return in;
+  // One VSR pass per fresh frame, at the target size or at 1× for a clean-up (E4).
+  const EnhancePlan plan = enhancePlan(in->width, in->height, upscaleTargetH_, tools_.rtx != nullptr);
+  if (!plan.resize && !plan.vsr) {
     lastEnhanced_.reset();
     return in;
   }
   // Reuse the last result on a repeat tick, as the grade does.
-  if (!fresh && lastEnhanced_ && lastEnhanced_->width == want.w && lastEnhanced_->height == want.h) {
+  if (!fresh && lastEnhanced_ && lastEnhanced_->width == plan.want.w && lastEnhanced_->height == plan.want.h) {
     return lastEnhanced_;
   }
   TextureRef frame = in;
-
-  // Clean up runs first (spec pipeline order), at 1×: RTX only. On a non-RTX PC (tools_.rtx ==
-  // nullptr) it bypasses with a readable reason and the picture passes through untouched (D7).
-  if (cleanupOn && cleanupGuard_.shouldRun(now)) {
-    if (tools_.rtx) {
-      const bool gpuTimed = cleanupTimer_.has_value();
-      if (gpuTimed) cleanupTimer_->begin();
-      const auto t0 = Clock::now();
-      try {
-        frame = tools_.rtx->run(*frame, frame->width, frame->height);
-        if (gpuTimed) {
-          cleanupTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
-        } else {
-          cleanupGuard_.succeeded(Clock::now() - t0, cleanupBudget_, now);
-        }
-      } catch (const std::exception& e) {
-        if (gpuTimed) cleanupTimer_->end();
-        cleanupGuard_.failed(e.what(), now);
-        frame = in;  // a failed Clean up passes the frame through; Upscale still runs below
+  bool vsrRan = false;
+  if (plan.vsr && upscaleGuard_.shouldRun(now)) {
+    const bool gpuTimed = upscaleTimer_.has_value();
+    if (gpuTimed) upscaleTimer_->begin();
+    const auto t0 = Clock::now();
+    try {
+      frame = tools_.rtx->run(*in, plan.want.w, plan.want.h, upscaleQuality_);
+      vsrRan = true;
+      if (gpuTimed) {
+        upscaleTimer_->end();  // the GPU time reaches the guard on a later poll (spec D14)
+      } else {
+        upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
       }
-    } else {
-      cleanupGuard_.failed(ErrorInfo{"needs-rtx", "Clean up needs an NVIDIA RTX card; it is bypassed on this PC."},
-                           now);
+    } catch (const std::exception& e) {
+      if (gpuTimed) upscaleTimer_->end();
+      upscaleGuard_.failed(e.what(), now);  // falls back below; a same-size frame passes through
+      frame = in;
     }
   }
-
-  if (resize) {
-    // Fallback chain, always at the target size (D3a): RTX (spec D4) → FSR 1 (D6) → plain fit. Not
-    // fused: Clean up and Upscale are two VSR passes until an RTX run shows the cost matters.
+  if (!vsrRan && plan.resize) {
+    // Fallback chain, always at the target size (D3a): FSR 1 (D6) → plain fit.
     bool done = false;
-    if (tools_.rtx && upscaleGuard_.shouldRun(now)) {
+    if (tools_.up && upscaleGuard_.shouldRun(now)) {
       const bool gpuTimed = upscaleTimer_.has_value();
       if (gpuTimed) upscaleTimer_->begin();
       const auto t0 = Clock::now();
       try {
-        frame = tools_.rtx->run(*frame, want.w, want.h);
+        frame = tools_.up->apply(*frame, plan.want.w, plan.want.h);
         done = true;
         if (gpuTimed) {
           upscaleTimer_->end();
@@ -461,29 +451,13 @@ TextureRef Camera::enhance(const TextureRef& in, bool fresh, Clock::time_point n
         }
       } catch (const std::exception& e) {
         if (gpuTimed) upscaleTimer_->end();
-        upscaleGuard_.failed(e.what(), now);  // fall through to FSR 1 / the fit below
+        upscaleGuard_.failed(e.what(), now);
+        frame = tools_.conv.fit(*frame, plan.want.w, plan.want.h);  // bypass keeps the target size (D3a)
+        done = true;
       }
     }
     if (!done) {
-      if (tools_.up && upscaleGuard_.shouldRun(now)) {
-        const bool gpuTimed = upscaleTimer_.has_value();
-        if (gpuTimed) upscaleTimer_->begin();
-        const auto t0 = Clock::now();
-        try {
-          frame = tools_.up->apply(*frame, want.w, want.h);
-          if (gpuTimed) {
-            upscaleTimer_->end();
-          } else {
-            upscaleGuard_.succeeded(Clock::now() - t0, upscaleBudget_, now);
-          }
-        } catch (const std::exception& e) {
-          if (gpuTimed) upscaleTimer_->end();
-          upscaleGuard_.failed(e.what(), now);
-          frame = tools_.conv.fit(*frame, want.w, want.h);  // bypass keeps the target size (D3a)
-        }
-      } else {
-        frame = tools_.conv.fit(*frame, want.w, want.h);  // no RTX/FSR, or bypassed: fit (D3a)
-      }
+      frame = tools_.conv.fit(*frame, plan.want.w, plan.want.h);  // no FSR, or bypassed: fit (D3a)
     }
   }
   lastEnhanced_ = frame;
@@ -522,14 +496,15 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   }
   // The camera's own size is the *enhanced* size: the target size derived from the last input, or
   // the target's 16:9 fallback before any frame has been seen (D2/D3a). Updating lastSize_ here
-  // makes the slate fit to the target size too, so Upscale never has to resize the slate.
+  // makes the slate fit to the target size too, so Enhance never has to resize the slate.
   const bool upscaleOn = upscaleParams_.value("enabled", false);
   if (lastConverted_) {
     const FrameSize s = upscaleOn ? upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_)
                                   : FrameSize{lastConverted_->width, lastConverted_->height};
     lastSize_.w = s.w;
     lastSize_.h = s.h;
-  } else if (upscaleOn && !sawFrame_) {
+  } else if (upscaleOn && upscaleTargetH_ != 0 && !sawFrame_) {
+    // Same size has no target size to guess before the first frame; the slate keeps its own.
     lastSize_.w = upscaleTargetH_ * 16 / 9;
     lastSize_.h = upscaleTargetH_;
   }
@@ -760,10 +735,8 @@ void Camera::publishStatus() {
   if (upscaleTimer_) state_.set(path("/stages/upscale/gpuMs"), std::round(upscaleGpuMs_ * 10.0) / 10.0);
   std::optional<std::string> upscaleNote;
   if (upscaleOn && lastConverted_) {
-    const FrameSize want = upscaleTarget(lastConverted_->width, lastConverted_->height, upscaleTargetH_);
-    if (want.w == lastConverted_->width && want.h == lastConverted_->height) {
-      upscaleNote = upscaleTargetH_ == 720 ? "Input is already 720p" : "Input is already 1080p";
-    }
+    upscaleNote = enhanceNote(lastConverted_->width, lastConverted_->height, upscaleTargetH_,
+                              tools_.rtx != nullptr);
   }
   state_.set(path("/stages/upscale/note"), upscaleNote ? nlohmann::json(*upscaleNote) : nlohmann::json(nullptr));
   const bool cleanupOn = cleanupParams_.value("enabled", false);

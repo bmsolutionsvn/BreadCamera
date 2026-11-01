@@ -236,7 +236,8 @@ class Camera final : public InputSink {
   AutoFramer framer_;
   std::optional<std::chrono::steady_clock::time_point> lastFramerAt_;
   uint64_t framerTick_ = 0;
-  uint32_t upscaleTargetH_ = 1080;  // the Upscale target height: 720 or 1080 (spec D2)
+  uint32_t upscaleTargetH_ = 1080;  // Enhance's target height: 0 = Same size (native), else 720 or 1080 (E4)
+  int upscaleQuality_ = 3;          // the VSR level, 1..4 (E3)
   bool sawFrame_ = false;           // a frame has been converted at least once (the slate fallback)
   std::chrono::nanoseconds upscaleBudget_{4000000};  // sched.rate().period() / 4, for the CPU-fit path
   std::chrono::nanoseconds cleanupBudget_{4000000};  // sched.rate().period() / 4, for the RTX path

@@ -180,14 +180,34 @@ TEST_CASE("Camera: Upscale to 720p on a 1280x720 input changes nothing and says 
   CHECK(r.at("/cameras/a/stages/upscale/note") == "Input is already 720p");
 }
 
-// Review Focus 5: a show from an AMD PC that already has Clean up on a camera. tools_.rtx is null
-// (no NVIDIA card), so the stage bypasses with a readable reason and the picture still flows.
-TEST_CASE("Camera: Clean up without an RTX card is bypassed with a readable error") {
+// Review Focus 5: a webcam that renegotiates from 1920x1080 to 640x360 mid-show with Enhance 1080p
+// switches from clean-only to resize without re-opening outputs.
+TEST_CASE("Camera: Enhance follows a webcam that drops from 1080p to 360p") {
+  Rig r;
+  bc::Show show;
+  show.cameras.push_back(cam("a", {{"enabled", true}, {"target", "1080"}}, {{"width", 1920}, {"height", 1080}}));
+  r.engine.apply(show);
+  r.engine.start();
+  std::this_thread::sleep_for(500ms);
+  REQUIRE(r.factory.output("o-a")->seen().back().width == 1920);
+  const int opens = r.factory.output("o-a")->opens.load();
+
+  r.factory.input("a")->width = 640;
+  r.factory.input("a")->height = 360;
+  std::this_thread::sleep_for(500ms);
+  auto seen = r.factory.output("o-a")->seen();
+  CHECK(seen.back().width == 1920);
+  REQUIRE(r.factory.output("o-a")->lastImage() != nullptr);
+  CHECK(r.factory.output("o-a")->lastImage()->height == 1080);
+  CHECK(r.factory.output("o-a")->opens.load() == opens);  // no output re-opens
+}
+
+// E7: at Same size with no RTX card the picture passes through unchanged and the note says why.
+TEST_CASE("Camera: Enhance at Same size without an RTX card passes the picture through and says why") {
   Rig r;
   bc::StateStore state;
   bc::test::FakeFactory factory{r.conv};
-  bc::CameraConfig cfg = cam("a", json::object());  // no Upscale; Clean up only
-  cfg.stages["cleanup"] = bc::normalizeStageParams("cleanup", {{"enabled", true}});
+  bc::CameraConfig cfg = cam("a", {{"enabled", true}, {"target", "native"}}, {{"width", 640}, {"height", 360}});
   cfg.outputs.clear();
   bc::Camera camera(cfg, factory,
                     bc::GpuTools{.conv = r.conv, .comp = r.comp, .grader = r.grader, .up = &r.up, .gpu = r.gpu.get()},
@@ -202,9 +222,8 @@ TEST_CASE("Camera: Clean up without an RTX card is bypassed with a readable erro
   }
   camera.publishStatus();
   auto s = state.snapshot();
-  CHECK(s.at(json::json_pointer("/cameras/a/stages/cleanup/state")) == "bypassed");
-  CHECK(s.at(json::json_pointer("/cameras/a/stages/cleanup/error/code")) == "needs-rtx");
-  // Nothing crashes and frames keep flowing at the input size (Clean up is 1× and never resizes).
+  CHECK(s.at(json::json_pointer("/cameras/a/stages/upscale/state")) == "active");
+  CHECK(s.at(json::json_pointer("/cameras/a/stages/upscale/note")) == "Same size needs an NVIDIA RTX card");
   REQUIRE(camera.lastFrame() != nullptr);
   CHECK(camera.lastFrame()->width == 640);
   CHECK(camera.lastFrame()->height == 360);

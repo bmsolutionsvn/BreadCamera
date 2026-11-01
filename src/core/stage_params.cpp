@@ -59,13 +59,15 @@ std::vector<StageSchema> build() {
   cleanup.fields = {
       simple("enabled", "bool", false, "On"),
   };
-  StageSchema upscale{"upscale", "Upscale",
-                      "Raises a low-resolution camera to 720p or 1080p. AI on NVIDIA RTX cards; a sharp standard "
-                      "upscaler on other GPUs.",
+  StageSchema upscale{"upscale", "Enhance",
+                      "Sharpens and removes compression blockiness, and raises a low-resolution camera to 720p or "
+                      "1080p. AI on NVIDIA RTX cards; a sharp standard upscaler on other GPUs.",
                       "upscale", {}, json{{"enabled", true}, {"target", "1080"}}, {}};
   upscale.fields = {
       simple("enabled", "bool", false, "On"),
-      enumeration("target", {"720", "1080"}, {"720p", "1080p"}, "1080", "Target"),
+      enumeration("target", {"native", "720", "1080"}, {"Same size", "720p", "1080p"}, "1080", "Target"),
+      enumeration("quality", {"fast", "balanced", "high", "ultra"}, {"Fast", "Balanced", "High", "Ultra"}, "high",
+                  "Quality"),
   };
   StageSchema color{"color", "Colour",
                     "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.",

@@ -48,6 +48,19 @@ TEST_CASE("stage schemas: pipeline order, labels, add-in metadata, enabled first
   for (auto& s : bc::stageSchemas()) CHECK(s.fields.front().key == "enabled");
 }
 
+TEST_CASE("Enhance schema: one effect with a target and a quality level") {
+  auto j = bc::schemaToJson(*bc::findStageSchema("upscale"));
+  CHECK(j["label"] == "Enhance");
+  CHECK(j["icon"] == "upscale");
+  auto p = bc::normalizeStageParams("upscale", {{"enabled", true}});
+  CHECK(p["target"] == "1080");
+  CHECK(p["quality"] == "high");
+  auto both = bc::normalizeStageParams("upscale", {{"target", "native"}, {"quality", "ultra"}});
+  CHECK(both["target"] == "native");
+  CHECK(both["quality"] == "ultra");
+  CHECK_THROWS(bc::normalizeStageParams("upscale", {{"quality", "best"}}));
+}
+
 TEST_CASE("stage schemas: auto frame crops, then clean up and upscale, in pipeline order") {
   std::vector<std::string> kinds;
   for (auto& s : bc::stageSchemas()) kinds.push_back(s.kind);
