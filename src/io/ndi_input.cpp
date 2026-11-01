@@ -67,7 +67,6 @@ void NdiInput::run() {
         f.fullRange = true;
         f.ptsUs = v.timestamp == NDIlib_recv_timestamp_undefined ? 0 : v.timestamp / 10;
         f.rate = rateFromRational(v.frame_rate_N, v.frame_rate_D);
-        f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
         if (v.line_stride_in_bytes < 0) {  // bottom-up source; we did not ask for the _flipped format
           if (!flipReported) {
             flipReported = true;
@@ -77,19 +76,34 @@ void NdiInput::run() {
           NDIlib_recv_free_video_v2(recv, &v);
           break;
         }
-        {
-          // NDI: stride 0 means tightly packed (sizeof(one pixel) * xres).
-          const UINT pitch = v.line_stride_in_bytes > 0 ? static_cast<UINT>(v.line_stride_in_bytes) : w * 4;
-          auto lock = gpu_.lock();
-          gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.p_data, pitch, 0);
+        // NDI: stride 0 means tightly packed (sizeof(one pixel) * xres).
+        const UINT pitch = v.line_stride_in_bytes > 0 ? static_cast<UINT>(v.line_stride_in_bytes) : w * 4;
+        if (sink_->wantsCpuVideo()) {
+          CpuVideoFrame cf;
+          cf.data = static_cast<const uint8_t*>(v.p_data);
+          cf.stride = static_cast<int>(pitch);
+          cf.width = w;
+          cf.height = h;
+          cf.format = CpuPixel::BGRA;
+          cf.fullRange = true;
+          cf.ptsUs = f.ptsUs;
+          cf.rate = f.rate;
+          sink_->onCpuVideo(cf);
         }
-        NDIlib_recv_free_video_v2(recv, &v);
         lastVideo = Clock::now();
         if (!live) {
           live = true;
           sink_->onState(SignalState::Live, std::nullopt);
         }
-        sink_->onVideo(std::move(f));
+        if (sink_->wantsGpuVideo()) {
+          f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+          {
+            auto lock = gpu_.lock();
+            gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.p_data, pitch, 0);
+          }
+          sink_->onVideo(std::move(f));
+        }
+        NDIlib_recv_free_video_v2(recv, &v);
         break;
       }
       case NDIlib_frame_type_audio: {

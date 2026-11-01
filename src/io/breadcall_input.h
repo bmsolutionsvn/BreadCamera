@@ -26,7 +26,8 @@ namespace bc {
 // shared lkc::Client as a hidden receiver (R5: receive only), subscribes to
 // `guest_<slot>`, decodes the guest's H.264 to BGRA8 and Opus to 48 kHz stereo
 // float with the FFmpeg BreadCamera already links, and feeds the InputSink
-// (spec D4/D5).
+// (spec D4/D5). GPU only: it has no CPU-frame tap, so BreadReplay v1 cannot
+// record it.
 //
 // Threading: one worker thread owns the client lifecycle (join, retry with
 // backoff) and the codecs. The lkc callbacks run on the client's worker and only
