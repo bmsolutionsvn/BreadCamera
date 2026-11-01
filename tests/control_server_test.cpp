@@ -25,14 +25,14 @@ TEST_CASE("tokenFromUri and tokenMatches") {
 
 TEST_CASE("ControlServer: refuses a wrong token and answers a right one") {
   ix::initNetSystem();
-  bc::ControlServer server(47820, "goodtoken");
+  bc::ControlServer server(38830, "goodtoken");
   std::atomic<int> opens{0};
   server.setHandlers({[&](const bc::ClientId&) { ++opens; }, [](const bc::ClientId&) {},
                       [](const bc::ClientId&, const std::string& text) { return "echo:" + text; }});
   server.start();
 
   ix::WebSocket bad;
-  bad.setUrl("ws://127.0.0.1:47820/?token=wrong");
+  bad.setUrl("ws://127.0.0.1:38830/?token=wrong");
   bad.disableAutomaticReconnection();
   std::atomic<int> closeCode{0};
   bad.setOnMessageCallback([&](const ix::WebSocketMessagePtr& m) {
@@ -45,7 +45,7 @@ TEST_CASE("ControlServer: refuses a wrong token and answers a right one") {
   CHECK(opens == 0);
 
   ix::WebSocket good;
-  good.setUrl("ws://127.0.0.1:47820/?token=goodtoken");
+  good.setUrl("ws://127.0.0.1:38830/?token=goodtoken");
   good.disableAutomaticReconnection();
   std::atomic<bool> open{false};
   std::string reply;
@@ -96,13 +96,13 @@ TEST_CASE("ControlServer: hostile messages over the socket get error replies, ne
     void shutdown() override {}
   } fx;
   bc::CommandRouter router({}, fx);
-  bc::ControlServer server(47821, "wiretoken");
+  bc::ControlServer server(38831, "wiretoken");
   server.setHandlers({[](const bc::ClientId&) {}, [](const bc::ClientId&) {},
                       [&](const bc::ClientId& id, const std::string& text) { return router.handle(id, text).dump(); }});
   server.start();
 
   ix::WebSocket ws;
-  ws.setUrl("ws://127.0.0.1:47821/?token=wiretoken");
+  ws.setUrl("ws://127.0.0.1:38831/?token=wiretoken");
   ws.disableAutomaticReconnection();
   std::mutex m;
   std::vector<std::string> replies;
