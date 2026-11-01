@@ -106,10 +106,11 @@ TextureRef Converter::toLinear(const GpuTexture& src, PixelLayout layout, bool f
   return out;
 }
 
-TextureRef Converter::toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH) {
+TextureRef Converter::toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH, bool swapRb) {
   auto out = pool_.acquire(outW, outH, DXGI_FORMAT_R8G8B8A8_UNORM,
                            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
   Params p{};
+  p.row0[0] = swapRb ? 0.0f : 1.0f;
   p.outW = outW;
   p.outH = outH;
   p.srcW = linear.width;

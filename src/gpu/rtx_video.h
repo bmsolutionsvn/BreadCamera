@@ -23,8 +23,9 @@ class RtxVideo {
   RtxVideo(const RtxVideo&) = delete;
   RtxVideo& operator=(const RtxVideo&) = delete;
   // linear RGBA16F in and out, at exactly w × h. w × h equal to the input runs VSR at 1×
-  // (Clean up); larger runs super resolution (Upscale). Throws std::runtime_error on NGX failure.
-  TextureRef run(const GpuTexture& linear, uint32_t w, uint32_t h);
+  // (clean-up); larger runs super resolution. `quality` is the VSR level, 1 (fastest) to
+  // 4 (best), clamped. Throws std::runtime_error on NGX failure.
+  TextureRef run(const GpuTexture& linear, uint32_t w, uint32_t h, int quality = 3);
 
  private:
   RtxVideo(GpuDevice& gpu, TexturePool& pool, Converter& conv);

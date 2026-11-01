@@ -28,7 +28,9 @@ class Converter {
   Converter(GpuDevice& gpu, TexturePool& pool);
 
   TextureRef toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange);
-  TextureRef toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH);
+  // R8G8B8A8_UNORM holding BGRA bytes, for CPU readback. swapRb = false keeps true RGBA order
+  // for GPU consumers that sample it as RGBA (the RTX Video path).
+  TextureRef toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH, bool swapRb = true);
   TextureRef fit(const GpuTexture& linear, uint32_t w, uint32_t h);  // letterbox to w x h, aspect kept
   // Auto frame: samples the normalized rect (x, y, w, h) into a texture of the source's size.
   TextureRef crop(const GpuTexture& linear, float x, float y, float w, float h);

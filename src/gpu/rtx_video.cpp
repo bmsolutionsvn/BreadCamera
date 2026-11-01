@@ -1,5 +1,6 @@
 #include "gpu/rtx_video.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -39,6 +40,9 @@ struct RtxVideo::Impl {
 #if BC_WITH_RTXVIDEO
   NVSDK_NGX_Parameter* params = nullptr;
   NVSDK_NGX_Handle* feature = nullptr;
+  // VSR's own input/output textures, kept while the size holds. NGX runs VSR through CUDA, and a
+  // new D3D11 resource every call costs a CUDA interop registration; a pool texture is not stable.
+  TextureRef in, out;
 #endif
 };
 
@@ -90,19 +94,31 @@ std::unique_ptr<RtxVideo> RtxVideo::create(GpuDevice& gpu, TexturePool& pool, Co
 #endif
 }
 
-TextureRef RtxVideo::run(const GpuTexture& linear, uint32_t w, uint32_t h) {
+TextureRef RtxVideo::run(const GpuTexture& linear, uint32_t w, uint32_t h, int quality) {
 #if !BC_WITH_RTXVIDEO
   (void)linear;
   (void)w;
   (void)h;
+  (void)quality;
   throw std::runtime_error("no NVIDIA RTX Video support in this build");
 #else
-  // 8-bit BGRA both ways, as VSR expects; the pipeline's linear frames are converted around it.
-  auto in = conv_.toBgra8(linear, linear.width, linear.height);
-  auto out = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM,
-                           D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+  // 8-bit both ways, as VSR expects; the pipeline's linear frames are converted around it. The
+  // input is true RGBA: VSR samples the R8G8B8A8 texture by its format, so the readback BGRA byte
+  // swap would come back as red/blue swapped. The B8G8R8A8 output is read back by its format too.
+  auto conv = conv_.toBgra8(linear, linear.width, linear.height, /*swapRb=*/false);
+  auto& in = impl_->in;
+  auto& out = impl_->out;
+  // shortcut: one in/out pair per device; a camera whose size changes re-creates it once.
+  if (!in || in->width != conv->width || in->height != conv->height || in->format != conv->format) {
+    in = pool_.acquire(conv->width, conv->height, conv->format, D3D11_BIND_SHADER_RESOURCE);
+  }
+  if (!out || out->width != w || out->height != h) {
+    out = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM,
+                        D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+  }
   auto lock = gpu_.lock();  // the calls below are one immediate-context sequence
   auto* ctx = gpu_.context();
+  ctx->CopyResource(in->tex.Get(), conv->tex.Get());
   // RTX Video SDK 1.1: the helper fills the parameter block from the eval struct, so the
   // sub-rects and the quality are the only inputs; Width/Height on the params are not used.
   NVSDK_NGX_D3D11_VSR_Eval_Params eval{};
@@ -112,7 +128,7 @@ TextureRef RtxVideo::run(const GpuTexture& linear, uint32_t w, uint32_t h) {
   eval.InputSubrectSize.Height = linear.height;
   eval.OutputSubrectSize.Width = w;
   eval.OutputSubrectSize.Height = h;
-  eval.QualityLevel = NVSDK_NGX_VSR_Quality_High;  // spec D4
+  eval.QualityLevel = static_cast<NVSDK_NGX_VSR_QualityLevel>(std::clamp(quality, 1, 4));
   const NVSDK_NGX_Result rc = NGX_D3D11_EVALUATE_VSR_EXT(ctx, impl_->feature, impl_->params, &eval);
   if (rc != NVSDK_NGX_Result_Success) {
     throw std::runtime_error("NGX VSR evaluate failed (" + std::to_string(static_cast<int>(rc)) + ")");
