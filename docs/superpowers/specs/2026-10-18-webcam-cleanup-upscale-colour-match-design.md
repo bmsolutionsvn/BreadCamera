@@ -1,6 +1,8 @@
 # BreadCamera — webcam clean-up, upscale and colour match — Design
 
-Date: 2026-10-18. Status: approved by the owner (2026-10-18).
+Date: 2026-10-18. Status: approved by the owner (2026-10-18). Amended 2026-10-27: Clean up and
+Upscale are one effect, **Enhance** — see "Amendment 2026-10-27 — Enhance" at the end, which
+supersedes D1, D4, D7 and the Clean up parts of Goals, Pipeline order and Testing below.
 Builds the top of the approved add-in roadmap (spec §10.1 items 1–2) and lifts "continuous colour
 matching" out of §10's out-of-scope list for remote cameras. Two parts, built in order: **A** (Clean up
 and Upscale), then **B** (colour Match).
@@ -147,3 +149,19 @@ GitHub, which makes §4b and §4e the ones that bite.
   (a few seconds) and the clamp ranges, tuned on real webcam footage.
 - How Match's skin statistics reach the CPU (a tiny async readback is expected).
 - The Inspector layout for the Colour effect's two modes and the Match to picker.
+
+## Amendment 2026-10-27 — Enhance
+
+Owner decisions, binding over the sections above. Clean up and Upscale are replaced by one effect,
+**Enhance**; the sections that describe them separately (Goals, Pipeline order, D1, D4, D7, Testing,
+Left to the builder) are superseded where they disagree.
+
+- **E1.** One effect. Kind `upscale` (unchanged), label `Enhance`, icon `upscale`. Description: `Sharpens and removes compression blockiness, and raises a low-resolution camera to 720p or 1080p. AI on NVIDIA RTX cards; a sharp standard upscaler on other GPUs.`
+- **E2.** Fields, in order: `enabled` (bool, default false, "On"); `target` enum `native | 720 | 1080`, labels `Same size | 720p | 1080p`, default `1080`, label "Target"; `quality` enum `fast | balanced | high | ultra`, labels `Fast | Balanced | High | Ultra`, default `high`, label "Quality". `onAdd` stays `{enabled: true, target: "1080"}`.
+- **E3.** Quality → `NVSDK_NGX_VSR_QualityLevel`: fast 1, balanced 2, high 3, ultra 4 (`high` is today's fixed level, so existing shows look the same).
+- **E4.** One VSR pass per fresh frame. Output size `want` = input size for `native`, else `upscaleTarget(inW, inH, 720|1080)`. VSR runs when an RTX device exists and either `want` differs from the input (resize) or (`want` equals the input and input height ≤ **1080**). Above 1080 lines and no resize, nothing runs (a 4K clean-up pass would overrun the budget).
+- **E5.** Fallbacks: a resize without RTX, or after VSR fails/bypasses, goes FSR 1 → plain fit, always at `want` (spec D3a, unchanged). A same-size frame without RTX, or after VSR fails/bypasses, passes through unchanged.
+- **E6.** One guard (`upscaleGuard_`), one GPU timer (`upscaleTimer_`), one budget (`period / 4`) for the whole effect. State stays at `/cameras/<id>/stages/upscale/{state,error,gpuMs,note}`.
+- **E7.** Note texts (exact): resize → none. Same size and VSR runs → `AI clean-up only`. `native` without RTX → `Same size needs an NVIDIA RTX card`. 720/1080 target, input already at/above it, no RTX → `Input is already 720p` / `Input is already 1080p` (unchanged). Input above 1080 lines, no resize, RTX present → `Input is above 1080p`. Without RTX the two no-RTX texts win (a 4K `native` camera on AMD says `Same size needs an NVIDIA RTX card`).
+- **E8.** Migration on show load: a camera with `cleanup` and no `upscale` gets `upscale = {enabled: <cleanup.enabled>, target: "native"}`; a camera with both keeps `upscale` as it is. `cleanup` is then dropped. `schemaVersion` stays 1. `setStage`/`removeStage` with `cleanup` after this change fail as an unknown stage.
+- **E9.** Enhance is never "unavailable" (FSR covers non-NVIDIA GPUs), so the RTX reason no longer reaches Add effect.

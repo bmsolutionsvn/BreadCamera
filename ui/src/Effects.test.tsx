@@ -17,14 +17,30 @@ const schemas = [
   },
   {
     kind: 'upscale',
-    label: 'Upscale',
-    description: 'Raises a low-resolution camera to 720p or 1080p.',
+    label: 'Enhance',
+    description:
+      'Sharpens and removes compression blockiness, and raises a low-resolution camera to 720p or 1080p. AI on NVIDIA RTX cards; a sharp standard upscaler on other GPUs.',
     icon: 'upscale',
     requires: [],
     onAdd: { enabled: true, target: '1080' },
     fields: [
       { key: 'enabled', type: 'bool', default: false, label: 'On' },
-      { key: 'target', type: 'enum', default: '1080', label: 'Target', options: ['720', '1080'], optionLabels: ['720p', '1080p'] },
+      {
+        key: 'target',
+        type: 'enum',
+        default: '1080',
+        label: 'Target',
+        options: ['native', '720', '1080'],
+        optionLabels: ['Same size', '720p', '1080p'],
+      },
+      {
+        key: 'quality',
+        type: 'enum',
+        default: 'high',
+        label: 'Quality',
+        options: ['fast', 'balanced', 'high', 'ultra'],
+        optionLabels: ['Fast', 'Balanced', 'High', 'Ultra'],
+      },
     ],
   },
   {
@@ -165,13 +181,14 @@ test('shows an unavailable effect dimmed, not selectable, with its reason readab
   expect(reason.closest('.ic, b, p')).toBeNull();
 });
 
-test('shows the GPU time and the upscale note', async () => {
+test('shows the GPU time and the Enhance note', async () => {
   const insp = await setup({
     wait: 'RUNNING',
-    show: { ...show, cameras: [{ ...show.cameras[0], stages: { upscale: { enabled: true, target: '1080' } } }] },
+    show: { ...show, cameras: [{ ...show.cameras[0], stages: { upscale: { enabled: true, target: '1080', quality: 'high' } } }] },
     state: { cameras: { a: { ...state.cameras.a, stages: { upscale: { state: 'active', error: null, gpuMs: 3.24, note: 'Input is already 1080p' } } } } },
   });
-  const group = within(insp).getByRole('group', { name: 'Upscale' });
+  const group = within(insp).getByRole('group', { name: 'Enhance' });
+  expect(within(group).getByLabelText('Quality')).toHaveValue('high');
   expect(within(group).getByText('3.2 ms')).toBeInTheDocument();
   expect(within(group).getByText('Input is already 1080p')).toBeInTheDocument();
 });
