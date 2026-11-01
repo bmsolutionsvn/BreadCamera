@@ -165,6 +165,17 @@ TEST_CASE("Converter: solid fill and BGRA upload round trips") {
   checkAll(img, 10, 120, 230, 2);
 }
 
+TEST_CASE("Converter: toBgra8 without the swap keeps RGBA order") {
+  Gpu g;
+  // linear red; readback() returns the texture's bytes as stored
+  auto red = g.conv.solid(4, 4, {1, 0, 0, 1});
+  auto img = g.conv.readback(*g.conv.toBgra8(*red, 4, 4, /*swapRb=*/false));
+  CHECK(img.bgra[0] == 255);  // byte 0 is R in RGBA order
+  CHECK(img.bgra[2] == 0);
+  auto def = g.conv.readback(*g.conv.toBgra8(*red, 4, 4));
+  CHECK(def.bgra[2] == 255);  // default stays BGRA: byte 2 is R
+}
+
 TEST_CASE("loadImageBgra: a missing file throws") {
   CHECK_THROWS(bc::loadImageBgra("C:/definitely/not/here.png"));
 }

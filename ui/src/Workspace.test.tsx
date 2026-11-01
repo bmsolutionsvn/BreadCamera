@@ -78,7 +78,7 @@ test('names the heaviest stage when budget overruns', () => {
   );
   const bar = screen.getByLabelText('Status bar');
   expect(within(bar).getByText(/budget overruns/)).toBeInTheDocument();
-  expect(within(bar).getByText(/heaviest: CAM 2 Upscale 6\.2 ms/)).toBeInTheDocument();
+  expect(within(bar).getByText(/heaviest: CAM 2 Enhance 6\.2 ms/)).toBeInTheDocument();
 });
 
 test('the first camera is selected; arrow keys and clicks move the Inspector', () => {

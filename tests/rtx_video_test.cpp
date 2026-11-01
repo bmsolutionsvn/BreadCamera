@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <tuple>
 
 #include "gpu/converter.h"
 #include "gpu/device.h"
@@ -53,4 +54,18 @@ TEST_CASE("RtxVideo: upscales 640x360 to 1920x1080 and cleans at 1x" BC_REQUIRES
   auto same = rtx->run(*in, 640, 360);  // VSR at 1× is Clean up
   CHECK(same->width == 640);
   CHECK(same->height == 360);
+}
+
+TEST_CASE("RtxVideo: a red frame keeps its channels through every quality level" BC_REQUIRES(bc::test::Req::RtxVideo)) {
+  // The 0.2.8 build fixed a red/blue swap through VSR: the input must be true RGBA, not BGRA bytes.
+  Rig r;
+  std::string why;
+  auto rtx = bc::RtxVideo::create(*r.gpu, r.pool, r.conv, why);
+  REQUIRE(rtx != nullptr);
+  auto in = r.conv.solid(640, 360, {0.6f, 0.1f, 0.05f, 1});
+  const auto expected = centreRgb(r.conv, in);
+  for (const auto& [w, h, q] : {std::tuple{640u, 360u, 4}, std::tuple{1920u, 1080u, 1}}) {
+    const auto got = centreRgb(r.conv, rtx->run(*in, w, h, static_cast<int>(q)));
+    for (int i = 0; i < 3; ++i) CHECK(std::abs(got[i] - expected[i]) <= 3);
+  }
 }

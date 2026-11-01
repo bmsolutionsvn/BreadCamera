@@ -4,8 +4,7 @@ import { rateLabel } from '../state/labels';
 
 // The engine's stage labels, mirrored for the overrun line; an unknown kind falls back to its key.
 const STAGE_LABEL: Record<string, string> = {
-  cleanup: 'Clean up',
-  upscale: 'Upscale',
+  upscale: 'Enhance',
   color: 'Colour',
   matte: 'Background removal',
   background: 'Background',

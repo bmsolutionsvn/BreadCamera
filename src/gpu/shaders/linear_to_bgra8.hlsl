@@ -1,5 +1,5 @@
 Texture2D<float4> gSrc : register(t0);
-RWTexture2D<unorm float4> gOut : register(u0);  // R8G8B8A8_UNORM, swizzled to BGRA bytes
+RWTexture2D<unorm float4> gOut : register(u0);  // R8G8B8A8_UNORM; gRow0.x picks BGRA or RGBA bytes
 SamplerState gLinear : register(s0);
 cbuffer Params : register(b0) {
   float4 gRow0;
@@ -15,5 +15,5 @@ void main(uint3 id : SV_DispatchThreadID) {
   float2 uv = (float2(id.xy) + 0.5) / float2(gOutSize);
   float4 c = gSrc.SampleLevel(gLinear, uv, 0);
   float3 g = pow(saturate(c.rgb), 1.0 / 2.4);
-  gOut[id.xy] = float4(g.b, g.g, g.r, saturate(c.a));
+  gOut[id.xy] = float4(gRow0.x > 0.5 ? g : g.bgr, saturate(c.a));
 }

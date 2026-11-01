@@ -53,19 +53,15 @@ std::vector<StageSchema> build() {
       enumeration("position", {"centre", "left", "right"}, {"Centre", "Left third", "Right third"}, "centre", "Position"),
       number("smoothing", 100, 1500, 50, 350, "Smoothing (ms)"),
   };
-  StageSchema cleanup{"cleanup", "Clean up",
-                      "Removes compression blockiness and webcam noise. Needs an NVIDIA RTX card.", "cleanup", {},
-                      json{{"enabled", true}}, {}};
-  cleanup.fields = {
-      simple("enabled", "bool", false, "On"),
-  };
-  StageSchema upscale{"upscale", "Upscale",
-                      "Raises a low-resolution camera to 720p or 1080p. AI on NVIDIA RTX cards; a sharp standard "
-                      "upscaler on other GPUs.",
+  StageSchema upscale{"upscale", "Enhance",
+                      "Sharpens and removes compression blockiness, and raises a low-resolution camera to 720p or "
+                      "1080p. AI on NVIDIA RTX cards; a sharp standard upscaler on other GPUs.",
                       "upscale", {}, json{{"enabled", true}, {"target", "1080"}}, {}};
   upscale.fields = {
       simple("enabled", "bool", false, "On"),
-      enumeration("target", {"720", "1080"}, {"720p", "1080p"}, "1080", "Target"),
+      enumeration("target", {"native", "720", "1080"}, {"Same size", "720p", "1080p"}, "1080", "Target"),
+      enumeration("quality", {"fast", "balanced", "high", "ultra"}, {"Fast", "Balanced", "High", "Ultra"}, "high",
+                  "Quality"),
   };
   StageSchema color{"color", "Colour",
                     "Calibrate this camera once against a colour chart (printed card or tablet); the correction is then locked.",
@@ -116,7 +112,7 @@ std::vector<StageSchema> build() {
       simple("color", "color", "#101418", "Colour"),
       simple("image", "path", "", "Image"),
   };
-  return {autoframe, cleanup, upscale, color, matte, background};
+  return {autoframe, upscale, color, matte, background};
 }
 
 json checkField(const StageField& f, const json& v) {
