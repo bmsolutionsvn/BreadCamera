@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 
 #include "omthx/omthx.h"
 
@@ -102,10 +103,23 @@ void OmtInput::run() {
               sink_->onState(SignalState::Live, std::nullopt);
             }
             if (sink_->wantsGpuVideo()) {
-              f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+              // Map/WRITE_DISCARD on a DYNAMIC texture, not UpdateSubresource on a DEFAULT one: the
+              // runtime keeps one private copy of each UpdateSubresource upload until the context is
+              // submitted (a Flush made the growth stop), and the engine never presents.
+              f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE,
+                                    D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
               {
                 auto lock = gpu_.lock();
-                gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.bgra.data(), w * 4, 0);
+                D3D11_MAPPED_SUBRESOURCE m{};
+                if (FAILED(gpu_.context()->Map(f.tex->tex.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+                  throw std::runtime_error("cannot fill the picture texture for OMT source \"" + source_ + "\" (" +
+                                           std::to_string(w) + "x" + std::to_string(h) + "): Map failed");
+                }
+                for (uint32_t y = 0; y < h; ++y) {
+                  std::memcpy(static_cast<uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch,
+                              v.bgra.data() + static_cast<size_t>(y) * w * 4, static_cast<size_t>(w) * 4);
+                }
+                gpu_.context()->Unmap(f.tex->tex.Get(), 0);
               }
               sink_->onVideo(std::move(f));
             }

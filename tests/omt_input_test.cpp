@@ -2,16 +2,24 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <optional>
 #include <thread>
 #include <vector>
 
+#include "core/state_store.h"
+#include "engine/adapter_factory.h"
+#include "engine/engine.h"
+#include "gpu/color_grader.h"
+#include "gpu/compositor.h"
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
 #include "support/requires.h"
 
 #if BC_WITH_OMT
 #include <windows.h>
+
+#include <psapi.h>
 
 #include "io/omt_input.h"
 #include "omthx/omthx.h"
@@ -137,4 +145,102 @@ TEST_CASE("OmtInput: a coded sink gets VMX bytes" BC_REQUIRES(bc::test::Req::Omt
   CHECK(sink.wrong.load() == 0);
   CHECK(sink.pictures.load() == 0);
 }
+
+namespace {
+uint64_t privateBytes() {
+  PROCESS_MEMORY_COUNTERS_EX counters{};
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                            sizeof counters)) {
+    return 0;
+  }
+  return counters.PrivateUsage;
+}
+}  // namespace
+
+// The audit's critical finding: every OMT input kept about one BGRA picture per received frame.
+// 300 frames of 1080p through the real Camera path, and the process must not grow per frame.
+TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  bc::TexturePool pool{*gpu};
+  bc::Converter conv{*gpu, pool};
+  bc::Compositor comp{*gpu, pool};
+  bc::ColorGrader grader{*gpu, pool};
+  bc::StateStore state;
+  bc::DefaultAdapterFactory factory{*gpu, pool};
+  bc::Engine engine{bc::GpuTools{conv, comp, grader}, state, factory};
+
+  std::atomic<int> frames{0};
+  engine.setFrameTap([&](uint64_t, const std::vector<bc::FrameTap>& tapped) {
+    for (const auto& f : tapped) {
+      if (f.id == "a") ++frames;
+    }
+  });
+
+  omthx::Sender sender("bc-leak-test", omthx::Mode::Full, omthx::Quality::Medium);
+  omthx::VideoFormat format;
+  format.width = 1920;
+  format.height = 1080;
+  format.fpsN = 30;
+  format.fpsD = 1;
+  const std::vector<uint8_t> bgra(static_cast<size_t>(1920) * 1080 * 4, 100);
+
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    int64_t timestamp = 0;
+    while (run) {
+      sender.sendVideo(format, bgra, false, timestamp);
+      timestamp += 333333;  // 30 fps in 100 ns units
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+
+  bc::Show show;
+  bc::CameraConfig camera;
+  camera.id = "a";
+  camera.name = "Cam a";
+  camera.input.kind = "omt";
+  camera.input.params = {{"source", sender.address()}};
+  show.cameras.push_back(camera);
+  engine.apply(show);
+  engine.start();
+
+  auto waitFrames = [&](int want) {
+    for (int i = 0; i < 2000 && frames.load() < want; ++i) std::this_thread::sleep_for(20ms);  // 40 s
+  };
+  waitFrames(60);
+  const int64_t start = static_cast<int64_t>(privateBytes());
+  waitFrames(300);
+  const int64_t end = static_cast<int64_t>(privateBytes());
+  const int64_t grown = end - start;
+  const int taken = frames.load();
+
+  // The fix moves every picture from VRAM to system memory (sampled through an SRV): the frame the
+  // real pipeline captures must still be the colour the source sent. Captured before stop(), while
+  // the camera is live.
+  const auto captured = engine.capture({"a"}, 1, 1, 64, 36, std::chrono::milliseconds(5000));
+
+  engine.stop();
+  run = false;
+  if (feeder.joinable()) feeder.join();
+
+  INFO("frames " << taken << ", start " << start << " bytes, grown " << grown << " bytes");
+  REQUIRE(taken >= 300);
+  REQUIRE(start > 0);
+  REQUIRE(end > 0);
+  CHECK(grown < 150LL * 1024 * 1024);
+
+  REQUIRE(captured.count("a") == 1);
+  REQUIRE(captured.at("a").size() == 1);
+  const bc::CpuImage& pic = captured.at("a").front();
+  REQUIRE(pic.width == 64);
+  REQUIRE(pic.height == 36);
+  const size_t centre = (static_cast<size_t>(pic.height / 2) * pic.width + pic.width / 2) * 4;
+  // Colour channels: the source was sent as 100 on every channel. Plain OMT carries no alpha
+  // (VideoFormat::alpha is false), so libomt returns the picture opaque; the sender's 100 alpha
+  // never reaches the wire.
+  for (size_t c = 0; c < 3; ++c) CHECK(std::abs(static_cast<int>(pic.bgra[centre + c]) - 100) <= 8);
+  CHECK(pic.bgra[centre + 3] == 255);
+}
+
 #endif
