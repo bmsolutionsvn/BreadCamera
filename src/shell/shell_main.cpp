@@ -19,6 +19,7 @@
 
 #include "core/utf8.h"
 #include "engine/control_server.h"
+#include "shell/composition_host.h"
 #include "shell/process_launcher.h"
 #include "shell/supervisor.h"
 
@@ -35,6 +36,7 @@ struct App {
   HWND hwnd = nullptr;
   wil::com_ptr<ICoreWebView2Controller> controller;
   wil::com_ptr<ICoreWebView2> webview;
+  std::unique_ptr<bc::CompositionHost> host;
   NOTIFYICONDATAW tray{};
   std::unique_ptr<bc::ProcessLauncher> launcher;
   std::unique_ptr<bc::Supervisor> supervisor;
@@ -83,6 +85,10 @@ void showTrayMenu() {
 }
 
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+  if (g.host) {
+    LRESULT handled = 0;
+    if (g.host->handleMessage(hwnd, msg, wp, lp, &handled)) return handled;
+  }
   switch (msg) {
     case WM_NCCALCSIZE:
       if (wp == TRUE) {
@@ -96,6 +102,7 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       }
       break;
     case WM_SIZE:
+      if (g.host) g.host->setVisible(wp != SIZE_MINIMIZED);
       if (g.controller) {
         RECT rc;
         GetClientRect(hwnd, &rc);
@@ -106,6 +113,13 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                                        : L"{\"type\":\"windowState\",\"maximized\":false}");
       }
       return 0;
+    case WM_DPICHANGED: {
+      const RECT* suggested = reinterpret_cast<const RECT*>(lp);
+      SetWindowPos(hwnd, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+                   suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      if (g.host) g.host->setDpi(HIWORD(wp));
+      return 0;
+    }
     case WM_CLOSE:
       // The X, Alt+F4 and taskbar Close all confirm, then fully quit — the window never hides
       // to the tray (spec §2, revised). With no page to confirm in, quit straight away.
@@ -143,64 +157,112 @@ void runtimeMissing() {
               L"BreadCamera", MB_ICONWARNING);
 }
 
+void handlePageMessage(const std::wstring& text) {
+  // Native video layers arrive as JSON; every older message is still matched as text below.
+  // `value()` would throw on {"type":123}; this runs in a WRL callback declared noexcept.
+  const auto j = nlohmann::json::parse(text, nullptr, false);
+  if (!j.is_discarded() && j.is_object() && j.contains("type") && j["type"].is_string() &&
+      j["type"] == "videoLayers") {
+    if (g.host && g.launcher) {
+      const auto engine = g.launcher->identity();
+      if (auto layers = bc::parseVideoLayers(j, engine.pid)) {
+        g.host->setLayers(*layers, engine.process);
+      }
+      if (engine.process) CloseHandle(engine.process);
+    }
+    return;
+  }
+  if (text.find(L"quitConfirmed") != std::wstring::npos) {
+    PostMessageW(g.hwnd, WM_QUIT_CONFIRMED, 0, 0);
+  } else if (text.find(L"\"window\"") != std::wstring::npos) {
+    if (text.find(L"minimize") != std::wstring::npos) ShowWindow(g.hwnd, SW_MINIMIZE);
+    else if (text.find(L"maximize") != std::wstring::npos)
+      ShowWindow(g.hwnd, IsZoomed(g.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
+    else if (text.find(L"close") != std::wstring::npos) PostMessageW(g.hwnd, WM_CLOSE, 0, 0);
+  }
+}
+
+// Settings, virtual host, message handler and navigation, shared by both controller kinds.
+void finishWebView(ICoreWebView2Controller* c, const std::wstring& url) {
+  g.controller = c;
+  g.controller->get_CoreWebView2(&g.webview);
+  wil::com_ptr<ICoreWebView2Settings> settings;
+  g.webview->get_Settings(&settings);
+  if (auto s9 = settings.try_query<ICoreWebView2Settings9>()) {
+    s9->put_IsNonClientRegionSupportEnabled(TRUE);  // CSS app-region: drag
+  }
+  RECT rc;
+  GetClientRect(g.hwnd, &rc);
+  g.controller->put_Bounds(rc);
+  const auto uiDir = g.exeDir / L"ui";
+  if (auto wv3 = g.webview.try_query<ICoreWebView2_3>()) {
+    wv3->SetVirtualHostNameToFolderMapping(L"app.breadcamera", uiDir.c_str(),
+                                           COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
+  }
+  EventRegistrationToken tok;
+  g.webview->add_WebMessageReceived(
+      Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+          [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+            wil::unique_cotaskmem_string msg;
+            if (FAILED(args->TryGetWebMessageAsString(&msg))) return S_OK;
+            handlePageMessage(msg.get());
+            return S_OK;
+          })
+          .Get(),
+      &tok);
+  g.webview->Navigate(url.c_str());
+}
+
+// Today's windowed controller: the BC_NO_COMPOSITION kill switch and the A/B / failure fallback.
+void startWindowedWebView(ICoreWebView2Environment* env, const std::wstring& url) {
+  env->CreateCoreWebView2Controller(
+      g.hwnd, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                  [url](HRESULT hr, ICoreWebView2Controller* c) -> HRESULT {
+                    if (FAILED(hr) || !c) {
+                      runtimeMissing();
+                      return S_OK;
+                    }
+                    finishWebView(c, url);
+                    return S_OK;
+                  })
+                  .Get());
+}
+
 void startWebView() {
   const auto userData = localAppData() / L"WebView2";
-  const auto uiDir = g.exeDir / L"ui";
   const std::wstring url = L"https://app.breadcamera/index.html#port=" + std::to_wstring(g.port) +
                            L"&token=" + bc::toWide(g.token);
   CreateCoreWebView2EnvironmentWithOptions(
       nullptr, userData.c_str(), nullptr,
       Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-          [uiDir, url](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
+          [url](HRESULT hr, ICoreWebView2Environment* env) -> HRESULT {
             if (FAILED(hr) || !env) {
               runtimeMissing();
               return S_OK;
             }
-            env->CreateCoreWebView2Controller(
-                g.hwnd, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                            [uiDir, url](HRESULT hr2, ICoreWebView2Controller* c) -> HRESULT {
-                              if (FAILED(hr2) || !c) {
-                                runtimeMissing();
-                                return S_OK;
-                              }
-                              g.controller = c;
-                              g.controller->get_CoreWebView2(&g.webview);
-                              wil::com_ptr<ICoreWebView2Settings> settings;
-                              g.webview->get_Settings(&settings);
-                              if (auto s9 = settings.try_query<ICoreWebView2Settings9>()) {
-                                s9->put_IsNonClientRegionSupportEnabled(TRUE);  // CSS app-region: drag
-                              }
-                              RECT rc;
-                              GetClientRect(g.hwnd, &rc);
-                              g.controller->put_Bounds(rc);
-                              if (auto wv3 = g.webview.try_query<ICoreWebView2_3>()) {
-                                wv3->SetVirtualHostNameToFolderMapping(L"app.breadcamera", uiDir.c_str(),
-                                                                       COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
-                              }
-                              EventRegistrationToken tok;
-                              g.webview->add_WebMessageReceived(
-                                  Callback<ICoreWebView2WebMessageReceivedEventHandler>(
-                                      [](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
-                                        wil::unique_cotaskmem_string msg;
-                                        if (FAILED(args->TryGetWebMessageAsString(&msg))) return S_OK;
-                                        const std::wstring text(msg.get());
-                                        if (text.find(L"quitConfirmed") != std::wstring::npos) {
-                                          PostMessageW(g.hwnd, WM_QUIT_CONFIRMED, 0, 0);
-                                        } else if (text.find(L"\"window\"") != std::wstring::npos) {
-                                          if (text.find(L"minimize") != std::wstring::npos) ShowWindow(g.hwnd, SW_MINIMIZE);
-                                          else if (text.find(L"maximize") != std::wstring::npos)
-                                            ShowWindow(g.hwnd, IsZoomed(g.hwnd) ? SW_RESTORE : SW_MAXIMIZE);
-                                          else if (text.find(L"close") != std::wstring::npos)
-                                            PostMessageW(g.hwnd, WM_CLOSE, 0, 0);
-                                        }
-                                        return S_OK;
-                                      })
-                                      .Get(),
-                                  &tok);
-                              g.webview->Navigate(url.c_str());
-                              return S_OK;
-                            })
-                            .Get());
+            wil::com_ptr<ICoreWebView2Environment> keep(env);
+            wchar_t killSwitch[8]{};
+            const bool noComposition =
+                GetEnvironmentVariableW(L"BC_NO_COMPOSITION", killSwitch, 8) != 0 && std::wstring(killSwitch) == L"1";
+            if (noComposition) {
+              startWindowedWebView(env, url);
+              return S_OK;
+            }
+            bc::CompositionHost::create(
+                g.hwnd, env,
+                [keep, url](std::unique_ptr<bc::CompositionHost> host, ICoreWebView2Controller* c) {
+                  if (!host || !c) {
+                    startWindowedWebView(keep.get(), url);
+                    return;
+                  }
+                  g.host = std::move(host);
+                  g.host->onLayerFailed = [](const std::string& id) {
+                    if (!g.webview) return;
+                    const auto j = nlohmann::json{{"type", "videoLayerFailed"}, {"id", id}};
+                    g.webview->PostWebMessageAsJson(bc::toWide(j.dump()).c_str());
+                  };
+                  finishWebView(c, url + L"&nativeVideo=1");
+                });
             return S_OK;
           })
           .Get());
@@ -257,6 +319,7 @@ void startEngineSupervision() {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   HANDLE single = CreateMutexW(nullptr, TRUE, L"Local\\BreadCameraShell");
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
     if (HWND other = FindWindowW(kClass, nullptr)) {
@@ -276,11 +339,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
   wc.hInstance = inst;
   wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
   wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-  wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+  // --bm-bg (#08090B) from @bmsolutionsvn/design: the page's base colour in ui/src/app.css.
+  wc.hbrBackground = CreateSolidBrush(RGB(0x08, 0x09, 0x0B));
   wc.lpszClassName = kClass;
   RegisterClassExW(&wc);
-  g.hwnd = CreateWindowExW(0, kClass, L"BreadCamera", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1600, 940,
-                           nullptr, nullptr, inst, nullptr);
+  const int dpi = static_cast<int>(GetDpiForSystem());
+  g.hwnd = CreateWindowExW(0, kClass, L"BreadCamera", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                           MulDiv(1600, dpi, 96), MulDiv(940, dpi, 96), nullptr, nullptr, inst, nullptr);
   const BOOL dark = TRUE;
   DwmSetWindowAttribute(g.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
   SetWindowPos(g.hwnd, nullptr, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);  // apply WM_NCCALCSIZE

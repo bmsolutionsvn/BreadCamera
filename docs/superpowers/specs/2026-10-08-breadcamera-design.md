@@ -393,6 +393,9 @@ result is locked; the operator calibrates again only if the lighting changes.
   with WebCodecs into a canvas.
 - Only tiles that are visible are streamed.
 - The camera detail view and the color-match view get a 720p preview.
+- Native previews (the engine presents straight into composition swap chains) are specified in
+  `docs/superpowers/specs/2026-11-02-native-video-previews-design.md`; this H.264 path stays as the
+  fallback.
 
 ### 6.4 UI
 

@@ -22,6 +22,16 @@ export interface EngineSnapshot {
   stats: Stats | null;
 }
 
+export interface SurfaceRequest {
+  id: string;
+  w: number;
+  h: number;
+}
+export interface SurfaceReply {
+  pid: number;
+  surfaces: { id: string; handle: string; w: number; h: number }[];
+}
+
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
 // One WebSocket to the engine; reconnects every second while the engine restarts.
@@ -32,6 +42,9 @@ export class EngineClient {
   private listeners = new Set<() => void>();
   private previewListeners = new Map<string, Set<(m: PreviewMessage) => void>>();
   private previewSub: { ids: string[]; size: PreviewSize } | null = null;
+  private surfaceSub: SurfaceRequest[] | null = null;
+  private surfaceReqId = 0;
+  private surfaceListeners = new Set<(r: SurfaceReply) => void>();
   private closed = false;
   private retry: ReturnType<typeof setTimeout> | undefined;
   private snap: EngineSnapshot = { status: 'connecting', state: {}, show: null, stats: null };
@@ -47,6 +60,7 @@ export class EngineClient {
     ws.onopen = () => {
       this.update({ status: 'open' });
       if (this.previewSub) this.send('subscribePreview', { cameraIds: this.previewSub.ids, size: this.previewSub.size });
+      if (this.surfaceSub) this.subscribeSurfaces(this.surfaceSub).catch(() => {});
     };
     ws.onmessage = (e) => this.onMessage(e.data);
     ws.onclose = () => {
@@ -81,6 +95,21 @@ export class EngineClient {
   setPreviewSubscription(ids: string[], size: PreviewSize) {
     this.previewSub = { ids, size };
     if (this.ws?.readyState === 1) this.send('subscribePreview', { cameraIds: ids, size });
+  }
+
+  // The registry re-subscribes on every reconnect so the shell gets the new engine's pid and handles.
+  onSurfaces(fn: (r: SurfaceReply) => void) {
+    this.surfaceListeners.add(fn);
+    return () => this.surfaceListeners.delete(fn);
+  }
+
+  subscribeSurfaces(surfaces: SurfaceRequest[]): Promise<SurfaceReply> {
+    this.surfaceSub = surfaces;
+    if (!this.ws || this.ws.readyState !== 1) return Promise.reject(new Error('not connected to the engine'));
+    const id = this.nextId;
+    const p = this.request<SurfaceReply>('subscribeSurfaces', { surfaces });
+    this.surfaceReqId = id;
+    return p;
   }
 
   request<T = unknown>(cmd: string, args: Record<string, unknown> = {}): Promise<T> {
@@ -130,6 +159,10 @@ export class EngineClient {
       case 'stats':
         this.update({ stats: msg as unknown as Stats });
         return;
+    }
+    if (typeof msg.id === 'number' && msg.id === this.surfaceReqId) {
+      this.surfaceReqId = 0;
+      if (msg.ok) for (const fn of this.surfaceListeners) fn(msg.result as SurfaceReply);
     }
     const p = typeof msg.id === 'number' ? this.pending.get(msg.id) : undefined;
     if (!p) return;

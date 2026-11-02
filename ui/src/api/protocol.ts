@@ -54,6 +54,8 @@ export interface StateTree {
     overruns?: number;
     previewEncoder?: string;
     matteBackend?: string;
+    nativeVideo?: true | string;
+    nativeVideoBroken?: string[];
     warnings?: Record<string, string>;
   };
   cameras?: Record<string, CameraState>;

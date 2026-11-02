@@ -90,6 +90,22 @@ TEST_CASE("ProcessLauncher: launches, sees, kills and adopts a real process") {
   CHECK_FALSE(other.isRunning());
 }
 
+TEST_CASE("ProcessLauncher: identity pairs the pid with a caller-owned process handle") {
+  bc::ProcessLauncher l("C:\\Windows\\System32\\PING.EXE", L"-n 30 127.0.0.1");
+  CHECK(l.identity().process == nullptr);
+  l.launch();
+  REQUIRE(l.isRunning());
+  const auto id = l.identity();
+  CHECK(id.pid == l.pid());
+  REQUIRE(id.process != nullptr);
+  // The caller's duplicate survives both launcher mutations and the supervisor's kill.
+  l.kill();
+  DWORD exitCode = STILL_ACTIVE;
+  CHECK(GetExitCodeProcess(id.process, &exitCode));
+  CHECK(exitCode != STILL_ACTIVE);
+  CloseHandle(id.process);
+}
+
 TEST_CASE("readDiscovery: parses the engine file and rejects junk") {
   bc::test::TempDir dir;
   auto f = dir.path / "engine.json";

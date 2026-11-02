@@ -248,10 +248,12 @@ add_library(bc_gpu STATIC
   src/gpu/upscaler.cpp
   # webcam-fx Task 4 (compiles to a null path when BC_WITH_RTXVIDEO=0)
   src/gpu/rtx_video.cpp
+  # native-video Task 2
+  src/gpu/surface_presenter.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
-target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
+target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi dcomp windowscodecs)
 if(BC_WITH_RTXVIDEO)
   target_include_directories(bc_gpu PUBLIC ${RTXVIDEO_INCLUDE_DIR})
   target_link_libraries(bc_gpu PUBLIC "${RTXVIDEO_NGX_LIB}")
@@ -401,6 +403,8 @@ add_library(bc_engine STATIC
   src/engine/preview_encoder.cpp
   src/engine/preview_hub.cpp
   src/engine/preview_service.cpp
+  # native-video Task 3
+  src/engine/surface_hub.cpp
   # Task 11
   src/engine/command_router.cpp
   src/engine/control_server.cpp
@@ -565,6 +569,11 @@ add_executable(bc_tests
   tests/e2e_real_effects_test.cpp
   # bcam-readback Task 1
   tests/readback_test.cpp
+  # native-video Task 2
+  tests/surface_presenter_test.cpp
+  # native-video Task 3
+  tests/surface_hub_test.cpp
+  tests/composition_host_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
@@ -578,9 +587,9 @@ target_link_libraries(breadcamera-engine PRIVATE bc_engine shell32 ole32)
 bc_copy_runtime(breadcamera-engine)
 
 # ---- shell ----
-add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.cpp)
+add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.cpp src/shell/composition_host.cpp)
 target_include_directories(bc_shell PUBLIC src)
-target_link_libraries(bc_shell PUBLIC bc_core)
+target_link_libraries(bc_shell PUBLIC bc_core unofficial::webview2::webview2 WIL::WIL dcomp uiautomationcore)
 
 # ---- soak / fault-injection tool (M5 Task 3, spec §8.3/§8.4) ----
 # Drives the real breadcamera-engine.exe over the control API with in-process SRT test
@@ -591,6 +600,10 @@ target_include_directories(bc_soak PRIVATE tests)
 target_link_libraries(bc_soak PRIVATE bc_engine bc_shell psapi)
 add_dependencies(bc_soak breadcamera-engine)
 bc_copy_runtime(bc_soak)
+
+# ---- native-video Task 1 — cross-process composition surface probe (the plan's gate) ----
+add_executable(bc_native_video_probe tools/native_video_probe/probe_main.cpp)
+target_link_libraries(bc_native_video_probe PRIVATE bc_gpu dcomp user32 gdi32)
 
 add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
 target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)

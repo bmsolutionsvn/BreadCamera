@@ -23,6 +23,7 @@
 #include "engine/gpu_tools.h"
 #include "engine/matte.h"
 #include "engine/preview_service.h"
+#include "engine/surface_hub.h"
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/converter.h"
@@ -125,6 +126,11 @@ int wmain(int argc, wchar_t** argv) {
   auto loaded = store.load();
   state.set("/engine/gpu", gpu->info().adapterName);
   state.set("/engine/warnings/show", loaded.warning);
+  // Native video's start-up self-test (spec §4.3): one 16x16 surface, presented once. State is
+  // true when it works, otherwise the reason the UI shows.
+  std::string nativeWhy;
+  state.set("/engine/nativeVideo",
+            bc::SurfacePresenter::available(*gpu, conv, &nativeWhy) ? json(true) : json(nativeWhy));
 
   bc::Engine engine(bc::GpuTools{.conv = conv, .comp = comp, .grader = grader, .up = &up, .rtx = rtx.get(), .gpu = gpu.get(), .faces = faces.get()}, state,
                     factory);
@@ -135,7 +141,32 @@ int wmain(int argc, wchar_t** argv) {
   bc::ControlServer server(port, token);
   bc::PreviewHub hub;
   bc::PreviewService previews(state, hub, [&](const bc::ClientId& c, std::vector<uint8_t> m) { server.sendBinary(c, m); });
-  engine.setFrameTap([&](uint64_t tick, const std::vector<bc::FrameTap>& frames) { previews.onTick(tick, frames); });
+  bc::SurfaceHub surfaces(*gpu, conv);
+  engine.setFrameTap([&](uint64_t tick, const std::vector<bc::FrameTap>& frames) {
+    previews.onTick(tick, frames);
+    // Native video (spec §4.4): present each wanted cam: id's linear picture. The tick always
+    // hands over a linear RGBA16F frame; the conversion below covers a raw one should a path
+    // ever hand one over.
+    const auto wanted = surfaces.wanted();
+    for (const auto& f : frames) {
+      if (!f.tex) continue;
+      const std::string id = "cam:" + f.id;
+      if (!wanted.contains(id)) continue;
+      bc::TextureRef linear = f.tex;
+      if (linear->format != bc::Converter::kLinearFormat) {
+        // The tick hands over linear RGBA16F today; this covers a raw frame should one appear.
+        try {
+          const bool nv12 = linear->format == DXGI_FORMAT_NV12;
+          linear = nv12 || linear->format == DXGI_FORMAT_P010
+                       ? conv.toLinear(*linear, nv12 ? bc::PixelLayout::NV12 : bc::PixelLayout::P010, false)
+                       : conv.toLinear(*linear, bc::PixelLayout::BGRA8, true);
+        } catch (...) {
+          continue;  // a bad frame must not stop the tick; the next one retries
+        }
+      }
+      surfaces.present(id, *linear);
+    }
+  });
   // D5: a visible preview forces its camera's one readback even when no output needs CPU. The
   // hub owns the wanted set and the tap fires after the tick, so push the wanted-set in here.
   engine.setPreviewWanted([&hub](const std::string& id) {
@@ -151,10 +182,11 @@ int wmain(int argc, wchar_t** argv) {
     bc::ControlServer& server;
     bc::PreviewHub& hub;
     bc::PreviewService& previews;
+    bc::SurfaceHub& surfaces;
     bc::ColorCalibrationService& calib;
     Fx(bc::Engine& e, bc::ShowStore& s, bc::ControlServer& sv, bc::PreviewHub& h, bc::PreviewService& p,
-       bc::ColorCalibrationService& c)
-        : engine(e), store(s), server(sv), hub(h), previews(p), calib(c) {}
+       bc::SurfaceHub& sf, bc::ColorCalibrationService& c)
+        : engine(e), store(s), server(sv), hub(h), previews(p), surfaces(sf), calib(c) {}
     void showChanged(const bc::Show& s) override {
       engine.apply(s);
       store.scheduleSave(s);
@@ -162,6 +194,13 @@ int wmain(int argc, wchar_t** argv) {
     }
     void subscribePreview(const bc::ClientId& c, std::vector<std::string> ids, bc::PreviewSize size) override {
       for (auto& [id, sz] : hub.subscribe(c, std::move(ids), size)) previews.requestKeyframe(id, sz);
+    }
+    json subscribeSurfaces(const bc::ClientId& c, std::vector<bc::SurfaceRequest> wanted) override {
+      json out = json::array();
+      for (const auto& g : surfaces.subscribe(c, wanted)) {
+        out.push_back({{"id", g.id}, {"handle", std::to_string(g.handle)}, {"w", g.w}, {"h", g.h}});
+      }
+      return {{"pid", GetCurrentProcessId()}, {"surfaces", out}};
     }
     void requestKeyframe(const std::string& id, bc::PreviewSize size) override { previews.requestKeyframe(id, size); }
     json listMonitors() override {
@@ -214,7 +253,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     void forgetColor(const std::string& id) override { calib.forget(id); }
     void shutdown() override { g_quit = true; }
-  } fx(engine, store, server, hub, previews, calib);
+  } fx(engine, store, server, hub, previews, surfaces, calib);
   bc::CommandRouter router(loaded.show, fx);
 
   server.setHandlers({
@@ -222,7 +261,10 @@ int wmain(int argc, wchar_t** argv) {
         server.send(id, json{{"type", "snapshot"}, {"state", state.snapshot()},
                              {"show", bc::showToJson(router.show(), bc::SecretMode::Redact)}}.dump());
       },
-      [&](const bc::ClientId& id) { hub.dropClient(id); },
+      [&](const bc::ClientId& id) {
+        hub.dropClient(id);
+        surfaces.dropClient(id);
+      },
       [&](const bc::ClientId& id, const std::string& text) { return router.handle(id, text).dump(); },
   });
   try {
@@ -248,6 +290,11 @@ int wmain(int argc, wchar_t** argv) {
       server.broadcast(json{{"type", "stats"}, {"engine", {{"overruns", st.overruns}}}, {"cameras", cams}}.dump());
       const auto err = store.lastSaveError();
       state.set("/engine/warnings/save", err.empty() ? "" : "the show could not be saved: " + err);
+      const auto broken = surfaces.brokenIds();
+      if (broken.empty()) state.erase("/engine/nativeVideoBroken");
+      else state.set("/engine/nativeVideoBroken", json(broken));
+      if (!broken.empty()) state.set("/engine/warnings/nativeVideo", "a preview stopped presenting");
+      else state.erase("/engine/warnings/nativeVideo");
     }
   }
   engine.stop();

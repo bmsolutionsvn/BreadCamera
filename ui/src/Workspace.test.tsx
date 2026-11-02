@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 
 import { EngineClient } from './api/client';
 import { Workspace } from './App';
@@ -182,4 +182,20 @@ test('losing the engine shows the restart block and every pill goes Offline', ()
   expect(screen.getByRole('status', { name: 'Engine restarting' })).toBeInTheDocument();
   expect(screen.getByTitle('NDI output: Offline')).toBeInTheDocument();
   c.close();
+});
+
+test('native mode clears the H.264 subscription after the snapshot arrives', () => {
+  location.hash = '#nativeVideo=1';
+  const c = client();
+  render(<Workspace client={c} />);
+  // Before the engine says native, the page still asks for the H.264 fallback; the client
+  // replays that list on reconnect, so it must be emptied once native flips.
+  expect(subscribed()).toEqual(['a', 'b']);
+  act(() => FakeWs.last.receive({ type: 'snapshot', state: { ...state, engine: { ...state.engine, nativeVideo: true } }, show }));
+  const last = FakeWs.last.sent
+    .map((s) => JSON.parse(s) as { cmd: string; args: { cameraIds: string[]; size: string } })
+    .filter((m) => m.cmd === 'subscribePreview')
+    .at(-1);
+  expect(last?.args).toEqual({ cameraIds: [], size: 'small' });
+  location.hash = '';
 });

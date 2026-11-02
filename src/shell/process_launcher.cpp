@@ -56,14 +56,17 @@ std::optional<Discovery> waitForDiscovery(const std::filesystem::path& file,
 }
 
 ProcessLauncher::~ProcessLauncher() {
+  std::lock_guard l(m_);
   if (process_) CloseHandle(process_);  // never kills: the engine outlives the shell
 }
 
 bool ProcessLauncher::isRunning() {
+  std::lock_guard l(m_);
   return process_ && WaitForSingleObject(process_, 0) == WAIT_TIMEOUT;
 }
 
 void ProcessLauncher::launch() {
+  std::lock_guard l(m_);
   if (process_) {
     CloseHandle(process_);
     process_ = nullptr;
@@ -81,16 +84,34 @@ void ProcessLauncher::launch() {
 }
 
 void ProcessLauncher::kill() {
+  std::lock_guard l(m_);
   if (!process_) return;
   TerminateProcess(process_, 1);
   WaitForSingleObject(process_, 2000);
 }
 
 void ProcessLauncher::adopt(DWORD pid) {
-  HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+  HANDLE h = OpenProcess(
+      SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE, FALSE, pid);
   if (!h) return;
+  std::lock_guard l(m_);
   if (process_) CloseHandle(process_);
   process_ = h;
   pid_ = pid;
+}
+
+DWORD ProcessLauncher::pid() const {
+  std::lock_guard l(m_);
+  return pid_;
+}
+
+ProcessLauncher::Identity ProcessLauncher::identity() const {
+  std::lock_guard l(m_);
+  Identity id{pid_, nullptr};
+  if (process_) {
+    DuplicateHandle(GetCurrentProcess(), process_, GetCurrentProcess(), &id.process, 0, FALSE,
+                    DUPLICATE_SAME_ACCESS);
+  }
+  return id;
 }
 }  // namespace bc

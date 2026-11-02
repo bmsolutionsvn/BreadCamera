@@ -525,3 +525,68 @@ TEST_CASE("CommandRouter: a hand-edited show can rename a camera that shares a d
   auto move = call(r, {{"cmd", "updateCamera"}, {"args", {{"id", "b"}, {"name", "Renamed again"}, {"input", {{"kind", "uvc"}, {"params", {{"device", "Cam Link 4K"}}}}}}}});
   CHECK(move["error"]["code"] == "invalid");
 }
+
+namespace {
+// Records the native-video subscription so the routing-only command is pinned too.
+struct SurfaceFx : bc::CommandRouter::Effects {
+  bc::ClientId surfaceClient;
+  std::vector<bc::SurfaceRequest> surfaceRequests;
+  void showChanged(const bc::Show&) override {}
+  void subscribePreview(const bc::ClientId&, std::vector<std::string>, bc::PreviewSize) override {}
+  void requestKeyframe(const std::string&, bc::PreviewSize) override {}
+  json listMonitors() override { return json::array(); }
+  json listNdiSources() override { return json::array(); }
+  json listCaptureDevices() override { return json::array(); }
+  json listDeckLinkDevices() override { return json::array(); }
+  json listAjaDevices() override { return json::array(); }
+  json findChart(const std::string&) override { return json::object(); }
+  json calibrateColor(const std::string&, const std::string&, const bc::ChartQuad&) override { return json::object(); }
+  void forgetColor(const std::string&) override {}
+  void shutdown() override {}
+  json subscribeSurfaces(const bc::ClientId& c, std::vector<bc::SurfaceRequest> wanted) override {
+    surfaceClient = c;
+    surfaceRequests = std::move(wanted);
+    return {{"pid", 1234}, {"surfaces", json::array({{{"id", "cam:A"}, {"handle", "42"}, {"w", 320}, {"h", 180}}})}};
+  }
+};
+
+json surfaceCall(std::initializer_list<json> surfaces) {
+  return {{"cmd", "subscribeSurfaces"}, {"args", {{"surfaces", json(surfaces)}}}};
+}
+}  // namespace
+
+TEST_CASE("CommandRouter: subscribeSurfaces passes ids and sizes") {
+  SurfaceFx fx;
+  bc::CommandRouter r({}, fx);
+  auto res = call(r, surfaceCall({{{"id", "cam:A"}, {"w", 320}, {"h", 180}}}));
+  REQUIRE(res["ok"] == true);
+  REQUIRE(fx.surfaceRequests.size() == 1);
+  CHECK(fx.surfaceClient == "c1");
+  CHECK(fx.surfaceRequests[0].id == "cam:A");
+  CHECK(fx.surfaceRequests[0].w == 320);
+  CHECK(fx.surfaceRequests[0].h == 180);
+  CHECK(res["result"]["pid"] == 1234);
+  CHECK(res["result"]["surfaces"][0]["handle"] == "42");
+}
+
+TEST_CASE("CommandRouter: subscribeSurfaces rejects bad input") {
+  SurfaceFx fx;
+  bc::CommandRouter r({}, fx);
+  // No "surfaces", surfaces not a list, an element that is not an object.
+  CHECK(call(r, {{"cmd", "subscribeSurfaces"}})["error"]["code"] == "bad-request");
+  CHECK(call(r, {{"cmd", "subscribeSurfaces"}, {"args", {{"surfaces", 5}}}})["error"]["code"] == "bad-request");
+  CHECK(call(r, {{"cmd", "subscribeSurfaces"}, {"args", {{"surfaces", json::array({"cam:A"})}}}})["error"]["code"] == "bad-request");
+  // id not text; w or h missing, negative or not a number.
+  CHECK(call(r, surfaceCall({{{"w", 1}, {"h", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", 5}, {"w", 1}, {"h", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"h", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"w", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"w", -1}, {"h", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"w", 1}, {"h", -1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"w", "320"}, {"h", 1}}}))["error"]["code"] == "bad-request");
+  CHECK(call(r, surfaceCall({{{"id", "cam:A"}, {"w", 1}, {"h", "180"}}}))["error"]["code"] == "bad-request");
+  json many = json::array();
+  for (int i = 0; i < 65; ++i) many.push_back({{"id", "cam:" + std::to_string(i)}, {"w", 16}, {"h", 16}});
+  CHECK(call(r, {{"cmd", "subscribeSurfaces"}, {"args", {{"surfaces", many}}}})["error"]["code"] == "bad-request");
+  CHECK(fx.surfaceRequests.empty());  // none of the bad ones reached an effect
+}

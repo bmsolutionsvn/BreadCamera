@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { EngineClient } from './api/client';
 import { useEngine } from './api/useEngine';
@@ -15,6 +15,7 @@ import { SettingsDialog } from './dialogs/SettingsDialog';
 import { Effects } from './inspector/Effects';
 import { Inspector } from './inspector/Inspector';
 import { Multiview, type Layout } from './multiview/Multiview';
+import { nativeVideoRequested, startNativeVideo } from './preview/nativeVideoRegistry';
 import { StatusBar } from './shell/StatusBar';
 import { TitleBar } from './shell/TitleBar';
 import { Toolbar } from './shell/Toolbar';
@@ -32,6 +33,8 @@ function engineUrl(): string | null {
 export function Workspace({ client }: { client: EngineClient }) {
   const snap = useEngine(client);
   const schemas = useStageSchemas(client);
+  const native = nativeVideoRequested() && snap.state.engine?.nativeVideo === true;
+  const brokenIds = native ? (snap.state.engine?.nativeVideoBroken ?? []) : [];
   const cameras = snap.show?.cameras ?? [];
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
@@ -46,6 +49,11 @@ export function Workspace({ client }: { client: EngineClient }) {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle('native-video', native);
+    return () => document.documentElement.classList.remove('native-video');
+  }, [native]);
+  useEffect(() => (native ? startNativeVideo(client) : undefined), [client, native]);
   useEffect(() => {
     if (selected && cameras.some((c) => c.id === selected)) return;
     setSelected(cameras[0]?.id ?? null);
@@ -117,11 +125,13 @@ export function Workspace({ client }: { client: EngineClient }) {
       />
       <div className="body">
         {calib.state && calibCam ? (
-          <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} />
+          <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} native={native} brokenIds={brokenIds} />
         ) : (
           <Multiview
             client={client}
             cameras={cameras}
+            native={native}
+            brokenIds={brokenIds}
             state={snap.state}
             schemas={schemas}
             marks={marks.current}

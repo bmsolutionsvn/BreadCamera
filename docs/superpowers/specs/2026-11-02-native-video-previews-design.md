@@ -1,6 +1,6 @@
 # Native video previews (BreadCamera + BreadReplay) — Design
 
-Date: 2026-11-02. Status: draft for owner review.
+Date: 2026-11-02. Status: implemented; owner acceptance pending (2026-11-02).
 
 ## 1. Why
 

@@ -9,6 +9,7 @@
 #include "core/chart.h"
 #include "core/show.h"
 #include "engine/preview_hub.h"
+#include "engine/surface_hub.h"
 
 namespace bc {
 using ClientId = std::string;
@@ -26,6 +27,12 @@ class CommandRouter {
     virtual ~Effects() = default;
     virtual void showChanged(const Show& show) = 0;
     virtual void subscribePreview(const ClientId& client, std::vector<std::string> cameraIds, PreviewSize size) = 0;
+    // Native video (spec §4.3). Non-pure: a fake or an engine without surfaces replies "none".
+    virtual nlohmann::json subscribeSurfaces(const ClientId& client, std::vector<SurfaceRequest> wanted) {
+      (void)client;
+      (void)wanted;
+      return nlohmann::json{{"pid", 0}, {"surfaces", nlohmann::json::array()}};
+    }
     virtual void requestKeyframe(const std::string& cameraId, PreviewSize size) = 0;
     virtual nlohmann::json listMonitors() = 0;
     virtual nlohmann::json listNdiSources() = 0;
