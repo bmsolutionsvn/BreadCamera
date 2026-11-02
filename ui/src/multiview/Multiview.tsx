@@ -4,6 +4,7 @@ import type { EngineClient } from '../api/client';
 import type { CameraConfig, StageSchemaJson, StateTree } from '../api/protocol';
 import { ErrorBlock } from '../components/ErrorBlock';
 import { Icon } from '../components/Icon';
+import { NativeVideo } from '../preview/NativeVideo';
 import { PreviewCanvas } from '../preview/PreviewCanvas';
 import type { Marks } from '../state/marks';
 import { Strip } from './Strip';
@@ -20,7 +21,7 @@ const STRIP = 29;
 const GAP = 3;
 
 // Tiles keep 16:9 and the whole wall fits the area (docs/design/multiview.md §6).
-export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, focused, onFocus, layout, onLayout, offline }: {
+export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, focused, onFocus, layout, onLayout, offline, native, presenterLost }: {
   client: EngineClient;
   cameras: CameraConfig[];
   state: StateTree;
@@ -35,6 +36,8 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
   layout: Layout;
   onLayout: (l: Layout) => void;
   offline: boolean;
+  native: boolean;
+  presenterLost: boolean;
 }) {
   const area = useRef<HTMLDivElement>(null);
   const [tileW, setTileW] = useState(320);
@@ -46,12 +49,13 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
 
   useEffect(() => {
     // Only stream previews while the window is visible (spec §6.3). While focused, the one
-    // camera stays subscribed and every other camera stops streaming.
+    // camera stays subscribed and every other camera stops streaming. Native mode has no H.264.
+    if (native) return;
     const sync = () => client.setPreviewSubscription(document.visibilityState === 'hidden' ? [] : subIds, 'small');
     sync();
     document.addEventListener('visibilitychange', sync);
     return () => document.removeEventListener('visibilitychange', sync);
-  }, [client, subIds]);
+  }, [client, subIds, native]);
 
   useLayoutEffect(() => {
     const el = area.current;
@@ -133,7 +137,7 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
                   title="Click to return to the grid"
                 >
                   <div className="pic">
-                    <PreviewCanvas client={client} cameraId={focusedCam.id} />
+                    <NativeVideo id={'cam:' + focusedCam.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={focusedCam.id} />} />
                   </div>
                   <Strip n={focusedIndex + 1} cfg={focusedCam} cam={state.cameras?.[focusedCam.id]} schemas={schemas} marks={marks[focusedCam.id]} holdMs={holdMs} now={now} dense={false} offline={offline} />
                 </div>
@@ -153,7 +157,7 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
                     }}
                   >
                     <div className="pic">
-                      <PreviewCanvas client={client} cameraId={cfg.id} />
+                      <NativeVideo id={'cam:' + cfg.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={cfg.id} />} />
                     </div>
                     <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} schemas={schemas} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
                   </div>

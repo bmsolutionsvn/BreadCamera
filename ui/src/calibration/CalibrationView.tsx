@@ -3,15 +3,18 @@ import { useEffect, useRef, type PointerEvent } from 'react';
 import type { EngineClient } from '../api/client';
 import type { CameraConfig } from '../api/protocol';
 import { Icon } from '../components/Icon';
+import { NativeVideo } from '../preview/NativeVideo';
 import { PreviewCanvas } from '../preview/PreviewCanvas';
 import { chartPoint, type Pt } from './chartGeometry';
 import type { CalibrationState } from './useCalibration';
 
 // The calibrating camera alone, with the chart corners on top (spec §6.4).
-export function CalibrationView({ client, cam, n, state, onCorner }: { client: EngineClient; cam: CameraConfig; n: number; state: CalibrationState; onCorner: (i: number, p: Pt) => void }) {
+export function CalibrationView({ client, cam, n, state, onCorner, native, presenterLost }: { client: EngineClient; cam: CameraConfig; n: number; state: CalibrationState; onCorner: (i: number, p: Pt) => void; native: boolean; presenterLost: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<number | null>(null);
-  useEffect(() => client.setPreviewSubscription([cam.id], 'large'), [client, cam.id]);
+  useEffect(() => {
+    if (!native) client.setPreviewSubscription([cam.id], 'large');
+  }, [client, cam.id, native]);
 
   function at(e: PointerEvent): Pt {
     const r = box.current!.getBoundingClientRect();
@@ -39,7 +42,7 @@ export function CalibrationView({ client, cam, n, state, onCorner }: { client: E
           onPointerUp={() => (drag.current = null)}
           onPointerLeave={() => (drag.current = null)}
         >
-          <PreviewCanvas client={client} cameraId={cam.id} size="large" />
+          <NativeVideo id={'cam:' + cam.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={cam.id} size="large" />} />
           <svg className="chart-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Chart corners">
             <polygon points={q.map((p) => p.join(',')).join(' ')} />
             {squares.map(([x, y], i) => (
