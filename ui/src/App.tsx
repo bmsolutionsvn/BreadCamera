@@ -34,7 +34,7 @@ export function Workspace({ client }: { client: EngineClient }) {
   const snap = useEngine(client);
   const schemas = useStageSchemas(client);
   const native = nativeVideoRequested() && snap.state.engine?.nativeVideo === true;
-  const presenterLost = native && Boolean(snap.state.engine?.warnings?.nativeVideo);
+  const brokenIds = native ? (snap.state.engine?.nativeVideoBroken ?? []) : [];
   const cameras = snap.show?.cameras ?? [];
   const offline = snap.status !== 'open';
   const [selected, setSelected] = useState<string | null>(null);
@@ -125,13 +125,13 @@ export function Workspace({ client }: { client: EngineClient }) {
       />
       <div className="body">
         {calib.state && calibCam ? (
-          <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} native={native} presenterLost={presenterLost} />
+          <CalibrationView client={client} cam={calibCam} n={calibIndex + 1} state={calib.state} onCorner={calib.moveCorner} native={native} brokenIds={brokenIds} />
         ) : (
           <Multiview
             client={client}
             cameras={cameras}
             native={native}
-            presenterLost={presenterLost}
+            brokenIds={brokenIds}
             state={snap.state}
             schemas={schemas}
             marks={marks.current}

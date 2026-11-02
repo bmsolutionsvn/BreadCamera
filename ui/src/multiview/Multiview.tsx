@@ -21,7 +21,7 @@ const STRIP = 29;
 const GAP = 3;
 
 // Tiles keep 16:9 and the whole wall fits the area (docs/design/multiview.md §6).
-export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, focused, onFocus, layout, onLayout, offline, native, presenterLost }: {
+export function Multiview({ client, cameras, state, schemas, marks, holdMs, now, selected, onSelect, focused, onFocus, layout, onLayout, offline, native, brokenIds }: {
   client: EngineClient;
   cameras: CameraConfig[];
   state: StateTree;
@@ -37,7 +37,7 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
   onLayout: (l: Layout) => void;
   offline: boolean;
   native: boolean;
-  presenterLost: boolean;
+  brokenIds: string[];
 }) {
   const area = useRef<HTMLDivElement>(null);
   const [tileW, setTileW] = useState(320);
@@ -49,9 +49,10 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
 
   useEffect(() => {
     // Only stream previews while the window is visible (spec §6.3). While focused, the one
-    // camera stays subscribed and every other camera stops streaming. Native mode has no H.264.
-    if (native) return;
-    const sync = () => client.setPreviewSubscription(document.visibilityState === 'hidden' ? [] : subIds, 'small');
+    // camera stays subscribed and every other camera stops streaming. In native mode the H.264
+    // list stays empty: the first render subscribed the fallback before the snapshot arrived and
+    // the client replays that list on every reconnect.
+    const sync = () => client.setPreviewSubscription(native || document.visibilityState === 'hidden' ? [] : subIds, 'small');
     sync();
     document.addEventListener('visibilitychange', sync);
     return () => document.removeEventListener('visibilitychange', sync);
@@ -137,7 +138,7 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
                   title="Click to return to the grid"
                 >
                   <div className="pic">
-                    <NativeVideo id={'cam:' + focusedCam.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={focusedCam.id} />} />
+                    <NativeVideo id={'cam:' + focusedCam.id} native={native} presenterLost={brokenIds.includes('cam:' + focusedCam.id)} fallback={<PreviewCanvas client={client} cameraId={focusedCam.id} />} />
                   </div>
                   <Strip n={focusedIndex + 1} cfg={focusedCam} cam={state.cameras?.[focusedCam.id]} schemas={schemas} marks={marks[focusedCam.id]} holdMs={holdMs} now={now} dense={false} offline={offline} />
                 </div>
@@ -157,7 +158,7 @@ export function Multiview({ client, cameras, state, schemas, marks, holdMs, now,
                     }}
                   >
                     <div className="pic">
-                      <NativeVideo id={'cam:' + cfg.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={cfg.id} />} />
+                      <NativeVideo id={'cam:' + cfg.id} native={native} presenterLost={brokenIds.includes('cam:' + cfg.id)} fallback={<PreviewCanvas client={client} cameraId={cfg.id} />} />
                     </div>
                     <Strip n={i + 1} cfg={cfg} cam={state.cameras?.[cfg.id]} schemas={schemas} marks={marks[cfg.id]} holdMs={holdMs} now={now} dense={cameras.length > 4} offline={offline} />
                   </div>

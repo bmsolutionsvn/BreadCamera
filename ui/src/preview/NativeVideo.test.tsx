@@ -142,15 +142,26 @@ test('hiding sends an empty subscription without waiting for a frame', async () 
   expect(surfaceReqs()[1].args).toEqual({ surfaces: [] });
 });
 
-test('the broken-presenter warning shows the no-picture placeholder on every box', async () => {
+test('a broken surface shows the no-picture placeholder on that box only', async () => {
   shellStub();
   location.hash = '#nativeVideo=1';
   const client = makeClient();
   FakeWs.last.receive({
     type: 'snapshot',
-    state: { engine: { nativeVideo: true, warnings: { nativeVideo: 'a preview stopped presenting' } }, cameras: { a: { name: 'A' } } },
-    show: { cameras: [{ id: 'a', name: 'A', input: { kind: 'srt', params: {} }, outputs: [] }] },
+    state: {
+      engine: { nativeVideo: true, nativeVideoBroken: ['cam:a'], warnings: { nativeVideo: 'a preview stopped presenting' } },
+      cameras: { a: { name: 'A' }, b: { name: 'B' } },
+    },
+    show: {
+      cameras: [
+        { id: 'a', name: 'A', input: { kind: 'srt', params: {} }, outputs: [] },
+        { id: 'b', name: 'B', input: { kind: 'srt', params: {} }, outputs: [] },
+      ],
+    },
   });
   const { container } = render(<Workspace client={client} />);
-  await waitFor(() => expect(container.querySelector('.nv-box.nv-lost')).not.toBeNull());
+  await waitFor(() => expect(container.querySelectorAll('.nv-box')).toHaveLength(2));
+  // Tiles render in camera order, so only cam:a's box may show the placeholder.
+  expect(container.querySelectorAll('.nv-lost')).toHaveLength(1);
+  expect(container.querySelector('.nv-box')!.classList.contains('nv-lost')).toBe(true);
 });

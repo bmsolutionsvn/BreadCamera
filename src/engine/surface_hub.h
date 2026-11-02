@@ -37,6 +37,7 @@ class SurfaceHub {
   std::set<std::string> wanted() const;
   void present(const std::string& id, const GpuTexture& linear);  // every presenter for id; >=15 ms apart per presenter
   bool anyBroken() const;
+  std::set<std::string> brokenIds() const;  // ids with at least one broken presenter
   size_t presenterCount() const;  // tests
 
  private:

@@ -63,15 +63,18 @@ void SurfaceHub::present(const std::string& id, const GpuTexture& linear) {
   }
 }
 
-bool SurfaceHub::anyBroken() const {
+std::set<std::string> SurfaceHub::brokenIds() const {
   std::lock_guard l(m_);
+  std::set<std::string> ids;
   for (const auto& [client, entries] : byClient_) {
     for (const auto& [id, entry] : entries) {
-      if (entry.presenter->broken()) return true;
+      if (entry.presenter->broken()) ids.insert(id);
     }
   }
-  return false;
+  return ids;
 }
+
+bool SurfaceHub::anyBroken() const { return !brokenIds().empty(); }
 
 size_t SurfaceHub::presenterCount() const {
   std::lock_guard l(m_);

@@ -290,7 +290,10 @@ int wmain(int argc, wchar_t** argv) {
       server.broadcast(json{{"type", "stats"}, {"engine", {{"overruns", st.overruns}}}, {"cameras", cams}}.dump());
       const auto err = store.lastSaveError();
       state.set("/engine/warnings/save", err.empty() ? "" : "the show could not be saved: " + err);
-      if (surfaces.anyBroken()) state.set("/engine/warnings/nativeVideo", "a preview stopped presenting");
+      const auto broken = surfaces.brokenIds();
+      if (broken.empty()) state.erase("/engine/nativeVideoBroken");
+      else state.set("/engine/nativeVideoBroken", json(broken));
+      if (!broken.empty()) state.set("/engine/warnings/nativeVideo", "a preview stopped presenting");
       else state.erase("/engine/warnings/nativeVideo");
     }
   }

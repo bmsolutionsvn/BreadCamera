@@ -9,11 +9,12 @@ import { chartPoint, type Pt } from './chartGeometry';
 import type { CalibrationState } from './useCalibration';
 
 // The calibrating camera alone, with the chart corners on top (spec §6.4).
-export function CalibrationView({ client, cam, n, state, onCorner, native, presenterLost }: { client: EngineClient; cam: CameraConfig; n: number; state: CalibrationState; onCorner: (i: number, p: Pt) => void; native: boolean; presenterLost: boolean }) {
+export function CalibrationView({ client, cam, n, state, onCorner, native, brokenIds }: { client: EngineClient; cam: CameraConfig; n: number; state: CalibrationState; onCorner: (i: number, p: Pt) => void; native: boolean; brokenIds: string[] }) {
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<number | null>(null);
   useEffect(() => {
-    if (!native) client.setPreviewSubscription([cam.id], 'large');
+    // Native mode keeps the H.264 list empty, including the list replayed on reconnect.
+    client.setPreviewSubscription(native ? [] : [cam.id], 'large');
   }, [client, cam.id, native]);
 
   function at(e: PointerEvent): Pt {
@@ -42,7 +43,7 @@ export function CalibrationView({ client, cam, n, state, onCorner, native, prese
           onPointerUp={() => (drag.current = null)}
           onPointerLeave={() => (drag.current = null)}
         >
-          <NativeVideo id={'cam:' + cam.id} native={native} presenterLost={presenterLost} fallback={<PreviewCanvas client={client} cameraId={cam.id} size="large" />} />
+          <NativeVideo id={'cam:' + cam.id} native={native} presenterLost={brokenIds.includes('cam:' + cam.id)} fallback={<PreviewCanvas client={client} cameraId={cam.id} size="large" />} />
           <svg className="chart-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-label="Chart corners">
             <polygon points={q.map((p) => p.join(',')).join(' ')} />
             {squares.map(([x, y], i) => (

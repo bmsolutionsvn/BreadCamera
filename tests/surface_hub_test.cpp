@@ -52,3 +52,13 @@ TEST_CASE("SurfaceHub: present to an id nobody watches is a no-op" BC_REQUIRES(b
   hub.present("cam:Gone", *linear);  // no throw
   CHECK_FALSE(hub.anyBroken());
 }
+
+TEST_CASE("SurfaceHub: brokenIds stays empty while every presenter works" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Gpu g;
+  bc::SurfaceHub hub(*g.dev, g.conv);
+  hub.subscribe("c1", {{"cam:A", 64, 64}, {"cam:B", 64, 64}});
+  hub.subscribe("c2", {{"cam:A", 64, 64}});
+  CHECK(hub.brokenIds().empty());
+  hub.dropClient("c2");
+  CHECK(hub.brokenIds().empty());
+}
