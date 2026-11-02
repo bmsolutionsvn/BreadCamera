@@ -242,6 +242,12 @@ windowed controller when it fails.
   `--bm-bg`), not `BLACK_BRUSH`. With a topmost DirectComposition target, the window's own
   background shows wherever no visual paints.
 - The page URL gets `&nativeVideo=1` when `CompositionHost` started. The page reads it at load.
+- Kill switch: the environment variable `BC_NO_COMPOSITION=1` makes the shell use the windowed
+  controller (the H.264 fallback). It is for operators if composition misbehaves at a show, and
+  for A/B checks.
+- BreadReplay only: binary preview messages go only to clients that sent `wantPreviews` (a
+  fallback page sends it on connect). Today they go to every client, including the shell's
+  heartbeat socket, so the encoders would otherwise never be idle.
 
 ## 6. Page side (each app's `ui/`)
 
