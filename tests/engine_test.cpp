@@ -365,22 +365,31 @@ TEST_CASE("Engine: input health is published") {
 // A synchronous output records the frame the camera hands it *on the tick thread*, so a test
 // can assert exactly what was submitted this tick (FakeOutput's worker thread is racy here).
 namespace {
+// What an output asks of its camera: a CPU image, or the frame as an R8G8B8A8 texture.
+struct RecSpec {
+  bool needsCpu;
+  bool wantsGpu;
+};
+
 class RecordingOutput final : public bc::Output {
  public:
-  explicit RecordingOutput(bool needsCpu) : needsCpu_(needsCpu) {}
-  bool needsCpu() const override { return needsCpu_; }
+  explicit RecordingOutput(RecSpec spec) : spec_(spec) {}
+  bool needsCpu() const override { return spec_.needsCpu; }
+  bool wantsGpuRgba8() const override { return spec_.wantsGpu; }
   void start() override {}
   void submit(bc::OutFrame f) override {
     last = std::move(f.bgra);
+    lastRgba8 = std::move(f.rgba8);
     ++submitted;
   }
   void stop() override {}
   bc::OutputStatus status() const override { return {}; }
   std::shared_ptr<const bc::CpuImage> last;
+  bc::TextureRef lastRgba8;
   int submitted = 0;
 
  private:
-  bool needsCpu_;
+  RecSpec spec_;
 };
 
 class NoInput final : public bc::Input {
@@ -391,10 +400,14 @@ class NoInput final : public bc::Input {
 
 class RecordingFactory final : public bc::AdapterFactory {
  public:
-  explicit RecordingFactory(bool needsCpu) : needsCpu_(needsCpu) {}
+  // Every output gets this spec.
+  explicit RecordingFactory(bool needsCpu) : spec_{needsCpu, false} {}
+  // One spec per output, in creation order (the last one repeats).
+  explicit RecordingFactory(std::vector<RecSpec> specs) : specs_(std::move(specs)) {}
   std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoInput>(); }
   std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
-    auto o = std::make_unique<RecordingOutput>(needsCpu_);
+    const RecSpec spec = all.size() < specs_.size() ? specs_[all.size()] : spec_;
+    auto o = std::make_unique<RecordingOutput>(spec);
     made = o.get();
     all.push_back(o.get());
     return o;
@@ -403,7 +416,8 @@ class RecordingFactory final : public bc::AdapterFactory {
   std::vector<RecordingOutput*> all;  // in creation (show output) order
 
  private:
-  bool needsCpu_;
+  RecSpec spec_{true, false};
+  std::vector<RecSpec> specs_;
 };
 
 // A solid BGRA frame of one colour, to push straight into a Camera (no input thread).
@@ -680,6 +694,75 @@ TEST_CASE("GPU-only camera: a visible preview forces one readback") {
 
   tick(21, /*previewWanted=*/false);
   CHECK(camera.readbackSlotCount() == 0);  // preview gone, still no CPU output: released
+  camera.stop();
+}
+
+// Task 3 (OMT copy paths): an HX output sends from the GPU, so a camera whose only consumer is
+// such an output does no readback at all; it gets the frame as an R8G8B8A8 texture instead. A CPU
+// output beside it still forces the one readback, and both get their frame (acceptance 3).
+TEST_CASE("Camera: an HX GPU output alone does not read back") {
+  Rig r;
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&](bc::Camera& c) {
+    c.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    c.beginTick(now, slate);
+    c.endTick(now, nullptr);
+    std::this_thread::sleep_for(3ms);
+  };
+
+  RecordingFactory gpuOnly(std::vector<RecSpec>{{/*needsCpu=*/false, /*wantsGpu=*/true}});
+  bc::Camera camera(cam("a", {out("o1")}), gpuOnly, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(gpuOnly.all.size() == 1);
+  for (int i = 0; i < 30; ++i) tick(camera);
+  CHECK(camera.tickCpu() == nullptr);  // no readback for a GPU-only consumer
+  CHECK(camera.readbackSlotCount() == 0);
+  CHECK(gpuOnly.all[0]->last == nullptr);
+  REQUIRE(gpuOnly.all[0]->lastRgba8 != nullptr);  // the frame arrives as a GPU texture instead
+  CHECK(gpuOnly.all[0]->lastRgba8->format == DXGI_FORMAT_R8G8B8A8_UNORM);
+  CHECK(gpuOnly.all[0]->lastRgba8->width == 64);
+  CHECK(gpuOnly.all[0]->lastRgba8->height == 36);
+  camera.stop();
+
+  RecordingFactory mixed(std::vector<RecSpec>{{false, true}, {true, false}});
+  bc::Camera both(cam("a", {out("o1"), out("o2")}), mixed, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                  bc::SyncPolicy{});
+  both.start();
+  REQUIRE(mixed.all.size() == 2);
+  for (int i = 0; i < 30; ++i) tick(both);
+  CHECK(both.tickCpu() != nullptr);  // the CPU output forces the one readback
+  CHECK(both.readbackSlotCount() == 1);
+  CHECK(mixed.all[0]->lastRgba8 != nullptr);   // the HX output still sends from the GPU
+  CHECK(mixed.all[1]->last != nullptr);        // the CPU output gets the shared image
+  CHECK(mixed.all[1]->lastRgba8 == nullptr);   // and is not handed the GPU frame it never asked for
+  both.stop();
+}
+
+// The D3D11 path takes no alpha, so a keyed frame must still be read back for an HX output:
+// otherwise the alpha picture would be dropped. It goes through memory, as every output did before.
+TEST_CASE("Camera: an alpha frame stays on the memory path for an HX output") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/false, /*wantsGpu=*/true}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.stages = {{"background", bc::normalizeStageParams("background", {{"mode", "keyed"}})}};
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(factory.all.size() == 1);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto alpha = r.conv.solid(64, 36, {1, 1, 1, 1});  // a full matte: the person everywhere
+  for (int i = 0; i < 30; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, alpha);
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(camera.readbackSlotCount() == 1);
+  CHECK(camera.tickCpu() != nullptr);
+  REQUIRE(factory.all[0]->last != nullptr);     // the alpha frame reaches the output through memory
+  CHECK(factory.all[0]->lastRgba8 == nullptr);  // not as a texture, which cannot carry alpha
   camera.stop();
 }
 

@@ -610,11 +610,13 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
   // image (one tick behind at most). The tick never maps the frame. Run once per tick, so two
   // CPU outputs and the frame tap all get the *same* image, not one a tick apart.
   bool anyCpu = false;
+  bool anyGpu = false;
   for (auto& s : outputs_) {
-    if (s.out && s.out->needsCpu()) {
-      anyCpu = true;
-      break;
-    }
+    if (!s.out) continue;
+    // An alpha frame cannot go over a D3D11 path (it takes no alpha), so a GPU output needs the
+    // readback for it and sends it through memory, as every output did before.
+    anyCpu = anyCpu || s.out->needsCpu() || (hasAlpha && s.out->wantsGpuRgba8());
+    anyGpu = anyGpu || s.out->wantsGpuRgba8();
   }
   std::shared_ptr<const CpuImage> cpu;
   if (anyCpu || previewWanted) {
@@ -637,6 +639,11 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
   }
   tickCpu_ = cpu;
 
+  // The GPU outputs' frame, made once per tick and only when one wants it (spec §4.2). It is not a
+  // readback: the texture stays on the GPU and the outputs' threads use it directly.
+  TextureRef rgba8;
+  if (anyGpu && !hasAlpha) rgba8 = tools_.conv.toBgra8(*frame, frame->width, frame->height, /*swapRb=*/false);
+
   for (auto& s : outputs_) {
     if (!s.out) continue;
     if (!rateStale_.load() && (s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !(s.outRate == nominalRate())) {
@@ -647,7 +654,9 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
       s.outRate = Rate{0, 1};
       continue;
     }
-    const std::shared_ptr<const CpuImage> outCpu = s.out->needsCpu() ? cpu : nullptr;
+    const std::shared_ptr<const CpuImage> outCpu =
+        (s.out->needsCpu() || (hasAlpha && s.out->wantsGpuRgba8())) ? cpu : nullptr;
+    const TextureRef outRgba8 = s.out->wantsGpuRgba8() ? rgba8 : nullptr;
     std::shared_ptr<const std::vector<float>> outAudio = audio;
     if (s.cfg.halfRate) {
       // Half rate: every second emitted frame, carrying the odd frame's audio so nothing is lost.
@@ -662,7 +671,7 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
     }
     const Rate outRate = s.cfg.halfRate ? Rate{nominalRate().num, nominalRate().den * 2} : nominalRate();
     const uint64_t outTick = s.cfg.halfRate ? s.halfTick++ : tickIndex_;
-    s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outAudio, 48000, 2, hasAlpha});
+    s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outRgba8, outAudio, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);

@@ -139,7 +139,7 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
     if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
     const auto codec = cfg.params.value("codec", std::string("hevc")) == "h264" ? omthx::Codec::H264 : omthx::Codec::Hevc;
-    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec);
+    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec, cfg.keyed);
 #else
     (void)cam;
     throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");

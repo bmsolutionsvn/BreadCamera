@@ -3,8 +3,8 @@
 #include <stdexcept>
 
 namespace bc {
-OmthOutput::OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec)
-    : name_(std::move(name)), mode_(mode), codec_(codec) {}
+OmthOutput::OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec, bool keyed)
+    : name_(std::move(name)), mode_(mode), codec_(codec), keyed_(keyed) {}
 
 std::string OmthOutput::address() const {
   std::lock_guard lock(addrMutex_);
@@ -17,16 +17,46 @@ void OmthOutput::open() {
   address_ = send_->address();
 }
 
+void OmthOutput::refuse(const std::string& why) {
+  if (gpuRefused_.exchange(true)) return;  // the first reason is the one that sticks
+  std::lock_guard lock(warnMutex_);
+  warn_ = "OMT HX is sending through memory: " + why;
+}
+
 void OmthOutput::deliver(const OutFrame& f) {
   // A tick the queue dropped needs no keyframe: the encoder never saw it, and omthx numbers the coded
   // frames, so the receiver plays on.
-  if (f.bgra && !f.bgra->bgra.empty()) {
+  const int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
+  bool sentVideo = false;
+  if (f.rgba8 && !f.hasAlpha && wantsGpuRgba8()) {
+    // The GPU path takes no alpha, so a frame with it stays on the CPU path as it always has.
+    if (f.rgba8->width % 2 != 0 || f.rgba8->height % 2 != 0) {
+      refuse("the frame is " + std::to_string(f.rgba8->width) + "x" + std::to_string(f.rgba8->height) +
+             " and the GPU encoder needs even sizes");
+    } else {
+      format_.width = static_cast<int>(f.rgba8->width);
+      format_.height = static_cast<int>(f.rgba8->height);
+      format_.fpsN = static_cast<int>(f.rate.num);
+      format_.fpsD = static_cast<int>(f.rate.den);
+      format_.alpha = false;
+      try {
+        // No GpuDevice::lock() here: an encode can take milliseconds and would stall the tick. The
+        // device's immediate context is multithread-protected (omthx ensures it too).
+        send_->sendVideoD3D11(format_, f.rgba8->tex.Get(), ts);
+        sentVideo = true;
+      } catch (const std::exception& e) {
+        refuse(e.what());
+        return;  // this frame is dropped; the next one comes through memory
+      }
+    }
+  }
+
+  if (!sentVideo && f.bgra && !f.bgra->bgra.empty()) {
     format_.width = static_cast<int>(f.bgra->width);
     format_.height = static_cast<int>(f.bgra->height);
     format_.fpsN = static_cast<int>(f.rate.num);
     format_.fpsD = static_cast<int>(f.rate.den);
     format_.alpha = f.hasAlpha;
-    const int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
     // BreadCamera's BGRA is straight, so premultiplied == false.
     send_->sendVideo(format_, f.bgra->bgra, false, ts);
   }
@@ -37,7 +67,6 @@ void OmthOutput::deliver(const OutFrame& f) {
     planar_.resize(f.audio->size());
     for (int c = 0; c < ch; ++c)
       for (int i = 0; i < n; ++i) planar_[static_cast<size_t>(c) * n + i] = (*f.audio)[static_cast<size_t>(i) * ch + c];
-    const int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
     send_->sendAudio(planar_, f.sampleRate, ch, ts);
   }
 
@@ -50,6 +79,11 @@ OutputStatus OmthOutput::status() const {
   OutputStatus s = QueuedOutput::status();
   s.program = program_;
   s.preview = preview_;
+  if (gpuRefused_) {
+    // The output has no state path of its own, so the refusal rides in the error (state stays Live).
+    std::lock_guard lock(warnMutex_);
+    if (!s.error) s.error = ErrorInfo{"omt-gpu-refused", warn_};
+  }
   return s;
 }
 

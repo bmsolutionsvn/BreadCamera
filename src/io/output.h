@@ -16,6 +16,7 @@ struct OutFrame {
   Rate rate;
   TextureRef linear;                            // RGBA16F linear
   std::shared_ptr<const CpuImage> bgra;         // set when any output needsCpu()
+  TextureRef rgba8;                             // R8G8B8A8_UNORM, true RGBA; set when any output wantsGpuRgba8()
   std::shared_ptr<const std::vector<float>> audio;  // interleaved, this tick's samples
   int sampleRate = 48000;
   int channels = 2;
@@ -35,6 +36,9 @@ class Output {
  public:
   virtual ~Output() = default;
   virtual bool needsCpu() const = 0;
+  // True when this output can send the frame straight from the GPU: OutFrame::rgba8 instead of a
+  // readback. needsCpu() must be false while it says true.
+  virtual bool wantsGpuRgba8() const { return false; }
   virtual void start() = 0;
   virtual void submit(OutFrame frame) = 0;  // never blocks
   virtual void stop() = 0;
