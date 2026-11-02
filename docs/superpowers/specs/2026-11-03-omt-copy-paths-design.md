@@ -1,6 +1,7 @@
 # OMT copy paths: the input leak, HX output on the GPU, HX input as NV12 — Design
 
-Date: 2026-11-03. Status: approved by the owner (2026-11-03), plan
+Date: 2026-11-03. Status: implemented; measured 2026-11-03
+(`docs/superpowers/2026-11-03-copy-path-audit.md`, "Measured after the fixes"), plan
 `docs/superpowers/plans/2026-11-03-omt-copy-paths.md`.
 
 Background and measurements: `docs/superpowers/2026-11-03-copy-path-audit.md` (findings 1, 2 and 4).
