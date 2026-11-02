@@ -403,6 +403,8 @@ add_library(bc_engine STATIC
   src/engine/preview_encoder.cpp
   src/engine/preview_hub.cpp
   src/engine/preview_service.cpp
+  # native-video Task 3
+  src/engine/surface_hub.cpp
   # Task 11
   src/engine/command_router.cpp
   src/engine/control_server.cpp
@@ -569,6 +571,8 @@ add_executable(bc_tests
   tests/readback_test.cpp
   # native-video Task 2
   tests/surface_presenter_test.cpp
+  # native-video Task 3
+  tests/surface_hub_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)

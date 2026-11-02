@@ -28,6 +28,13 @@ std::string str(const json& args, const char* key) {
   if (!args.contains(key) || !args[key].is_string()) throw CmdError("bad-request", std::string(key) + " must be text");
   return args[key].get<std::string>();
 }
+// A surface's device-pixel size; the presenter clamps to 16..4096 (spec §4.1).
+uint32_t surfaceSize(const json& o, const char* key) {
+  if (!o.contains(key) || !o[key].is_number_integer()) throw CmdError("bad-request", std::string(key) + " must be a whole number");
+  const long long v = o[key].get<long long>();
+  if (v < 0) throw CmdError("bad-request", std::string(key) + " must not be negative");
+  return static_cast<uint32_t>(std::min<long long>(v, 4096));
+}
 std::string name(const json& args) {
   auto n = str(args, "name");
   if (n.empty() || utf8Length(n) > 80) throw CmdError("invalid", "name must be 1 to 80 characters");
@@ -314,6 +321,16 @@ json CommandRouter::dispatch(const ClientId& client, const std::string& cmd, con
     }
     fx_.subscribePreview(client, std::move(ids), sizeArg(args));
     return json::object();
+  }
+  if (cmd == "subscribeSurfaces") {
+    if (!args.contains("surfaces") || !args["surfaces"].is_array()) throw CmdError("bad-request", "surfaces must be a list");
+    if (args["surfaces"].size() > 64) throw CmdError("bad-request", "at most 64 surfaces can be subscribed");
+    std::vector<SurfaceRequest> wanted;
+    for (const auto& v : args["surfaces"]) {
+      if (!v.is_object()) throw CmdError("bad-request", "each surface must be an object");
+      wanted.push_back({str(v, "id"), surfaceSize(v, "w"), surfaceSize(v, "h")});
+    }
+    return fx_.subscribeSurfaces(client, std::move(wanted));
   }
   if (cmd == "requestKeyframe") {
     fx_.requestKeyframe(str(args, "cameraId"), sizeArg(args));
