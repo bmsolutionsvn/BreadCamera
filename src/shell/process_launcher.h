@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 
@@ -36,12 +37,21 @@ class ProcessLauncher final : public EngineLauncher {
   void launch() override;
   void kill() override;
   void adopt(DWORD pid);
-  DWORD pid() const { return pid_; }
+  DWORD pid() const;
+  struct Identity {
+    DWORD pid = 0;
+    HANDLE process = nullptr;
+  };
+  // One consistent pid + process-handle pair, read under the launcher's lock. The handle is a
+  // duplicate the caller owns (CloseHandle it), so a supervisor relaunch cannot close it while a
+  // layer handle is copied out of that exact process.
+  Identity identity() const;
 
  private:
   std::filesystem::path exe_;
   std::wstring args_;
   HANDLE process_ = nullptr;
   DWORD pid_ = 0;
+  mutable std::mutex m_;
 };
 }  // namespace bc

@@ -573,6 +573,7 @@ add_executable(bc_tests
   tests/surface_presenter_test.cpp
   # native-video Task 3
   tests/surface_hub_test.cpp
+  tests/composition_host_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
@@ -586,9 +587,9 @@ target_link_libraries(breadcamera-engine PRIVATE bc_engine shell32 ole32)
 bc_copy_runtime(breadcamera-engine)
 
 # ---- shell ----
-add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.cpp)
+add_library(bc_shell STATIC src/shell/supervisor.cpp src/shell/process_launcher.cpp src/shell/composition_host.cpp)
 target_include_directories(bc_shell PUBLIC src)
-target_link_libraries(bc_shell PUBLIC bc_core)
+target_link_libraries(bc_shell PUBLIC bc_core unofficial::webview2::webview2 WIL::WIL dcomp uiautomationcore)
 
 # ---- soak / fault-injection tool (M5 Task 3, spec §8.3/§8.4) ----
 # Drives the real breadcamera-engine.exe over the control API with in-process SRT test
