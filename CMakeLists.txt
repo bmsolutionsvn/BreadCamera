@@ -592,6 +592,10 @@ target_link_libraries(bc_soak PRIVATE bc_engine bc_shell psapi)
 add_dependencies(bc_soak breadcamera-engine)
 bc_copy_runtime(bc_soak)
 
+# ---- native-video Task 1 — cross-process composition surface probe (the plan's gate) ----
+add_executable(bc_native_video_probe tools/native_video_probe/probe_main.cpp)
+target_link_libraries(bc_native_video_probe PRIVATE bc_gpu dcomp user32 gdi32)
+
 add_executable(BreadCamera WIN32 src/shell/shell_main.cpp)
 target_link_libraries(BreadCamera PRIVATE bc_shell bc_engine unofficial::webview2::webview2 WIL::WIL shell32 ole32 user32 dwmapi)
 
