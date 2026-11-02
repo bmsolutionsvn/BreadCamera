@@ -4,7 +4,9 @@
 #include <wrl/client.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,7 @@
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/image_io.h"
+#include "gpu/nv12_upload.h"
 #include "gpu/texture_pool.h"
 
 using Microsoft::WRL::ComPtr;
@@ -70,6 +73,22 @@ bc::TextureRef makeNv12(bc::GpuDevice& dev, uint32_t w, uint32_t h, uint8_t y, u
   ComPtr<ID3D11Texture2D> tex;
   REQUIRE(SUCCEEDED(dev.device()->CreateTexture2D(&d, &init, &tex)));
   return bc::wrapTexture(dev.device(), tex);
+}
+
+// The forward full-range BT.709 matrix: yuvToRgbMatrix is its inverse, so a BT.709 decode
+// returns the RGB this encoded.
+void rgbToNv12(uint8_t r, uint8_t g, uint8_t b, uint32_t w, uint32_t h, std::vector<uint8_t>& y,
+               std::vector<uint8_t>& uv) {
+  const float rf = r / 255.f, gf = g / 255.f, bf = b / 255.f;
+  const float luma = 0.2126f * rf + 0.7152f * gf + 0.0722f * bf;
+  const float cb = (bf - luma) / 1.8556f + 0.5f;
+  const float cr = (rf - luma) / 1.5748f + 0.5f;
+  y.assign(static_cast<size_t>(w) * h, static_cast<uint8_t>(std::lround(luma * 255.f)));
+  uv.assign(static_cast<size_t>(w) * h / 2, 0);
+  for (size_t i = 0; i < uv.size(); i += 2) {
+    uv[i] = static_cast<uint8_t>(std::lround(cb * 255.f));
+    uv[i + 1] = static_cast<uint8_t>(std::lround(cr * 255.f));
+  }
 }
 
 void checkAll(const bc::CpuImage& img, int b, int g, int r, int tol) {
@@ -138,6 +157,54 @@ TEST_CASE("Converter: NV12 BT.709 red lands in the red channel") {
   auto red = makeNv12(*g.dev, 16, 720, 63, 102, 240);
   auto img = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*red, bc::PixelLayout::NV12, false), 16, 720));
   checkAll(img, 0, 0, 255, 4);
+}
+
+TEST_CASE("Converter: NV12 planes convert with BT.709 at any size") {
+  Gpu g;
+  const uint32_t w = 640, h = 360;  // below 720: yuvToRgbMatrix alone would pick BT.601
+  std::vector<uint8_t> y, uv;
+  rgbToNv12(200, 50, 100, w, h, y, uv);
+  auto planes = bc::uploadNv12Planes(*g.dev, g.pool, y.data(), uv.data(), w, h);
+  REQUIRE(planes);
+  CHECK(planes->width == w);
+  CHECK(planes->height == h);
+
+  const auto centre = [](const bc::CpuImage& img) {
+    return &img.bgra[(static_cast<size_t>(img.height / 2) * img.width + img.width / 2) * 4];
+  };
+  auto bt709 = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*planes, bc::PixelLayout::NV12, true, true), w, h));
+  CHECK(std::abs(centre(bt709)[0] - 100) <= 8);  // B
+  CHECK(std::abs(centre(bt709)[1] - 50) <= 8);   // G
+  CHECK(std::abs(centre(bt709)[2] - 200) <= 8);  // R
+
+  // The same planes read through the height rule (BT.601 at 360) land elsewhere: the flag switched it.
+  auto bt601 = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*planes, bc::PixelLayout::NV12, true, false), w, h));
+  const bool differs = std::abs(centre(bt601)[0] - 100) > 8 || std::abs(centre(bt601)[1] - 50) > 8 ||
+                       std::abs(centre(bt601)[2] - 200) > 8;
+  CHECK(differs);
+
+  // A horizontally varying luma row: if the upload ignored RowPitch or wrote a row at the wrong
+  // offset, these samples would shift or garble. Neutral chroma keeps R = G = B = Y.
+  const uint32_t rw = 64, rh = 4;
+  std::vector<uint8_t> ry(rw * rh), ruv(static_cast<size_t>(rw) * rh / 2, 128);
+  for (uint32_t row = 0; row < rh; ++row)
+    for (uint32_t x = 0; x < rw; ++x) ry[static_cast<size_t>(row) * rw + x] = static_cast<uint8_t>(x * 4);
+  auto ramp = bc::uploadNv12Planes(*g.dev, g.pool, ry.data(), ruv.data(), rw, rh);
+  auto rampImg =
+      g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*ramp, bc::PixelLayout::NV12, true, true), rw, rh));
+  auto at = [&](uint32_t x, uint32_t row) {
+    return &rampImg.bgra[(static_cast<size_t>(row) * rw + x) * 4];
+  };
+  for (uint32_t row : {0u, 1u, 3u}) {
+    for (uint32_t x : {1u, 31u, 62u}) {
+      const int want = static_cast<int>(x * 4);
+      CHECK(std::abs(at(x, row)[0] - want) <= 2);
+      CHECK(std::abs(at(x, row)[1] - want) <= 2);
+      CHECK(std::abs(at(x, row)[2] - want) <= 2);
+    }
+  }
+
+  CHECK_THROWS_AS(bc::uploadNv12Planes(*g.dev, g.pool, ry.data(), ruv.data(), 63, rh), std::invalid_argument);
 }
 
 TEST_CASE("Converter: downscaling blends in linear light") {

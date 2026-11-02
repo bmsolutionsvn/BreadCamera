@@ -237,6 +237,7 @@ add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
+  src/gpu/nv12_upload.cpp
   src/gpu/readback.cpp
   src/gpu/image_io.cpp
   src/gpu/compositor.cpp

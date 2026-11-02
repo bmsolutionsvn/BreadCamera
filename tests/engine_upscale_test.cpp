@@ -64,7 +64,7 @@ bc::VideoFrameIn solidFrame(bc::Converter& conv, uint8_t red, uint32_t w, uint32
     px[p + 2] = red;
     px[p + 3] = 255;
   }
-  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, 0};
+  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, false, 0};
 }
 }  // namespace
 

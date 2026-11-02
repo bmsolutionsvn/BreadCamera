@@ -17,6 +17,52 @@ Raw output: `scratchpad/omt-bench-result.txt` of the session that ran it. The sc
 same session's `omt-bench.ps1` (show files generated per case, SRT pushers via ffmpeg lavfi, OMT sources via
 `omthx-send`).
 
+## Measured after the fixes (2026-11-03)
+
+Same bench, machine and four cases, on branch `bcam-omt-copy-paths` at 693738f (leak fixed, HX output sent from
+the GPU, HX input arriving as NV12). Engine only, 4 cameras at 1080p30, 16 logical cores; every camera was Live
+at 29-31 fps and every output Live with no error. Two of P1's cameras dropped about 1 % of their input frames (13
+and 16 over the phase) while `inputError` stayed null. Private memory is `PrivateMemorySize64` at the window's
+start and end; overruns are `/engine/overruns` from the control snapshot at the window's start and end. Values
+in brackets are deltas over this run's P0.
+
+| Case | Engine CPU | Engine GPU | Memory (working set) | Private memory | Overruns | Window |
+|---|---|---|---|---|---|---|
+| P0: 4 SRT inputs (H.264, hardware decode), no outputs | 6.6 % | 25.0 % (codec 14.3, 3D 10.7) | 964 → 965 MB | 1,256 → 1,254 MB | 0 → 0 | 50 s |
+| P1: P0 + one OMT **HX** (HEVC) output per camera | 8.9 % (+2.3) | 59.2 % (+34.2: codec +27.8, 3D +6.4) | 302 → 316 MB | 797 → 809 MB | 0 → 0 | 46 s |
+| P2: P0 + one OMT **Full** (VMX) output per camera | 14.6 % (+8.0) | 36.0 % (+11.0, 3D) | 924 → 919 MB | 1,280 → 1,284 MB | 0 → 1 | 59 s |
+| P3: 4 OMT HX inputs (omthx-send, HEVC), no outputs | 1.3 % (−5.3) | 44.5 % (+19.5: codec +20.7, 3D −1.2) | 289 → 300 MB | 1,255 → 1,265 MB | 0 → 0 | 39 s |
+
+Raw output: `.superpowers/omt-bench-result.txt`. P1 and P3 have working sets about 0.66 GB below P0's with the
+same inputs (662 MB and 675 MB). P1's private memory is also about 0.46 GB below P0's (459 MB) while P3's is not
+(1 MB). That is reproducible and unexplained, and no claim here depends on it.
+
+CPU is CPU-seconds ÷ the measured window ÷ 16 cores. The table above divided by a nominal 30 s, while one
+`Get-Counter` pass of 30 one-second samples takes 39-59 s on this machine's 877 GPU instances, so its CPU column
+is inflated by each case's own factor: P0 50/30 = 1.67, P1 46/30 = 1.53, P2 59/30 = 1.97, P3 39/30 = 1.30. On
+the audit's basis this run is **P0 11.0, P1 13.6, P2 28.7, P3 1.7**, and those are the figures to compare with
+the table above; the bracketed deltas are this run's own figures, divided by this run's windows, so the audit's
+inflation never enters them. The audit's run did not record its windows, so its inflation is only known to be
+roughly 1.5-2×: cross-table CPU comparisons are approximate, same-run deltas are not.
+
+### What changed, finding by finding
+
+- **1. OMT input leak: fixed.** P3's private memory is 1,255 → 1,265 MB over a 39 s window (~1,170 frames),
+  flat. Before: 9 GB and growing.
+- **2. OMT HX output: about 9 threads in total (2.3 per output) → about 0.4 threads in total (0.1 per output).**
+  On the audit's basis P1's CPU over P0 is +2.6 points = 0.42 of a thread for all four outputs (0.1 each), where
+  the audit measured +56.7 = 9.07 threads (2.27 each). The GPU still pays for the encode (codec +27.8 against the
+  audit's +27); the readback's 3D work is gone (3D +6.4 against +18).
+- **3. OMT Full (VMX) output: unchanged, and no CPU improvement is claimed.** Its GPU 3D is +10.8, the same as
+  the audit's +11, so the path behaves as before. On the audit's basis its CPU over P0 is +17.7 (28.7 against
+  11.0), against +28.3 in the audit — an amount this bench cannot attribute: the unchanged code measured 42.7
+  (audit), 37.0 (this task's first run) and 28.7 (this run) on that basis, with the same code path.
+- **4. OMT HX input: 23.4 % → 1.7 % CPU on the audit's basis, 54.8 % → 44.5 % GPU.** NV12 upload plus the GPU
+  conversion removes the per-frame swscale and 60 % of the upload. GPU codec is +20.7 over P0 (HEVC decode
+  itself), 3D slightly below P0. Same-run CPU delta: −5.3 points.
+- **5. Tick overruns:** four HX GPU outputs added none: P1 0 over 46 s (0 per minute), P0 0 over 50 s, P3 0 over
+  39 s; the Full-output CPU path had 1 over 59 s (about 1 per minute). The windows differ, so read these as rates.
+
 ## Findings, worst first
 
 ### 1. OMT input leaks one BGRA frame per received frame (bug, critical)

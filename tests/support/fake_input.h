@@ -70,7 +70,8 @@ class FakeInput final : public bc::Input {
         }
       }
     }
-    bc::VideoFrameIn f{conv_.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, n * 1'000'000 / fps_};
+    bc::VideoFrameIn f{conv_.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, false,
+                       n * 1'000'000 / fps_};
     f.rate = rate_;
     sink.onVideo(std::move(f));
     sink.onAudio(bc::AudioBlock{48000, 2, std::vector<float>(48000 / fps_ * 2, 0.1f)});

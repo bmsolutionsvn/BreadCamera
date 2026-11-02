@@ -10,8 +10,9 @@
 
 namespace bc {
 // OMT receive through omthx: plain OMT (VMX) and OMT HX (HEVC or H.264) with one receiver, the
-// mode read from the source's own header. Pictures arrive as BGRA8; audio is 48 kHz and is taken
-// from planar float. This is the low-bandwidth door for BreadCamera's own OMT HX outputs.
+// mode read from the source's own header. Hx pictures arrive as full-range BT.709 NV12 and are
+// uploaded on the GPU; plain OMT arrives as BGRA8. Audio is 48 kHz and is taken from planar float.
+// This is the low-bandwidth door for BreadCamera's own OMT HX outputs.
 class OmtInput final : public Input {
  public:
   OmtInput(GpuDevice& gpu, TexturePool& pool, std::string source) : gpu_(gpu), pool_(pool), source_(std::move(source)) {}
