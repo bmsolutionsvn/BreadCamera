@@ -248,10 +248,12 @@ add_library(bc_gpu STATIC
   src/gpu/upscaler.cpp
   # webcam-fx Task 4 (compiles to a null path when BC_WITH_RTXVIDEO=0)
   src/gpu/rtx_video.cpp
+  # native-video Task 2
+  src/gpu/surface_presenter.cpp
   ${BC_SHADER_HEADERS}
 )
 target_include_directories(bc_gpu PUBLIC src ${BC_SHADER_DIR})
-target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi windowscodecs)
+target_link_libraries(bc_gpu PUBLIC bc_core d3d11 dxgi dcomp windowscodecs)
 if(BC_WITH_RTXVIDEO)
   target_include_directories(bc_gpu PUBLIC ${RTXVIDEO_INCLUDE_DIR})
   target_link_libraries(bc_gpu PUBLIC "${RTXVIDEO_NGX_LIB}")
@@ -565,6 +567,8 @@ add_executable(bc_tests
   tests/e2e_real_effects_test.cpp
   # bcam-readback Task 1
   tests/readback_test.cpp
+  # native-video Task 2
+  tests/surface_presenter_test.cpp
 )
 target_include_directories(bc_tests PRIVATE tests)
 target_link_libraries(bc_tests PRIVATE bc_core bc_gpu bc_io bc_engine bc_shell doctest::doctest)
