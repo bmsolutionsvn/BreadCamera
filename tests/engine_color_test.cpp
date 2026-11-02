@@ -139,7 +139,7 @@ TEST_CASE("Camera: the colour stage publishes its GPU time") {
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
   for (int i = 0; i < 60 && camera.stageGpuMs("color") <= 0; ++i) {
     const auto now = std::chrono::steady_clock::now();
-    camera.onVideo(bc::VideoFrameIn{r.conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, i});
+    camera.onVideo(bc::VideoFrameIn{r.conv.uploadBgra8(px.data(), 64, 36, 64 * 4), bc::PixelLayout::BGRA8, true, false, i});
     camera.beginTick(now, slate);
     camera.endTick(now, nullptr);
     r.gpu->context()->Flush();
@@ -162,7 +162,7 @@ bc::VideoFrameIn solidFrame(bc::Converter& conv, uint8_t b, uint8_t g, uint8_t r
     px[p + 2] = r;
     px[p + 3] = 255;
   }
-  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, 0};
+  return bc::VideoFrameIn{conv.uploadBgra8(px.data(), w, h, w * 4), bc::PixelLayout::BGRA8, true, false, 0};
 }
 double ratio(uint8_t a, uint8_t b) { return static_cast<double>(a) / std::max<int>(b, 1); }
 }  // namespace

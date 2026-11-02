@@ -465,7 +465,7 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
       // The frame is the input's own size: there is no show-wide frame size to scale to.
-      lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange);
+      lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange, f.bt709);
       sawFrame_ = true;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }

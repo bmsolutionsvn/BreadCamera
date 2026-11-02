@@ -28,9 +28,10 @@ void copyRows(const D3D11_MAPPED_SUBRESOURCE& m, uint32_t width, uint32_t height
 }
 }  // namespace
 
-YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange) {
-  const float kr = height >= 720 ? 0.2126f : 0.299f;
-  const float kb = height >= 720 ? 0.0722f : 0.114f;
+YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange, bool forceBt709) {
+  const bool bt709 = forceBt709 || height >= 720;
+  const float kr = bt709 ? 0.2126f : 0.299f;
+  const float kb = bt709 ? 0.0722f : 0.114f;
   const float kg = 1.0f - kr - kb;
   // Y' = ys*Y + yo ; Pb = cs*Cb + co ; Pr = cs*Cr + co   (inputs are unorm 0..1)
   const float ys = fullRange ? 1.0f : 255.0f / 219.0f;
@@ -86,7 +87,7 @@ void Converter::dispatch(ID3D11ComputeShader* cs, ID3D11ShaderResourceView* cons
   ctx->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
 }
 
-TextureRef Converter::toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange) {
+TextureRef Converter::toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange, bool forceBt709) {
   auto out = pool_.acquire(src.width, src.height, kLinearFormat,
                            D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
   Params p{};
@@ -96,7 +97,7 @@ TextureRef Converter::toLinear(const GpuTexture& src, PixelLayout layout, bool f
     ID3D11ShaderResourceView* srvs[] = {src.srv.Get()};
     dispatch(bgraCs_.Get(), srvs, 1, out->uav.Get(), p);
   } else {
-    auto m = yuvToRgbMatrix(src.height, fullRange);
+    auto m = yuvToRgbMatrix(src.height, fullRange, forceBt709);
     std::memcpy(p.row0, m.rows[0].data(), sizeof(p.row0));
     std::memcpy(p.row1, m.rows[1].data(), sizeof(p.row1));
     std::memcpy(p.row2, m.rows[2].data(), sizeof(p.row2));

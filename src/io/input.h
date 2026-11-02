@@ -15,6 +15,7 @@ struct VideoFrameIn {
   TextureRef tex;  // NV12/P010 (planar SRVs) or BGRA8 (srv)
   PixelLayout layout = PixelLayout::NV12;
   bool fullRange = false;
+  bool bt709 = false;  // force BT.709 for YUV at any height (OMT-HX's NV12)
   int64_t ptsUs = 0;
   std::optional<Rate> rate;  // the source's declared nominal rate; empty when unknown
 };

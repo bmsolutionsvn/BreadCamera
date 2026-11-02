@@ -19,15 +19,16 @@ struct CpuImage {
 struct YuvMatrix {
   std::array<std::array<float, 4>, 3> rows;
 };
-// BT.709 for height >= 720, else BT.601; limited range unless fullRange.
-YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange);
+// BT.709 for height >= 720 (or when forceBt709), else BT.601; limited range unless fullRange.
+YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange, bool forceBt709 = false);
 
 class Converter {
  public:
   static constexpr DXGI_FORMAT kLinearFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
   Converter(GpuDevice& gpu, TexturePool& pool);
 
-  TextureRef toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange);
+  // forceBt709: YUV that is BT.709 at any height (OMT-HX's NV12), overriding the height rule.
+  TextureRef toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange, bool forceBt709 = false);
   // R8G8B8A8_UNORM holding BGRA bytes, for CPU readback. swapRb = false keeps true RGBA order
   // for GPU consumers that sample it as RGBA (the RTX Video path).
   TextureRef toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH, bool swapRb = true);

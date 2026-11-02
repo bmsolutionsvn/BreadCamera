@@ -44,6 +44,72 @@ struct CountingSink : bc::InputSink {
     if (state == bc::SignalState::Live) live = true;
   }
 };
+
+// Converts every picture it gets, so the layout, range and matrix the input declared are the ones
+// the real pipeline would use.
+struct PictureSink : bc::InputSink {
+  explicit PictureSink(bc::Converter& c) : conv(c) {}
+  bc::Converter& conv;
+  std::atomic<int> videos{0};
+  std::atomic<int> layout{-1};
+  std::atomic<bool> fullRange{false};
+  std::atomic<bool> bt709{false};
+  std::atomic<bool> colourOk{true};
+
+  void onVideo(bc::VideoFrameIn f) override {
+    if (!f.tex) return;
+    layout = static_cast<int>(f.layout);
+    fullRange = f.fullRange;
+    bt709 = f.bt709;
+    try {
+      auto img = conv.readback(*conv.toBgra8(*conv.toLinear(*f.tex, f.layout, f.fullRange, f.bt709),
+                                             f.tex->width, f.tex->height));
+      const size_t c = (static_cast<size_t>(img.height / 2) * img.width + img.width / 2) * 4;
+      if (std::abs(static_cast<int>(img.bgra[c]) - 100) > 8 ||
+          std::abs(static_cast<int>(img.bgra[c + 1]) - 50) > 8 ||
+          std::abs(static_cast<int>(img.bgra[c + 2]) - 200) > 8) {
+        colourOk = false;
+      }
+    } catch (const std::exception&) {
+      colourOk = false;
+    }
+    ++videos;
+  }
+  void onAudio(bc::AudioBlock) override {}
+  void onState(bc::SignalState, std::optional<bc::ErrorInfo>) override {}
+};
+
+// BreadReplay's recorder tap: CPU frames only, and it asks for coded VMX first. An HX source
+// falls back to decoded pictures, so this is the sink the NV12 receiver must not starve.
+struct CpuOnlySink : bc::InputSink {
+  std::atomic<int> cpuFrames{0};
+  std::atomic<int> pictures{0};
+  std::atomic<int> format{-1};
+  std::atomic<bool> colourOk{true};
+
+  void onVideo(bc::VideoFrameIn) override { ++pictures; }
+  void onAudio(bc::AudioBlock) override {}
+  void onState(bc::SignalState, std::optional<bc::ErrorInfo>) override {}
+  bool wantsCpuVideo() const override { return true; }
+  bool wantsGpuVideo() const override { return false; }
+  bool wantsCodedVmx() const override { return true; }
+
+  void onCpuVideo(const bc::CpuVideoFrame& f) override {
+    format = static_cast<int>(f.format);
+    if (f.format != bc::CpuPixel::BGRA || f.width == 0 || f.height == 0) {
+      colourOk = false;
+    } else {
+      const size_t c = static_cast<size_t>(f.height / 2) * static_cast<size_t>(f.stride) +
+                       static_cast<size_t>(f.width / 2) * 4;
+      if (std::abs(static_cast<int>(f.data[c]) - 100) > 8 ||
+          std::abs(static_cast<int>(f.data[c + 1]) - 50) > 8 ||
+          std::abs(static_cast<int>(f.data[c + 2]) - 200) > 8) {
+        colourOk = false;
+      }
+    }
+    ++cpuFrames;
+  }
+};
 }  // namespace
 
 TEST_CASE("OmtInput: receives an OMT HX source as pictures and audio" BC_REQUIRES(bc::test::Req::Omt)) {
@@ -88,6 +154,110 @@ TEST_CASE("OmtInput: receives an OMT HX source as pictures and audio" BC_REQUIRE
   CHECK(sink.width.load() == 320);
   CHECK(sink.height.load() == 180);
   CHECK(sink.live.load());
+}
+
+namespace {
+// Sends a solid BGRA picture (B 100, G 50, R 200) from an in-process OMT sender and checks what
+// OmtInput makes of it: layout, range, matrix and colour through the real converter.
+void checkPicture(omthx::Mode mode, bc::PixelLayout want, const std::string& senderName) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  bc::TexturePool pool{*gpu};
+  bc::Converter conv{*gpu, pool};
+
+  omthx::Sender sender(senderName, mode, omthx::Quality::Medium);
+  omthx::VideoFormat format;
+  format.width = 640;
+  format.height = 360;
+  format.fpsN = 30;
+  format.fpsD = 1;
+  std::vector<uint8_t> bgra(static_cast<size_t>(640) * 360 * 4);
+  for (size_t i = 0; i < bgra.size(); i += 4) {
+    bgra[i] = 100;      // B
+    bgra[i + 1] = 50;   // G
+    bgra[i + 2] = 200;  // R
+    bgra[i + 3] = 255;
+  }
+
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    int64_t timestamp = 0;
+    while (run) {
+      sender.sendVideo(format, bgra, false, timestamp);
+      timestamp += 333333;  // 30 fps in 100 ns units
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+
+  PictureSink sink(conv);
+  bc::OmtInput input(*gpu, pool, sender.address());
+  input.start(sink);
+  for (int i = 0; i < 200 && sink.videos.load() == 0; ++i) std::this_thread::sleep_for(50ms);
+  input.stop();
+  run = false;
+  if (feeder.joinable()) feeder.join();
+
+  REQUIRE(sink.videos.load() > 0);
+  CHECK(sink.layout.load() == static_cast<int>(want));
+  CHECK(sink.fullRange.load());
+  CHECK(sink.bt709.load() == (want == bc::PixelLayout::NV12));
+  CHECK(sink.colourOk.load());
+}
+}  // namespace
+
+TEST_CASE("OmtInput: an HX source arrives as NV12" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  checkPicture(omthx::Mode::Hx, bc::PixelLayout::NV12,
+               "BreadCamera OMT input NV12 " + std::to_string(GetCurrentProcessId()));
+}
+
+TEST_CASE("OmtInput: a plain OMT source stays BGRA" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  checkPicture(omthx::Mode::Full, bc::PixelLayout::BGRA8,
+               "BreadCamera OMT input BGRA " + std::to_string(GetCurrentProcessId()));
+}
+
+TEST_CASE("OmtInput: a CPU-only sink gets HX pictures as BGRA" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
+  bc::TexturePool pool{*gpu};
+
+  omthx::Sender sender("BreadCamera OMT input CPU " + std::to_string(GetCurrentProcessId()), omthx::Mode::Hx,
+                       omthx::Quality::Medium);
+  omthx::VideoFormat format;
+  format.width = 640;
+  format.height = 360;
+  format.fpsN = 30;
+  format.fpsD = 1;
+  std::vector<uint8_t> bgra(static_cast<size_t>(640) * 360 * 4);
+  for (size_t i = 0; i < bgra.size(); i += 4) {
+    bgra[i] = 100;      // B
+    bgra[i + 1] = 50;   // G
+    bgra[i + 2] = 200;  // R
+    bgra[i + 3] = 255;
+  }
+
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    int64_t timestamp = 0;
+    while (run) {
+      sender.sendVideo(format, bgra, false, timestamp);
+      timestamp += 333333;  // 30 fps in 100 ns units
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+
+  CpuOnlySink sink;
+  bc::OmtInput input(*gpu, pool, sender.address());
+  input.start(sink);
+  for (int i = 0; i < 200 && sink.cpuFrames.load() == 0; ++i) std::this_thread::sleep_for(50ms);
+  input.stop();
+  run = false;
+  if (feeder.joinable()) feeder.join();
+
+  CHECK(sink.cpuFrames.load() > 0);
+  CHECK(sink.pictures.load() == 0);
+  CHECK(sink.format.load() == static_cast<int>(bc::CpuPixel::BGRA));
+  CHECK(sink.colourOk.load());
 }
 
 namespace {
@@ -159,8 +329,8 @@ uint64_t privateBytes() {
 
 // The audit's critical finding: every OMT input kept about one BGRA picture per received frame.
 // 300 frames of 1080p through the real Camera path, and the process must not grow per frame.
-TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_REQUIRES(bc::test::Req::Omt)
-          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+// The HX sender decodes to NV12, so the same window covers the plane upload path too.
+static void leakCase(omthx::Mode mode, const char* sourceName) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::Hardware);
   bc::TexturePool pool{*gpu};
   bc::Converter conv{*gpu, pool};
@@ -177,7 +347,7 @@ TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_RE
     }
   });
 
-  omthx::Sender sender("bc-leak-test", omthx::Mode::Full, omthx::Quality::Medium);
+  omthx::Sender sender(sourceName, mode, omthx::Quality::Medium);
   omthx::VideoFormat format;
   format.width = 1920;
   format.height = 1080;
@@ -241,6 +411,16 @@ TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_RE
   // never reaches the wire.
   for (size_t c = 0; c < 3; ++c) CHECK(std::abs(static_cast<int>(pic.bgra[centre + c]) - 100) <= 8);
   CHECK(pic.bgra[centre + 3] == 255);
+}
+
+TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  leakCase(omthx::Mode::Full, "bc-leak-test");
+}
+
+TEST_CASE("OmtInput: memory stays flat while a camera receives 300 HX frames" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  leakCase(omthx::Mode::Hx, "bc-leak-test-hx");
 }
 
 #endif
