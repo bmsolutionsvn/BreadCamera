@@ -10,13 +10,18 @@
 #include <string>
 #include <vector>
 
+#include <windows.h>
+
+#include <psapi.h>
+
 #include "core/utf8.h"
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/image_io.h"
-#include "gpu/nv12_upload.h"
 #include "gpu/texture_pool.h"
+#include "gpu/upload.h"
 #include "io/uyvy.h"
+#include "support/requires.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -290,6 +295,75 @@ TEST_CASE("Converter: toUyvy refuses an odd width") {
   Gpu g;
   auto lin = g.conv.solid(641, 360, {0.5f, 0.5f, 0.5f, 1});
   CHECK(g.conv.toUyvy(*lin) == nullptr);
+}
+
+TEST_CASE("Converter: UYVY in matches uyvyToBgra" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Gpu g;
+  for (const auto& size : {std::pair<uint32_t, uint32_t>{1920, 1080}, {720, 576}}) {
+    const uint32_t w = size.first, h = size.second;
+    const bool bt709 = h >= 720;
+    for (auto c : {std::array<int, 3>{0, 0, 0}, {255, 255, 255}, {230, 40, 20}, {20, 200, 60}}) {
+      INFO("size " << w << "x" << h << ", colour " << c[0] << "," << c[1] << "," << c[2]);
+      auto px = solidBgra(w, h, static_cast<uint8_t>(c[0]), static_cast<uint8_t>(c[1]), static_cast<uint8_t>(c[2]));
+      std::vector<uint8_t> uyvy(static_cast<size_t>(w) * h * 2);
+      bc::bgraToUyvy(px.data(), static_cast<int>(w), static_cast<int>(h), uyvy.data(), static_cast<int>(w) * 2, bt709);
+      bc::TextureRef up;
+      {
+        auto lock = g.dev->lock();
+        up = bc::uploadUyvy(*g.dev, g.pool, uyvy.data(), w * 2, w, h);
+      }
+      REQUIRE(up);
+      CHECK(up->width == w);
+      CHECK(up->height == h);
+      auto img = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*up, bc::PixelLayout::UYVY, false), w, h));
+      auto want =
+          bc::uyvyToBgra(uyvy.data(), static_cast<int>(w), static_cast<int>(h), static_cast<int>(w) * 2, bt709);
+      const size_t i = (static_cast<size_t>(h / 2) * w + w / 2) * 4;
+      for (size_t k = 0; k < 3; ++k) CHECK(std::abs(img.bgra[i + k] - want[i + k]) <= 6);
+    }
+  }
+}
+
+TEST_CASE("uploadUyvy refuses an odd width") {
+  Gpu g;
+  std::vector<uint8_t> u(641 * 2 * 2, 128);
+  auto lock = g.dev->lock();
+  CHECK_THROWS_AS(bc::uploadUyvy(*g.dev, g.pool, u.data(), 641 * 2, 641, 2), std::invalid_argument);
+}
+
+namespace {
+uint64_t privateBytes() {
+  PROCESS_MEMORY_COUNTERS_EX counters{};
+  if (!GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+                            sizeof counters)) {
+    return 0;
+  }
+  return counters.PrivateUsage;
+}
+}  // namespace
+
+TEST_CASE("per-frame uploads keep memory flat" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Gpu g;
+  constexpr uint32_t w = 1920, h = 1080;
+  std::vector<uint8_t> uyvy(static_cast<size_t>(w) * h * 2, 128);
+  std::vector<uint8_t> bgraPx(static_cast<size_t>(w) * h * 4, 100);
+  std::vector<uint8_t> y(static_cast<size_t>(w) * h, 16), uv(static_cast<size_t>(w) * h / 2, 128);
+  auto round = [&] {
+    auto lock = g.dev->lock();
+    auto a = bc::uploadUyvy(*g.dev, g.pool, uyvy.data(), w * 2, w, h);
+    auto b = bc::uploadBgra(*g.dev, g.pool, bgraPx.data(), w * 4, w, h);
+    auto c = bc::uploadNv12Planes(*g.dev, g.pool, y.data(), uv.data(), w, h);
+    return a && b && c;
+  };
+  for (int i = 0; i < 10; ++i) REQUIRE(round());  // fill the pool before sampling
+  const int64_t start = static_cast<int64_t>(privateBytes());
+  bool ok = true;
+  for (int i = 0; i < 300; ++i) ok = round() && ok;
+  const int64_t end = static_cast<int64_t>(privateBytes());
+  INFO("frames 300, start " << start << " bytes, grown " << (end - start) << " bytes");
+  REQUIRE(start > 0);
+  CHECK(ok);
+  CHECK(end - start < 64LL * 1024 * 1024);
 }
 
 TEST_CASE("loadImageBgra: a missing file throws") {

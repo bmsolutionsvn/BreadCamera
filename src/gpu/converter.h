@@ -7,7 +7,7 @@
 #include "gpu/texture_pool.h"
 
 namespace bc {
-enum class PixelLayout { NV12, P010, BGRA8 };
+enum class PixelLayout { NV12, P010, BGRA8, UYVY };
 
 // The bytes CpuImage holds: BGRA pixels, or UYVY pairs of 2 bytes per pixel.
 enum class CpuLayout { Bgra, Uyvy };
@@ -36,6 +36,7 @@ class Converter {
   Converter(GpuDevice& gpu, TexturePool& pool);
 
   // forceBt709: YUV that is BT.709 at any height (OMT-HX's NV12), overriding the height rule.
+  // UYVY: src is an uploadUyvy picture, w x h over a packed w/2 x h texture.
   TextureRef toLinear(const GpuTexture& src, PixelLayout layout, bool fullRange, bool forceBt709 = false);
   // R8G8B8A8_UNORM holding BGRA bytes, for CPU readback. swapRb = false keeps true RGBA order
   // for GPU consumers that sample it as RGBA (the RTX Video path).
@@ -70,7 +71,7 @@ class Converter {
 
   GpuDevice& gpu_;
   TexturePool& pool_;
-  Microsoft::WRL::ComPtr<ID3D11ComputeShader> yuvCs_, bgraCs_, outCs_, uyvyCs_, fitCs_, cropCs_;
+  Microsoft::WRL::ComPtr<ID3D11ComputeShader> yuvCs_, bgraCs_, outCs_, uyvyCs_, uyvyInCs_, fitCs_, cropCs_;
   Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
   Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
 };

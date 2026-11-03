@@ -216,6 +216,7 @@ bc_shader(yuv_to_linear cs_5_0)
 bc_shader(bgra_to_linear cs_5_0)
 bc_shader(linear_to_bgra8 cs_5_0)
 bc_shader(linear_to_uyvy cs_5_0)
+bc_shader(uyvy_to_linear cs_5_0)
 # Task 11A
 bc_shader(fit_linear cs_5_0)
 # Auto frame
@@ -238,7 +239,7 @@ add_library(bc_gpu STATIC
   src/gpu/device.cpp
   src/gpu/texture_pool.cpp
   src/gpu/converter.cpp
-  src/gpu/nv12_upload.cpp
+  src/gpu/upload.cpp
   src/gpu/readback.cpp
   src/gpu/image_io.cpp
   src/gpu/compositor.cpp
