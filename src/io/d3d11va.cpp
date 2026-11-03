@@ -85,7 +85,9 @@ bool uploadSoftwareFrame(GpuDevice& gpu, TexturePool& pool, const AVFrame* f, ui
         dst[2 * x + 1] = v[x];
       }
     }
-    out.tex = uploadNv12Planes(gpu, pool, f->data[0], scratch.data(), w, h);
+    auto lock = gpu.lock();
+    out.tex = uploadNv12Planes(gpu, pool, f->data[0], scratch.data(), w, h,
+                               static_cast<uint32_t>(f->linesize[0]));
     out.layout = PixelLayout::NV12;
     return true;
   }
@@ -100,6 +102,7 @@ bool uploadSoftwareFrame(GpuDevice& gpu, TexturePool& pool, const AVFrame* f, ui
   uint8_t* dst[1] = {scratch.data()};
   const int dstStride[1] = {static_cast<int>(w * 4)};
   sws_scale(sws, f->data, f->linesize, 0, f->height, dst, dstStride);
+  auto lock = gpu.lock();
   out.tex = uploadBgra(gpu, pool, scratch.data(), w * 4, w, h);
   out.layout = PixelLayout::BGRA8;
   out.fullRange = true;

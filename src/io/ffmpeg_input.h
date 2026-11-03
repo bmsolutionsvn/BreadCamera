@@ -13,7 +13,6 @@
 
 struct AVFrame;
 struct AVStream;
-struct AVBufferRef;
 struct SwsContext;
 struct SwrContext;
 

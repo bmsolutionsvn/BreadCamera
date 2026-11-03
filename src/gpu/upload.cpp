@@ -20,13 +20,13 @@ void writeTexture(GpuDevice& gpu, ID3D11Texture2D* tex, const uint8_t* src, uint
 }
 
 TextureRef uploadNv12Planes(GpuDevice& gpu, TexturePool& pool, const uint8_t* y, const uint8_t* uv,
-                            uint32_t w, uint32_t h) {
+                            uint32_t w, uint32_t h, uint32_t yRowBytes) {
   if ((w | h) & 1) throw std::invalid_argument("NV12 planes need even width and height");
   auto luma = pool.acquire(w, h, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE,
                            D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
   auto chroma = pool.acquire(w / 2, h / 2, DXGI_FORMAT_R8G8_UNORM, D3D11_BIND_SHADER_RESOURCE,
                              D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
-  writeTexture(gpu, luma->tex.Get(), y, w, h);
+  writeTexture(gpu, luma->tex.Get(), y, yRowBytes ? yRowBytes : w, h);
   writeTexture(gpu, chroma->tex.Get(), uv, w, h / 2);  // both planes' rows are width bytes
 
   auto out = std::make_shared<GpuTexture>();

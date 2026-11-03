@@ -1,4 +1,3 @@
-#define DOCTEST_CONFIG_DOUBLE_STRINGIFY
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -162,6 +161,44 @@ TEST_CASE("GpuDecoder's software path matches" BC_REQUIRES(bc::test::Req::Hardwa
   CHECK(std::abs(static_cast<int>(img.bgra[centre]) - 0) <= 4);
   CHECK(std::abs(static_cast<int>(img.bgra[centre + 1]) - 0) <= 4);
   CHECK(std::abs(static_cast<int>(img.bgra[centre + 2]) - 0) <= 4);
+}
+
+TEST_CASE("uploadSoftwareFrame honours a padded luma stride" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  Gpu g;
+  AVFrame* f = av_frame_alloc();
+  REQUIRE(f != nullptr);
+  f->format = AV_PIX_FMT_YUV420P;
+  f->width = 854;
+  f->height = 480;
+  REQUIRE(av_frame_get_buffer(f, 32) == 0);
+  REQUIRE(f->linesize[0] > 854);  // a real decoder's luma rows are padded; this is the case under test
+  // Left half white, right half black, constant down every row; a red-tinted chroma.
+  for (int y = 0; y < 480; ++y) {
+    std::memset(f->data[0] + static_cast<ptrdiff_t>(y) * f->linesize[0], 235, 427);
+    std::memset(f->data[0] + static_cast<ptrdiff_t>(y) * f->linesize[0] + 427, 16, 854 - 427);
+  }
+  for (int y = 0; y < 240; ++y) {
+    std::memset(f->data[1] + static_cast<ptrdiff_t>(y) * f->linesize[1], 64, 427);
+    std::memset(f->data[2] + static_cast<ptrdiff_t>(y) * f->linesize[2], 192, 427);
+  }
+  SwsContext* sws = nullptr;
+  std::vector<uint8_t> scratch;
+  VideoFrameIn out;
+  CHECK(uploadSoftwareFrame(*g.dev, g.pool, f, 854, 480, sws, scratch, out));
+  av_frame_free(&f);
+  REQUIRE(out.tex != nullptr);
+  CHECK(out.layout == PixelLayout::NV12);
+
+  auto linear = g.conv.toLinear(*out.tex, out.layout, out.fullRange);
+  auto img = g.conv.readback(*g.conv.toBgra8(*linear, 854, 480));
+  REQUIRE(img.bgra.size() == 854u * 480 * 4);
+  auto px = [&](uint32_t x, uint32_t y) { return &img.bgra[(static_cast<size_t>(y) * img.width + x) * 4]; };
+  // Reading the luma tightly packed would pull lower rows' left half into this row's right half.
+  CHECK(px(300, 470)[1] > 150);  // G: left half is white
+  CHECK(px(440, 470)[1] < 80);   // G: right half is black
+  CHECK(px(440, 100)[1] < 80);
+  // Cr above neutral keeps red over blue: a U/V swap would inverse this.
+  CHECK(px(300, 470)[2] > px(300, 470)[0] + 40);
 }
 
 TEST_CASE("GpuDecoder keeps memory flat" BC_REQUIRES(bc::test::Req::HardwareGpu)) {
