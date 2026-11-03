@@ -16,6 +16,7 @@
 #include "gpu/image_io.h"
 #include "gpu/nv12_upload.h"
 #include "gpu/texture_pool.h"
+#include "io/uyvy.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -98,6 +99,36 @@ void checkAll(const bc::CpuImage& img, int b, int g, int r, int tol) {
     CHECK(std::abs(img.bgra[i + 1] - g) <= tol);
     CHECK(std::abs(img.bgra[i + 2] - r) <= tol);
   }
+}
+
+std::vector<uint8_t> solidBgra(uint32_t w, uint32_t h, uint8_t r, uint8_t g, uint8_t b) {
+  std::vector<uint8_t> px(static_cast<size_t>(w) * h * 4);
+  for (size_t i = 0; i < px.size(); i += 4) {
+    px[i] = b;
+    px[i + 1] = g;
+    px[i + 2] = r;
+    px[i + 3] = 255;
+  }
+  return px;
+}
+
+// A solid colour through the GPU UYVY path against today's CPU bgraToUyvy, byte for byte.
+void checkUyvyMatchesCpu(Gpu& g, uint32_t w, uint32_t h, uint8_t r, uint8_t green, uint8_t b, bool bt709) {
+  auto px = solidBgra(w, h, r, green, b);
+  auto up = g.conv.uploadBgra8(px.data(), w, h, w * 4);
+  auto lin = g.conv.toLinear(*up, bc::PixelLayout::BGRA8, true);
+  auto packed = g.conv.toUyvy(*lin);
+  REQUIRE(packed != nullptr);
+  CHECK(packed->width == w / 2);
+  CHECK(packed->height == h);
+  auto img = g.conv.readback(*packed, bc::CpuLayout::Uyvy);
+  CHECK(img.layout == bc::CpuLayout::Uyvy);
+  CHECK(img.width == w);
+  CHECK(img.height == h);
+  REQUIRE(img.bgra.size() == static_cast<size_t>(w) * h * 2);
+  std::vector<uint8_t> want(static_cast<size_t>(w) * h * 2);
+  bc::bgraToUyvy(px.data(), static_cast<int>(w), static_cast<int>(h), want.data(), static_cast<int>(w) * 2, bt709);
+  for (size_t i = 0; i < img.bgra.size(); ++i) CHECK(std::abs(img.bgra[i] - want[i]) <= 3);
 }
 }  // namespace
 
@@ -241,6 +272,24 @@ TEST_CASE("Converter: toBgra8 without the swap keeps RGBA order") {
   CHECK(img.bgra[2] == 0);
   auto def = g.conv.readback(*g.conv.toBgra8(*red, 4, 4));
   CHECK(def.bgra[2] == 255);  // default stays BGRA: byte 2 is R
+}
+
+TEST_CASE("Converter: toUyvy matches bgraToUyvy at 1080 lines") {
+  Gpu g;
+  for (auto c : {std::array<int, 3>{0, 0, 0}, {255, 255, 255}, {230, 40, 20}, {20, 200, 60}, {128, 128, 128}})
+    checkUyvyMatchesCpu(g, 1920, 1080, static_cast<uint8_t>(c[0]), static_cast<uint8_t>(c[1]),
+                        static_cast<uint8_t>(c[2]), true);
+}
+
+TEST_CASE("Converter: toUyvy uses BT.601 below 720 lines") {
+  Gpu g;
+  checkUyvyMatchesCpu(g, 720, 576, 230, 40, 20, false);
+}
+
+TEST_CASE("Converter: toUyvy refuses an odd width") {
+  Gpu g;
+  auto lin = g.conv.solid(641, 360, {0.5f, 0.5f, 0.5f, 1});
+  CHECK(g.conv.toUyvy(*lin) == nullptr);
 }
 
 TEST_CASE("loadImageBgra: a missing file throws") {

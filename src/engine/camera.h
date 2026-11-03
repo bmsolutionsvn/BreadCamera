@@ -120,14 +120,17 @@ class Camera final : public InputSink {
   double stageGpuMs(const std::string& kind) const;
   FeedPhase tickPhase() const { return tickPhase_; }
   TextureRef lastFrame() const { return lastFrame_; }
-  // This tick's single readback, the image shared by every CPU output and the frame tap. Null
-  // until the first async copy finishes, and null when no CPU consumer wanted it this tick.
+  // This tick's BGRA readback, shared by every BGRA CPU output and the frame tap. Null until
+  // the first async copy finishes, and null when no BGRA consumer wanted it this tick.
   std::shared_ptr<const CpuImage> tickCpu() const { return tickCpu_; }
   void publishStatus();
   CameraStats stats() const;
-  // bcam-readback: the one readback slot (0 when no output needs CPU and no preview wants it).
-  // Diagnostic and test hook for the "no CPU consumer does no readback work" contract.
-  size_t readbackSlotCount() const { return readback_ ? 1 : 0; }
+  // bcam-readback: one slot per CPU layout in use (0 when no output needs CPU and no preview
+  // wants it). Diagnostic and test hook for the "no CPU consumer does no readback work" contract.
+  size_t readbackSlotCount() const {
+    if (!readback_) return 0;
+    return (readback_->bgraSlot ? 1 : 0) + (readback_->uyvySlot ? 1 : 0);
+  }
 
   void onVideo(VideoFrameIn frame) override;
   void onAudio(AudioBlock audio) override;
@@ -149,11 +152,12 @@ class Camera final : public InputSink {
     Rate outRate{0, 1};             // the SDI output's fixed rate; 0 until it starts
     bool deferred = false;          // SDI waits for the camera's first frame
   };
-  // One in-flight readback plus the newest completed image. image is null until the first copy
-  // finishes (never a synthetic frame).
+  // One in-flight readback per layout plus the newest completed image. An image is null until
+  // the first copy finishes (never a synthetic frame).
   struct ReadbackState {
-    ReadbackSlot slot;
-    std::shared_ptr<const CpuImage> image;
+    std::optional<ReadbackSlot> bgraSlot, uyvySlot;
+    std::shared_ptr<const CpuImage> image;  // BGRA, for preview and BGRA outputs
+    std::shared_ptr<const CpuImage> uyvy;   // UYVY, for outputs that want it
   };
   // One Match measurement in flight: up to three tiny readbacks (entering, leaving, alpha).
   struct MatchRound {

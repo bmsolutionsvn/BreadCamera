@@ -21,11 +21,14 @@ class FakeOutput final : public bc::QueuedOutput {
     std::array<uint8_t, 4> centerPixel;  // BGRA of the centre pixel; zeros when no CPU image
     uint32_t width;
     size_t audioSamples;
+    bool hasBgra = false;
+    bool hasUyvy = false;
   };
 
-  explicit FakeOutput(bool needsCpu = true) : needsCpu_(needsCpu) {}
+  explicit FakeOutput(bool needsCpu = true, bool wantsUyvy = false) : needsCpu_(needsCpu), wantsUyvy_(wantsUyvy) {}
   ~FakeOutput() override { stop(); }
   bool needsCpu() const override { return needsCpu_; }
+  bool wantsUyvy(uint32_t, uint32_t) const override { return wantsUyvy_; }
 
   std::atomic<int> opens{0};
   std::atomic<int> delivered{0};
@@ -63,6 +66,9 @@ class FakeOutput final : public bc::QueuedOutput {
     } else if (f.linear) {
       s.width = f.linear->width;
     }
+    if (f.uyvy) s.width = f.uyvy->width;
+    s.hasBgra = f.bgra != nullptr;
+    s.hasUyvy = f.uyvy != nullptr;
     std::lock_guard l(m_);
     lastRate_ = f.rate;
     if (f.bgra) lastImage_ = f.bgra;
@@ -72,6 +78,7 @@ class FakeOutput final : public bc::QueuedOutput {
 
  private:
   bool needsCpu_;
+  bool wantsUyvy_;
   mutable std::mutex m_;
   std::vector<Seen> seen_;
   std::shared_ptr<const bc::CpuImage> lastImage_;

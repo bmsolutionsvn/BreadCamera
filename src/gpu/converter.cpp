@@ -9,6 +9,7 @@
 #include "crop_linear.h"
 #include "fit_linear.h"
 #include "linear_to_bgra8.h"
+#include "linear_to_uyvy.h"
 #include "yuv_to_linear.h"
 
 using Microsoft::WRL::ComPtr;
@@ -49,11 +50,28 @@ YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange, bool forceBt709) {
   return m;
 }
 
+YuvMatrix rgbToYuvMatrix(uint32_t height) {
+  const bool bt709 = height >= 720;
+  const float kr = bt709 ? 0.2126f : 0.299f;
+  const float kb = bt709 ? 0.0722f : 0.114f;
+  const float kg = 1.0f - kr - kb;
+  const float ys = 219.0f / 255.0f, yo = 16.0f / 255.0f;
+  const float cs = 224.0f / 255.0f, co = 128.0f / 255.0f;
+  const float uR = -kr / (2.0f * (1.0f - kb)), uG = -kg / (2.0f * (1.0f - kb));
+  const float vG = -kg / (2.0f * (1.0f - kr)), vB = -kb / (2.0f * (1.0f - kr));
+  YuvMatrix m;
+  m.rows[0] = {ys * kr, ys * kg, ys * kb, yo};
+  m.rows[1] = {cs * uR, cs * uG, cs * 0.5f, co};
+  m.rows[2] = {cs * 0.5f, cs * vG, cs * vB, co};
+  return m;
+}
+
 Converter::Converter(GpuDevice& gpu, TexturePool& pool) : gpu_(gpu), pool_(pool) {
   auto* dev = gpu_.device();
   if (FAILED(dev->CreateComputeShader(g_yuv_to_linear, sizeof(g_yuv_to_linear), nullptr, &yuvCs_)) ||
       FAILED(dev->CreateComputeShader(g_bgra_to_linear, sizeof(g_bgra_to_linear), nullptr, &bgraCs_)) ||
       FAILED(dev->CreateComputeShader(g_linear_to_bgra8, sizeof(g_linear_to_bgra8), nullptr, &outCs_)) ||
+      FAILED(dev->CreateComputeShader(g_linear_to_uyvy, sizeof(g_linear_to_uyvy), nullptr, &uyvyCs_)) ||
       FAILED(dev->CreateComputeShader(g_fit_linear, sizeof(g_fit_linear), nullptr, &fitCs_)) ||
       FAILED(dev->CreateComputeShader(g_crop_linear, sizeof(g_crop_linear), nullptr, &cropCs_))) {
     throw std::runtime_error("CreateComputeShader failed");
@@ -121,6 +139,24 @@ TextureRef Converter::toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t 
   return out;
 }
 
+TextureRef Converter::toUyvy(const GpuTexture& linear) {
+  if (linear.width % 2 != 0) return nullptr;
+  auto out = pool_.acquire(linear.width / 2, linear.height, DXGI_FORMAT_R8G8B8A8_UNORM,
+                           D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
+  Params p{};
+  p.outW = linear.width / 2;
+  p.outH = linear.height;
+  p.srcW = linear.width;
+  p.srcH = linear.height;
+  auto m = rgbToYuvMatrix(linear.height);
+  std::memcpy(p.row0, m.rows[0].data(), sizeof(p.row0));
+  std::memcpy(p.row1, m.rows[1].data(), sizeof(p.row1));
+  std::memcpy(p.row2, m.rows[2].data(), sizeof(p.row2));
+  ID3D11ShaderResourceView* srvs[] = {linear.srv.Get()};
+  dispatch(uyvyCs_.Get(), srvs, 1, out->uav.Get(), p);
+  return out;
+}
+
 TextureRef Converter::fit(const GpuTexture& linear, uint32_t w, uint32_t h) {
   auto out = pool_.acquire(w, h, kLinearFormat, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS);
   Params p{};
@@ -150,7 +186,7 @@ TextureRef Converter::crop(const GpuTexture& linear, float x, float y, float w, 
   return out;
 }
 
-CpuImage Converter::readback(const GpuTexture& rgba8) {
+CpuImage Converter::readback(const GpuTexture& rgba8, CpuLayout layout) {
   auto staging = pool_.acquire(rgba8.width, rgba8.height, rgba8.format, 0, D3D11_USAGE_STAGING, D3D11_CPU_ACCESS_READ);
   CpuImage img;
   auto lock = gpu_.lock();
@@ -160,6 +196,10 @@ CpuImage Converter::readback(const GpuTexture& rgba8) {
   if (FAILED(ctx->Map(staging->tex.Get(), 0, D3D11_MAP_READ, 0, &m))) throw std::runtime_error("Map failed");
   copyRows(m, rgba8.width, rgba8.height, img);
   ctx->Unmap(staging->tex.Get(), 0);
+  if (layout == CpuLayout::Uyvy) {
+    img.width *= 2;  // the packed texture is width / 2 texels wide
+    img.layout = CpuLayout::Uyvy;
+  }
   return img;
 }
 
