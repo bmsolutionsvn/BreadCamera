@@ -58,7 +58,7 @@
 
 ### Task 2: Every input uses them
 
-**Files:** Modify `src/io/decklink_input.cpp`, `src/io/aja_input.cpp`, `src/io/ndi_input.cpp`, `src/io/dshow_capture_input.cpp`, `src/io/mf_capture_input.cpp`, `src/io/ffmpeg_input.cpp` (software branch), `src/io/breadcall_input.cpp`, `src/engine/maxine_matte.cpp`, `src/engine/onnx_matte.cpp`, `src/io/uyvy.h/.cpp` (remove `uyvyToBgra` if nothing uses it after this task); tests `tests/ndi_input_test.cpp` and the input tests that already exist for each adapter.
+**Files:** Modify `src/io/decklink_input.cpp`, `src/io/aja_input.cpp`, `src/io/ndi_input.cpp`, `src/io/dshow_capture_input.cpp`, `src/io/mf_capture_input.cpp`, `src/io/ffmpeg_input.cpp` (software branch), `src/io/breadcall_input.cpp`, `src/engine/maxine_matte.cpp`, `src/engine/onnx_matte.cpp`; keep `uyvyToBgra` in `src/io/uyvy.h/.cpp` even if BreadCamera stops using it, because BreadReplay's `Renderer` calls it; tests `tests/ndi_input_test.cpp` and the input tests that already exist for each adapter.
 
 **Interfaces:**
 - Consumes: Task 1's helpers and `PixelLayout::UYVY`.
