@@ -605,38 +605,72 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
       audio_.pull(audioSched_.audioFramesForRange(audioFirstTick_, audioIntervals_, 48000)));
 
   // One frame per camera per tick — the composited frame's size (spec §4.3). There is no
-  // per-output size and no fit. The readback is asynchronous: finish the previous copy if the
+  // per-output size and no fit. The readbacks are asynchronous: finish the previous copy if the
   // GPU is done, start this tick's copy, and hand every CPU output the newest *completed*
-  // image (one tick behind at most). The tick never maps the frame. Run once per tick, so two
-  // CPU outputs and the frame tap all get the *same* image, not one a tick apart.
-  bool anyCpu = false;
+  // image (one tick behind at most). The tick never maps the frame. One slot per layout runs
+  // once per tick, so every output of a layout gets the *same* image, not one a tick apart.
   bool anyGpu = false;
+  bool wantUyvy = false;
+  bool needBgra = previewWanted;
+  const bool uyvyCapable = !hasAlpha && frame->width % 2 == 0;
   for (auto& s : outputs_) {
     if (!s.out) continue;
-    // An alpha frame cannot go over a D3D11 path (it takes no alpha), so a GPU output needs the
-    // readback for it and sends it through memory, as every output did before.
-    anyCpu = anyCpu || s.out->needsCpu() || (hasAlpha && s.out->wantsGpuRgba8());
     anyGpu = anyGpu || s.out->wantsGpuRgba8();
+    if (s.out->needsCpu()) {
+      if (uyvyCapable && s.out->wantsUyvy(frame->width, frame->height)) {
+        wantUyvy = true;
+      } else {
+        needBgra = true;
+      }
+    } else if (hasAlpha && s.out->wantsGpuRgba8()) {
+      // An alpha frame cannot go over a D3D11 path (it takes no alpha), so a GPU output needs the
+      // readback for it and sends it through memory, as every output did before.
+      needBgra = true;
+    }
   }
-  std::shared_ptr<const CpuImage> cpu;
-  if (anyCpu || previewWanted) {
+  std::shared_ptr<const CpuImage> cpu, uyvy;
+  if (needBgra) {
     if (!readback_) readback_.emplace();
+    if (!readback_->bgraSlot) readback_->bgraSlot.emplace();
     // tryFinish before begin: the slot's previous copy finishes first, then this tick's begins.
     // A begin while pending would discard the unfinished frame.
+    auto& slot = *readback_->bgraSlot;
     CpuImage done;
-    if (readback_->slot.tryFinish(tools_.conv, done)) readback_->image = std::make_shared<CpuImage>(std::move(done));
-    if (!readback_->slot.pending())
-      readback_->slot.begin(tools_.conv, *tools_.conv.toBgra8(*frame, frame->width, frame->height));
+    if (slot.tryFinish(tools_.conv, done)) readback_->image = std::make_shared<CpuImage>(std::move(done));
+    if (!slot.pending())
+      slot.begin(tools_.conv, *tools_.conv.toBgra8(*frame, frame->width, frame->height));
     // A resolution change leaves the slot holding the previous size's completed image. Drop it so
     // the old size is never published while the first new-size copy is in flight (spec §4.3).
     if (readback_->image && (readback_->image->width != frame->width || readback_->image->height != frame->height))
       readback_->image.reset();
     cpu = readback_->image;  // may be null on the first ticks: never a synthetic frame
-  } else {
-    // No CPU consumer this tick (neither a CPU output nor a visible preview): release the slot
-    // and the cached image, so a reconfigured or removed consumer holds and reads back nothing.
-    readback_.reset();
+  } else if (readback_) {
+    readback_->bgraSlot.reset();
+    readback_->image.reset();
   }
+  if (wantUyvy) {
+    if (!readback_) readback_.emplace();
+    if (!readback_->uyvySlot) readback_->uyvySlot.emplace();
+    auto& slot = *readback_->uyvySlot;
+    CpuImage done;
+    if (slot.tryFinish(tools_.conv, done)) {
+      // The packed texture is width / 2 texels wide; report the picture's width.
+      done.width *= 2;
+      done.layout = CpuLayout::Uyvy;
+      readback_->uyvy = std::make_shared<CpuImage>(std::move(done));
+    }
+    if (!slot.pending()) {
+      const TextureRef packed = tools_.conv.toUyvy(*frame);
+      if (packed) slot.begin(tools_.conv, *packed);
+    }
+    if (readback_->uyvy && (readback_->uyvy->width != frame->width || readback_->uyvy->height != frame->height))
+      readback_->uyvy.reset();
+    uyvy = readback_->uyvy;
+  } else if (readback_) {
+    readback_->uyvySlot.reset();
+    readback_->uyvy.reset();
+  }
+  if (readback_ && !readback_->bgraSlot && !readback_->uyvySlot) readback_.reset();
   tickCpu_ = cpu;
 
   // The GPU outputs' frame, made once per tick and only when one wants it (spec §4.2). It is not a
@@ -654,8 +688,10 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
       s.outRate = Rate{0, 1};
       continue;
     }
+    const bool takeUyvy = uyvy && s.out->needsCpu() && s.out->wantsUyvy(frame->width, frame->height);
     const std::shared_ptr<const CpuImage> outCpu =
-        (s.out->needsCpu() || (hasAlpha && s.out->wantsGpuRgba8())) ? cpu : nullptr;
+        (s.out->needsCpu() || (hasAlpha && s.out->wantsGpuRgba8())) && !takeUyvy ? cpu : nullptr;
+    const std::shared_ptr<const CpuImage> outUyvy = takeUyvy ? uyvy : nullptr;
     const TextureRef outRgba8 = s.out->wantsGpuRgba8() ? rgba8 : nullptr;
     std::shared_ptr<const std::vector<float>> outAudio = audio;
     if (s.cfg.halfRate) {
@@ -671,7 +707,7 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
     }
     const Rate outRate = s.cfg.halfRate ? Rate{nominalRate().num, nominalRate().den * 2} : nominalRate();
     const uint64_t outTick = s.cfg.halfRate ? s.halfTick++ : tickIndex_;
-    s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outRgba8, outAudio, 48000, 2, hasAlpha});
+    s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outUyvy, outRgba8, outAudio, 48000, 2, hasAlpha});
   }
 
   std::lock_guard l(statsMutex_);

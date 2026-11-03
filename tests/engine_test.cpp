@@ -369,6 +369,7 @@ namespace {
 struct RecSpec {
   bool needsCpu;
   bool wantsGpu;
+  bool wantsUyvy = false;
 };
 
 class RecordingOutput final : public bc::Output {
@@ -376,15 +377,18 @@ class RecordingOutput final : public bc::Output {
   explicit RecordingOutput(RecSpec spec) : spec_(spec) {}
   bool needsCpu() const override { return spec_.needsCpu; }
   bool wantsGpuRgba8() const override { return spec_.wantsGpu; }
+  bool wantsUyvy(uint32_t, uint32_t) const override { return spec_.wantsUyvy; }
   void start() override {}
   void submit(bc::OutFrame f) override {
     last = std::move(f.bgra);
+    lastUyvy = std::move(f.uyvy);
     lastRgba8 = std::move(f.rgba8);
     ++submitted;
   }
   void stop() override {}
   bc::OutputStatus status() const override { return {}; }
   std::shared_ptr<const bc::CpuImage> last;
+  std::shared_ptr<const bc::CpuImage> lastUyvy;
   bc::TextureRef lastRgba8;
   int submitted = 0;
 
@@ -763,6 +767,130 @@ TEST_CASE("Camera: an alpha frame stays on the memory path for an HX output") {
   CHECK(camera.tickCpu() != nullptr);
   REQUIRE(factory.all[0]->last != nullptr);     // the alpha frame reaches the output through memory
   CHECK(factory.all[0]->lastRgba8 == nullptr);  // not as a texture, which cannot carry alpha
+  camera.stop();
+}
+
+// Plan review focus 2: an output that asked for UYVY gets BGRA instead on a tick whose frame
+// has alpha (the keyed background), and never a UYVY image without the key.
+TEST_CASE("Camera: a UYVY output sends BGRA, not UYVY, when the frame gains alpha") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.stages = {{"background", bc::normalizeStageParams("background", {{"mode", "keyed"}})}};
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(factory.all.size() == 1);
+  RecordingOutput* o = factory.all[0];
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto alpha = r.conv.solid(64, 36, {1, 1, 1, 1});
+  bool sawBgra = false;
+  for (int i = 0; i < 30; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, alpha);
+    CHECK(o->lastUyvy == nullptr);  // an alpha frame never travels as UYVY
+    if (o->last) sawBgra = true;
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(sawBgra);
+  camera.stop();
+}
+
+// Plan review focus 3: mixed outputs on one camera each get their own layout, and there is one
+// readback slot per layout that a consumer needs.
+TEST_CASE("Camera: a UYVY output and a BGRA output each get their own layout") {
+  Rig r;
+  RecordingFactory factory(
+      std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}, {true, false, false}});
+  bc::Camera camera(cam("a", {out("o1"), out("o2")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(factory.all.size() == 2);
+  RecordingOutput* uyvy = factory.all[0];
+  RecordingOutput* bgra = factory.all[1];
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  bool sawUyvy = false, sawBgra = false;
+  for (int i = 0; i < 30; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+    if (uyvy->lastUyvy) {
+      sawUyvy = true;
+      CHECK(uyvy->lastUyvy->layout == bc::CpuLayout::Uyvy);
+      CHECK(uyvy->lastUyvy->bgra.size() == 64u * 36u * 2u);
+      CHECK(uyvy->last == nullptr);  // never both layouts at once
+    }
+    if (bgra->last) {
+      sawBgra = true;
+      CHECK(bgra->last->layout == bc::CpuLayout::Bgra);
+      CHECK(bgra->lastUyvy == nullptr);
+    }
+    CHECK(camera.readbackSlotCount() == 2);
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(sawUyvy);
+  CHECK(sawBgra);
+  camera.stop();
+}
+
+// The plan's headline case: a camera whose only CPU consumer wants UYVY runs one readback slot,
+// and that slot hands out the picture's width and 2 bytes a pixel.
+TEST_CASE("Camera: a UYVY-only output runs one readback slot of 2 bytes a pixel") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(factory.all.size() == 1);
+  RecordingOutput* o = factory.all[0];
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  bool saw = false;
+  for (int i = 0; i < 40 && !saw; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120, 1920, 1080));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+    CHECK(camera.readbackSlotCount() == 1);
+    if (o->lastUyvy) {
+      saw = true;
+      CHECK(o->last == nullptr);
+      CHECK(o->lastUyvy->layout == bc::CpuLayout::Uyvy);
+      CHECK(o->lastUyvy->width == 1920);
+      CHECK(o->lastUyvy->height == 1080);
+      CHECK(o->lastUyvy->bgra.size() == 1920u * 1080u * 2u);
+    }
+    std::this_thread::sleep_for(3ms);
+  }
+  CHECK(saw);
+  camera.stop();
+}
+
+// Plan review focus 4: a size change must not publish the old size's completed UYVY image.
+TEST_CASE("Camera: a size change never sends a UYVY frame of the old size") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.start();
+  REQUIRE(factory.all.size() == 1);
+  RecordingOutput* o = factory.all[0];
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  auto tick = [&](uint32_t w, uint32_t h) {
+    camera.onVideo(solidFrame(r.conv, 120, w, h));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+    std::this_thread::sleep_for(3ms);
+    if (o->lastUyvy) CHECK(o->lastUyvy->width == w);  // ever only the frame the camera is on
+  };
+  for (int i = 0; i < 20 && !o->lastUyvy; ++i) tick(1920, 1080);
+  REQUIRE(o->lastUyvy);
+  bool saw720 = false;
+  for (int i = 0; i < 30; ++i) {
+    tick(1280, 720);
+    if (o->lastUyvy && o->lastUyvy->height == 720) saw720 = true;
+  }
+  CHECK(saw720);
   camera.stop();
 }
 
