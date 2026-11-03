@@ -135,6 +135,16 @@ class Camera final : public InputSink {
   void onVideo(VideoFrameIn frame) override;
   void onAudio(AudioBlock audio) override;
   void onState(SignalState state, std::optional<ErrorInfo> error) override;
+  // Pass-through (spec §3.2). A visible preview still makes the camera decode while no stage
+  // needs a picture, so the engine sets the same query it passes to endTick.
+  void setPreviewQuery(std::function<bool()> query) { previewQuery_ = std::move(query); }
+  bool wantsCodedOmt() const override;
+  // False only when at least one output passes coded frames through and every output does, no
+  // stage is enabled, and no preview is wanted: the input then decodes nothing.
+  bool wantsGpuVideo() const override;
+  // Submits one coded frame (and the audio queued since the last one) to the pass targets, and
+  // returns true when one of them wants a keyframe.
+  bool onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) override;
 
  private:
   struct Pending {
@@ -168,6 +178,12 @@ class Camera final : public InputSink {
   void startInput();
   void startOutput(OutputSlot& slot);
   void loadStageParams();
+  bool anyStageEnabled() const;
+  // Recomputes the outputs that pass coded frames through from the Global Constraints, publishes
+  // the input's two questions, and (on entering full pass-through) drops the held picture.
+  std::vector<Output*> evaluatePass(bool previewWanted);
+  // Empties the pass target list and its audio before any output slot is stopped or replaced.
+  void clearPassTargets();
   // Poll each stage's GpuTimer once a tick; a finished measurement feeds that stage's
   // guard (spec D14). A no-op when tools_.gpu is null (the stages time themselves on CPU).
   void pollColorTimer(std::chrono::steady_clock::time_point now);
@@ -269,6 +285,14 @@ class Camera final : public InputSink {
   // wants it, so such a camera does no readback work.
   std::optional<ReadbackState> readback_;
   std::shared_ptr<const CpuImage> tickCpu_;  // this tick's shared image, for the frame tap
+  // Pass-through (spec §3.2): the outputs that take the input's coded OMT frames, guarded because
+  // the input thread submits while the tick thread rebuilds and reconfigure tears slots down.
+  mutable std::mutex passMutex_;
+  std::vector<Output*> passTargets_;
+  std::vector<float> passAudio_;  // this camera's audio since the last coded frame, while targets exist
+  std::function<bool()> previewQuery_;
+  std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
+  std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
   // Match state (Task 7). All tick-thread only.
   uint64_t matchTick_ = 0;                             // beginTick counter, for the every-6th cadence
   std::optional<MatchRound> matchRound_;               // one measurement at a time

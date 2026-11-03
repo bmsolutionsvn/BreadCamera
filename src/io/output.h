@@ -9,6 +9,11 @@
 #include "gpu/converter.h"
 #include "gpu/texture_pool.h"
 
+namespace omthx {
+struct CodedFrame;
+enum class Mode;
+}  // namespace omthx
+
 namespace bc {
 // One tick's frame for one camera, shared by all of its outputs (no copies, spec §3.2).
 struct OutFrame {
@@ -22,6 +27,9 @@ struct OutFrame {
   int sampleRate = 48000;
   int channels = 2;
   bool hasAlpha = false;
+  // A coded frame on the camera's pass-through path: the picture is not decoded at all, and the
+  // fields above carry no image. Audio, if any, goes with it at the coded frame's own timestamp.
+  std::shared_ptr<const omthx::CodedFrame> coded;
 };
 
 struct OutputStatus {
@@ -43,6 +51,11 @@ class Output {
   // An output that takes the tick as UYVY instead of BGRA, when it fits the frame. Only
   // meaningful while needsCpu() is true.
   virtual bool wantsUyvy(uint32_t /*width*/, uint32_t /*height*/) const { return false; }
+  // True when this output can send coded OMT frames of `mode` without decoding them (pass-through).
+  virtual bool takesCodedOmt(omthx::Mode /*mode*/) const { return false; }
+  // The keyframe request relayed from this output's receivers since the last call (any thread,
+  // true once): the pass-through input asks its source for a keyframe when it is set.
+  virtual bool takeKeyframeRequest() { return false; }
   virtual void start() = 0;
   virtual void submit(OutFrame frame) = 0;  // never blocks
   virtual void stop() = 0;

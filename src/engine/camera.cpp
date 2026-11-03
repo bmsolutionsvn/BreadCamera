@@ -1,5 +1,6 @@
 #include "engine/camera.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <map>
@@ -10,6 +11,7 @@
 #include "engine/face_detector.h"
 #include "gpu/color_grader.h"
 #include "gpu/image_io.h"
+#include "omthx/omthx.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;
@@ -270,6 +272,7 @@ void Camera::start() {
     outputs_.push_back({o, nullptr, std::nullopt});
     startOutput(outputs_.back());
   }
+  evaluatePass(previewQuery_ && previewQuery_());
   publishStatus();
 }
 
@@ -278,6 +281,7 @@ void Camera::stop() {
     input_->stop();
     input_.reset();
   }
+  clearPassTargets();  // no coded frame may reach a slot that is about to go
   for (auto& s : outputs_) {
     if (s.out) s.out->stop();
   }
@@ -285,6 +289,7 @@ void Camera::stop() {
 }
 
 void Camera::reconfigure(const CameraConfig& next) {
+  clearPassTargets();  // the old slots may be stopped below
   if (next.name != cfg_.name) state_.set(path("/name"), next.name);
   const nlohmann::json oldStages = cfg_.stages;
   const bool inputChanged = !(next.input == cfg_.input);
@@ -322,6 +327,7 @@ void Camera::reconfigure(const CameraConfig& next) {
     if (s.out) s.out->stop();
     state_.erase(path("/outputs/" + id));
   }
+  evaluatePass(previewQuery_ && previewQuery_());
   publishStatus();
 }
 
@@ -364,13 +370,103 @@ std::optional<Clock::time_point> Camera::nextRepeatAt(Clock::time_point now) con
 }
 
 void Camera::onAudio(AudioBlock a) {
-  if (a.channels == 2 && a.sampleRate == 48000) audio_.push(a.samples);
+  if (a.channels != 2 || a.sampleRate != 48000) return;
+  {
+    std::lock_guard lock(passMutex_);
+    if (!passTargets_.empty()) {
+      passAudio_.insert(passAudio_.end(), a.samples.begin(), a.samples.end());
+      // A camera whose video pauses keeps receiving audio: hold at most one second of it.
+      const size_t max = 48000u * 2 * 2;
+      if (passAudio_.size() > max)
+        passAudio_.erase(passAudio_.begin(), passAudio_.begin() + static_cast<std::ptrdiff_t>(passAudio_.size() - max));
+    }
+  }
+  audio_.push(a.samples);
 }
 
 void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
   inputState_ = s;
   state_.set(path("/input/state"), std::string(toString(s)));
   state_.set(path("/input/error"), errorToJson(e));
+}
+
+bool Camera::anyStageEnabled() const {
+  if (matteParams_.value("enabled", false) || colorParams_.value("enabled", false) ||
+      upscaleParams_.value("enabled", false) || autoframeParams_.value("enabled", false))
+    return true;
+  // Background's "enabled" defaults to true in its schema; only a mode other than none does anything.
+  return backgroundParams_.value("enabled", false) && backgroundParams_.value("mode", std::string("none")) != "none";
+}
+
+std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
+  const bool stages = anyStageEnabled();
+  const bool live = inputState_.load() == SignalState::Live;
+  const bool wasFullPass = !wantGpuVideo_.load();
+  bool codedPossible = false;
+  std::vector<Output*> targets;
+  {
+    std::lock_guard lock(passMutex_);
+    for (auto& s : outputs_) {
+      if (!s.out) continue;
+      // The frame's own mode is checked when it arrives; here the question is only whether the
+      // output could take coded frames at all.
+      const bool takes = s.out->takesCodedOmt(omthx::Mode::Full) || s.out->takesCodedOmt(omthx::Mode::Hx);
+      codedPossible = codedPossible || takes;
+      if (takes && !stages && live && !s.cfg.halfRate) targets.push_back(s.out.get());
+    }
+    passTargets_.swap(targets);
+    targets = passTargets_;  // the caller's this-tick snapshot
+    if (passTargets_.empty()) passAudio_.clear();
+  }
+  wantCodedOmt_ = codedPossible && !stages;
+  bool allPass = true;
+  for (auto& s : outputs_) {
+    if (!s.out) continue;
+    if (std::find(targets.begin(), targets.end(), s.out.get()) == targets.end()) allPass = false;
+  }
+  // With no outputs nothing passes through, so the camera keeps decoding: only a camera whose whole
+  // output set is pass targets may stop.
+  const bool full = !targets.empty() && allPass && !stages && !previewWanted;
+  wantGpuVideo_ = !full;
+  if (full && !wasFullPass) {  // entering pass-through: no held picture may be repeated on the way back
+    lastFrame_.reset();
+    sawFrame_ = false;
+  }
+  return targets;
+}
+
+void Camera::clearPassTargets() {
+  std::lock_guard lock(passMutex_);
+  passTargets_.clear();
+  passAudio_.clear();
+}
+
+bool Camera::wantsCodedOmt() const { return wantCodedOmt_.load(); }
+
+bool Camera::wantsGpuVideo() const {
+  if (previewQuery_ && previewQuery_()) return true;  // a visible preview decodes even on full pass-through
+  return wantGpuVideo_.load();
+}
+
+bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
+  if (!frame) return false;
+  std::lock_guard lock(passMutex_);
+  std::shared_ptr<const std::vector<float>> audio;
+  if (!passAudio_.empty()) {
+    audio = std::make_shared<const std::vector<float>>(std::move(passAudio_));
+    passAudio_.clear();
+  }
+  bool wanted = false;
+  for (Output* out : passTargets_) {
+    if (!out->takesCodedOmt(frame->mode)) continue;
+    OutFrame f;
+    f.rate = nominalRate();  // the coded frame's own timestamp paces the output
+    f.coded = frame;
+    f.audio = audio;
+    out->submit(std::move(f));
+    if (out->takeKeyframeRequest()) wanted = true;
+  }
+  return wanted;
 }
 
 TextureRef Camera::fittedSlate(const TextureRef& source) {
@@ -564,6 +660,14 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
 }
 
 void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool previewWanted) {
+  std::vector<Output*> pass;  // this tick's pass targets (last tick's answer): no picture for them
+  {
+    std::lock_guard lock(passMutex_);
+    pass = passTargets_;
+  }
+  const auto passing = [&pass](const OutputSlot& s) {
+    return std::find(pass.begin(), pass.end(), s.out.get()) != pass.end();
+  };
   pollBackgroundTimer(now);
   pollUpscaleTimer(now);
   TextureRef frame = tickFrame_;
@@ -615,6 +719,7 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
   const bool uyvyCapable = !hasAlpha && frame->width % 2 == 0;
   for (auto& s : outputs_) {
     if (!s.out) continue;
+    if (passing(s)) continue;  // coded frames go over the pass-through path, not the tick
     anyGpu = anyGpu || s.out->wantsGpuRgba8();
     if (s.out->needsCpu()) {
       if (uyvyCapable && s.out->wantsUyvy(frame->width, frame->height)) {
@@ -680,8 +785,10 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
 
   for (auto& s : outputs_) {
     if (!s.out) continue;
+    if (passing(s)) continue;  // the pass-through path sends this output's frames
     if (!rateStale_.load() && (s.cfg.kind == "decklink" || s.cfg.kind == "aja") && !(s.outRate == nominalRate())) {
       // The card's mode is fixed at open; a renegotiated input rate needs the output re-added.
+      clearPassTargets();
       s.out->stop();
       s.out.reset();
       s.createError = ErrorInfo{"output-config", "the camera rate changed; re-add this SDI output"};
@@ -709,6 +816,8 @@ void Camera::endTick(Clock::time_point now, const TextureRef& rawAlpha, bool pre
     const uint64_t outTick = s.cfg.halfRate ? s.halfTick++ : tickIndex_;
     s.out->submit(OutFrame{outTick, outRate, frame, outCpu, outUyvy, outRgba8, outAudio, 48000, 2, hasAlpha});
   }
+
+  evaluatePass(previewWanted);  // next tick's pass targets, and the input's questions
 
   std::lock_guard l(statsMutex_);
   phase_ = tickPhase_;

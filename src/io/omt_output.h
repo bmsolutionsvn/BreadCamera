@@ -25,6 +25,11 @@ class OmthOutput final : public QueuedOutput {
   // and the wire stays standard VMX (spec §3.1 item 2). OMT-HX tags every picture BT.709, so SD, whose
   // UYVY is BT.601, keeps BGRA.
   bool wantsUyvy(uint32_t, uint32_t h) const override { return mode_ == omthx::Mode::Full && !keyed_ && h >= 720; }
+  // Keyed or not: a coded frame keeps its alpha, so an output of the same mode passes it on.
+  bool takesCodedOmt(omthx::Mode mode) const override { return mode == mode_; }
+  bool takeKeyframeRequest() override { return keyframe_.exchange(false); }
+  // A coded frame went over the wire as it came, with no encode (the sender's encoder is "none").
+  bool sentCoded() const { return coded_.load(); }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
   OutputStatus status() const override;
 
@@ -57,5 +62,7 @@ class OmthOutput final : public QueuedOutput {
   std::string address_;
   std::atomic<bool> program_{false};  // the tally the sender reports, published by the worker
   std::atomic<bool> preview_{false};
+  std::atomic<bool> keyframe_{false};  // a receiver wants a keyframe of the pass-through source
+  std::atomic<bool> coded_{false};     // a coded frame was sent without encoding
 };
 }  // namespace bc

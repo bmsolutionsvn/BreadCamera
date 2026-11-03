@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <set>
 #include <thread>
 
@@ -10,6 +11,7 @@
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
+#include "omthx/omthx.h"
 #include "support/fake_input.h"
 
 using namespace std::chrono_literals;
@@ -370,6 +372,7 @@ struct RecSpec {
   bool needsCpu;
   bool wantsGpu;
   bool wantsUyvy = false;
+  int codedMode = -1;  // an omthx::Mode value this output takes coded frames for, or -1 for none
 };
 
 class RecordingOutput final : public bc::Output {
@@ -378,8 +381,16 @@ class RecordingOutput final : public bc::Output {
   bool needsCpu() const override { return spec_.needsCpu; }
   bool wantsGpuRgba8() const override { return spec_.wantsGpu; }
   bool wantsUyvy(uint32_t, uint32_t) const override { return spec_.wantsUyvy; }
+  bool takesCodedOmt(omthx::Mode mode) const override { return spec_.codedMode == static_cast<int>(mode); }
+  bool takeKeyframeRequest() override { return keyframe.exchange(false); }
   void start() override {}
   void submit(bc::OutFrame f) override {
+    if (f.coded) {
+      ++coded;
+      lastCoded = std::move(f.coded);
+      codedSamples = f.audio ? f.audio->size() : 0;
+      return;
+    }
     last = std::move(f.bgra);
     lastUyvy = std::move(f.uyvy);
     lastRgba8 = std::move(f.rgba8);
@@ -387,10 +398,14 @@ class RecordingOutput final : public bc::Output {
   }
   void stop() override {}
   bc::OutputStatus status() const override { return {}; }
+  std::atomic<bool> keyframe{false};
   std::shared_ptr<const bc::CpuImage> last;
   std::shared_ptr<const bc::CpuImage> lastUyvy;
   bc::TextureRef lastRgba8;
   int submitted = 0;
+  int coded = 0;
+  std::shared_ptr<const omthx::CodedFrame> lastCoded;
+  size_t codedSamples = 0;
 
  private:
   RecSpec spec_;
@@ -524,6 +539,161 @@ TEST_CASE("Camera: readback slots appear and are dropped with the output set") {
   tick(2);
   CHECK(camera.readbackSlotCount() == 0);
   camera.stop();
+}
+
+namespace {
+std::shared_ptr<omthx::CodedFrame> dummyCoded(uint64_t seq = 0, omthx::Mode mode = omthx::Mode::Full) {
+  auto c = std::make_shared<omthx::CodedFrame>();
+  c->mode = mode;
+  c->format = omthx::VideoFormat{64, 36, 30, 1, false};
+  c->timestamp = static_cast<int64_t>(seq) * 10'000'000 / 30;
+  return c;
+}
+}  // namespace
+
+TEST_CASE("Camera: pass-through sends coded frames, not tick pictures") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&] {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  tick();
+  tick();  // the first rebuild happens at the end of the previous tick
+  CHECK(camera.wantsCodedOmt());
+  CHECK_FALSE(camera.wantsGpuVideo());
+  const int tickFrames = factory.made->submitted;
+  auto c = dummyCoded(1);
+  CHECK_FALSE(camera.onCodedOmt(c));
+  CHECK(factory.made->coded == 1);
+  CHECK(factory.made->lastCoded == c);
+  CHECK(factory.made->submitted == tickFrames);  // the tick path sent nothing more
+  camera.setPreviewQuery([] { return true; });
+  CHECK(camera.wantsGpuVideo());  // a visible preview decodes
+  camera.stop();
+}
+
+TEST_CASE("Camera: pass-through leaves a tick output beside it") {
+  Rig r;
+  RecordingFactory factory(
+      std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}, RecSpec{true, false}});
+  bc::Camera camera(cam("a", {out("o1"), out("o2")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.all.size() == 2);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  for (int i = 0; i < 3; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  }
+  CHECK(camera.wantsCodedOmt());
+  CHECK(camera.wantsGpuVideo());  // the CPU output still needs a picture
+  const int codedTickFrames = factory.all[0]->submitted;
+  CHECK(factory.all[1]->submitted > 0);
+  camera.onCodedOmt(dummyCoded(1));
+  CHECK(factory.all[0]->coded == 1);
+  CHECK(factory.all[1]->coded == 0);
+  CHECK(factory.all[0]->submitted == codedTickFrames);  // the coded output takes no tick frame
+  camera.stop();
+}
+
+TEST_CASE("Camera: enabling a stage leaves pass-through") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&] {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  tick();
+  tick();
+  REQUIRE(camera.wantsCodedOmt());
+
+  cfg.stages["color"] = {{"enabled", true}};
+  camera.reconfigure(cfg);
+  CHECK_FALSE(camera.wantsCodedOmt());
+  const int coded = factory.made->coded;
+  camera.onCodedOmt(dummyCoded(2));
+  CHECK(factory.made->coded == coded);  // no longer a pass target
+
+  const int submitted = factory.made->submitted;
+  tick();
+  CHECK(factory.made->submitted == submitted + 1);  // back on the tick path
+  camera.stop();
+}
+
+TEST_CASE("Camera: a pass-through target asks for a keyframe once") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  for (int i = 0; i < 2; ++i) {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  }
+  REQUIRE(camera.wantsCodedOmt());
+  factory.made->keyframe = true;
+  CHECK(camera.onCodedOmt(dummyCoded(1)));
+  CHECK_FALSE(camera.onCodedOmt(dummyCoded(2)));  // taken once
+  camera.stop();
+}
+
+TEST_CASE("Camera: reconfiguring pass-through outputs while coded frames flow is safe") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onVideo(solidFrame(r.conv, 120));
+  const auto now = Clock::now();
+  camera.beginTick(now, slate);
+  camera.endTick(now, nullptr);
+  REQUIRE(camera.wantsCodedOmt());
+
+  std::atomic<bool> run{true};
+  std::thread input([&] {
+    auto c = dummyCoded(3);
+    while (run.load()) camera.onCodedOmt(c);
+  });
+  for (int i = 0; i < 100; ++i) {
+    cfg.outputs = {out(i % 2 ? "o1" : "o2")};
+    camera.reconfigure(cfg);
+  }
+  run = false;
+  input.join();
+  camera.stop();
+  CHECK(true);  // no use after free: the targets are removed under the mutex before a slot goes
 }
 
 // Two CPU-consuming outputs at the same size must share ONE readback per tick (spec §4.3): the
