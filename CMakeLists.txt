@@ -215,6 +215,7 @@ endfunction()
 bc_shader(yuv_to_linear cs_5_0)
 bc_shader(bgra_to_linear cs_5_0)
 bc_shader(linear_to_bgra8 cs_5_0)
+bc_shader(linear_to_uyvy cs_5_0)
 # Task 11A
 bc_shader(fit_linear cs_5_0)
 # Auto frame

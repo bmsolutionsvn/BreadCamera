@@ -9,10 +9,16 @@
 namespace bc {
 enum class PixelLayout { NV12, P010, BGRA8 };
 
+// The bytes CpuImage holds: BGRA pixels, or UYVY pairs of 2 bytes per pixel.
+enum class CpuLayout { Bgra, Uyvy };
+
 struct CpuImage {
   uint32_t width = 0;
   uint32_t height = 0;
-  std::vector<uint8_t> bgra;  // tightly packed, 4 bytes per pixel
+  // Bgra: tightly packed, 4 bytes per pixel. Uyvy: tightly packed rows of width * 2 bytes,
+  // each pair being U, Y0, V, Y1; width stays the picture's width.
+  std::vector<uint8_t> bgra;
+  CpuLayout layout = CpuLayout::Bgra;
 };
 
 // rgb' = rows * (y, cb, cr, 1) on unorm samples (spec §3.2).
@@ -21,6 +27,8 @@ struct YuvMatrix {
 };
 // BT.709 for height >= 720 (or when forceBt709), else BT.601; limited range unless fullRange.
 YuvMatrix yuvToRgbMatrix(uint32_t height, bool fullRange, bool forceBt709 = false);
+// The inverse: rows 0-2 are Y, Cb and Cr from (r, g, b, 1), limited range, matrix by height.
+YuvMatrix rgbToYuvMatrix(uint32_t height);
 
 class Converter {
  public:
@@ -32,10 +40,13 @@ class Converter {
   // R8G8B8A8_UNORM holding BGRA bytes, for CPU readback. swapRb = false keeps true RGBA order
   // for GPU consumers that sample it as RGBA (the RTX Video path).
   TextureRef toBgra8(const GpuTexture& linear, uint32_t outW, uint32_t outH, bool swapRb = true);
+  // R8G8B8A8_UNORM of width / 2 x height, each texel U, Y0, V, Y1 (2 bytes a pixel). Null when
+  // the width is odd. Matrix by height, like toBgra8.
+  TextureRef toUyvy(const GpuTexture& linear);
   TextureRef fit(const GpuTexture& linear, uint32_t w, uint32_t h);  // letterbox to w x h, aspect kept
   // Auto frame: samples the normalized rect (x, y, w, h) into a texture of the source's size.
   TextureRef crop(const GpuTexture& linear, float x, float y, float w, float h);
-  CpuImage readback(const GpuTexture& rgba8);  // blocking Map
+  CpuImage readback(const GpuTexture& rgba8, CpuLayout layout = CpuLayout::Bgra);  // blocking Map
   TextureRef solid(uint32_t w, uint32_t h, std::array<float, 4> linearRgba);
   TextureRef uploadBgra8(const uint8_t* data, uint32_t w, uint32_t h, uint32_t stride);
 
@@ -59,7 +70,7 @@ class Converter {
 
   GpuDevice& gpu_;
   TexturePool& pool_;
-  Microsoft::WRL::ComPtr<ID3D11ComputeShader> yuvCs_, bgraCs_, outCs_, fitCs_, cropCs_;
+  Microsoft::WRL::ComPtr<ID3D11ComputeShader> yuvCs_, bgraCs_, outCs_, uyvyCs_, fitCs_, cropCs_;
   Microsoft::WRL::ComPtr<ID3D11Buffer> cb_;
   Microsoft::WRL::ComPtr<ID3D11SamplerState> sampler_;
 };
