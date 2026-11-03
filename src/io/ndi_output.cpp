@@ -20,7 +20,20 @@ void NdiOutput::open() {
 }
 
 void NdiOutput::deliver(const OutFrame& f) {
-  if (f.bgra && !f.bgra->bgra.empty()) {
+  if (f.uyvy && !f.uyvy->bgra.empty()) {
+    NDIlib_video_frame_v2_t v{};
+    v.xres = static_cast<int>(f.uyvy->width);
+    v.yres = static_cast<int>(f.uyvy->height);
+    v.FourCC = NDIlib_FourCC_type_UYVY;
+    v.frame_rate_N = f.rate.num;
+    v.frame_rate_D = f.rate.den;
+    v.picture_aspect_ratio = 0.0f;  // = xres / yres
+    v.frame_format_type = NDIlib_frame_format_type_progressive;
+    v.timecode = NDIlib_send_timecode_synthesize;
+    v.p_data = const_cast<uint8_t*>(f.uyvy->bgra.data());
+    v.line_stride_in_bytes = v.xres * 2;
+    NDIlib_send_send_video_v2(send_, &v);
+  } else if (f.bgra && !f.bgra->bgra.empty()) {
     NDIlib_video_frame_v2_t v{};
     v.xres = static_cast<int>(f.bgra->width);
     v.yres = static_cast<int>(f.bgra->height);

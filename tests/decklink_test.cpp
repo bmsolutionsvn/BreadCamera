@@ -10,6 +10,7 @@
 
 #include <objbase.h>
 #include <oleauto.h>
+#include <memory>
 #include <thread>
 
 #include "DeckLinkAPI_h.h"
@@ -66,6 +67,37 @@ TEST_CASE("DeckLink: the first card's output plays 2 s of frames" BC_REQUIRES(bc
   CHECK_FALSE(out.status().error);
   out.stop();
 }
+TEST_CASE("DeckLink: only an unkeyed 1080p output wants UYVY") {
+  bc::DeckLinkOutput plain(0, {60, 1}, false);
+  CHECK(plain.wantsUyvy(1920, 1080));
+  CHECK_FALSE(plain.wantsUyvy(1280, 720));
+  bc::DeckLinkOutput keyed(0, {60, 1}, true);
+  CHECK_FALSE(keyed.wantsUyvy(1920, 1080));  // a keyed output keeps its BGRA fill + key
+}
+
+TEST_CASE("DeckLink: the first card plays 60 UYVY frames" BC_REQUIRES(bc::test::Req::DeckLink)) {
+  auto info = bc::listDeckLinkDevices().front();
+  if (!info.hasOutput) return;
+  bc::DeckLinkOutput out(info.index, {60, 1}, false);
+  out.start();
+  auto img = std::make_shared<bc::CpuImage>();
+  img->width = 1920;
+  img->height = 1080;
+  img->layout = bc::CpuLayout::Uyvy;
+  img->bgra.assign(1920 * 1080 * 2, 100);
+  for (uint64_t t = 0; t < 60; ++t) {
+    bc::OutFrame f;
+    f.tick = t;
+    f.rate = {60, 1};
+    f.uyvy = img;
+    out.submit(std::move(f));
+    std::this_thread::sleep_for(16ms);
+  }
+  CHECK(out.status().state == bc::SignalState::Live);
+  CHECK_FALSE(out.status().error);
+  out.stop();
+}
+
 #else
 TEST_CASE("DeckLink: the first card's output plays 2 s of frames" BC_REQUIRES(bc::test::Req::DeckLink)) {}
 #endif

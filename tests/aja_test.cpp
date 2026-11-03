@@ -43,6 +43,32 @@ TEST_CASE("AJA: the first card's output 1 plays 2 s of frames" BC_REQUIRES(bc::t
   CHECK_FALSE(out.status().error);
   out.stop();
 }
+TEST_CASE("AJA: only a 1080p output wants UYVY") {
+  bc::AjaOutput out(7, 1, {60, 1});
+  CHECK(out.wantsUyvy(1920, 1080));
+  CHECK_FALSE(out.wantsUyvy(1280, 720));
+}
+
+TEST_CASE("AJA: the first card plays 60 UYVY frames" BC_REQUIRES(bc::test::Req::Aja)) {
+  bc::AjaOutput out(0, 1, {60, 1});
+  out.start();
+  auto img = std::make_shared<bc::CpuImage>();
+  img->width = 1920;
+  img->height = 1080;
+  img->layout = bc::CpuLayout::Uyvy;
+  img->bgra.assign(1920 * 1080 * 2, 100);
+  for (uint64_t t = 0; t < 60; ++t) {
+    bc::OutFrame f;
+    f.tick = t;
+    f.rate = {60, 1};
+    f.uyvy = img;
+    out.submit(std::move(f));
+    std::this_thread::sleep_for(16ms);
+  }
+  CHECK_FALSE(out.status().error);
+  out.stop();
+}
+
 #else
 TEST_CASE("AJA: the first card's output 1 plays 2 s of frames" BC_REQUIRES(bc::test::Req::Aja)) {}
 #endif

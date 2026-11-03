@@ -6,6 +6,7 @@
 #include "io/queued_output.h"
 
 class CNTV2Card;
+struct SwsContext;
 
 namespace bc {
 // AJA SDI playout, fill only (spec §4.3 deviation, see follow-ups). EXPERIMENTAL.
@@ -14,6 +15,8 @@ class AjaOutput final : public QueuedOutput {
   AjaOutput(int deviceIndex, int channel, Rate showRate);
   ~AjaOutput() override;
   bool needsCpu() const override { return true; }
+  // The card runs a fixed 1080p mode, so only that size takes UYVY; others keep the BGRA scaling.
+  bool wantsUyvy(uint32_t w, uint32_t h) const override { return w == 1920 && h == 1080; }
 
  protected:
   void open() override;
@@ -25,6 +28,7 @@ class AjaOutput final : public QueuedOutput {
   int index_, channel_;
   Rate rate_;
   std::unique_ptr<CNTV2Card> card_;
+  SwsContext* sws_ = nullptr;
   std::vector<uint8_t> uyvy_, scaled_;
   std::vector<int32_t> pcm_;
 };

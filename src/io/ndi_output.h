@@ -13,6 +13,7 @@ class NdiOutput final : public QueuedOutput {
   explicit NdiOutput(std::string sourceName);
   ~NdiOutput() override { stop(); }
   bool needsCpu() const override { return true; }
+  bool wantsUyvy(uint32_t, uint32_t) const override { return true; }
 
  protected:
   void open() override;
