@@ -61,18 +61,18 @@ std::array<int, 3> centreBgr(const omthx::VideoFrame& vf) {
 }
 }  // namespace
 
-TEST_CASE("OmthOutput: the HX output without alpha uses the GPU path") {
+TEST_CASE("OmthOutput: an output nobody pulls asks the camera for no picture") {
   const std::string name = "BreadCamera OMT path " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput hx(name, omthx::Mode::Hx, omthx::Codec::Hevc, /*keyed=*/false);
   CHECK_FALSE(hx.needsCpu());
-  CHECK(hx.wantsGpuRgba8());
+  CHECK_FALSE(hx.wantsGpuRgba8());
 
   bc::OmthOutput full(name, omthx::Mode::Full, omthx::Codec::Hevc, /*keyed=*/false);
-  CHECK(full.needsCpu());
+  CHECK_FALSE(full.needsCpu());
   CHECK_FALSE(full.wantsGpuRgba8());
 
   bc::OmthOutput keyed(name, omthx::Mode::Hx, omthx::Codec::Hevc, /*keyed=*/true);
-  CHECK(keyed.needsCpu());  // a keyed output needs the frame's alpha, which stays on the CPU path
+  CHECK_FALSE(keyed.needsCpu());  // a keyed output needs the frame's alpha, but nobody is pulling it
   CHECK_FALSE(keyed.wantsGpuRgba8());
 }
 
@@ -85,13 +85,11 @@ TEST_CASE("OmthOutput: an HX output sends the GPU frame" BC_REQUIRES(bc::test::R
 
   const std::string name = "BreadCamera OMT gpu " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput out(name, omthx::Mode::Hx, omthx::Codec::Hevc, /*keyed=*/false);
-  REQUIRE_FALSE(out.needsCpu());
-  REQUIRE(out.wantsGpuRgba8());
   out.start();
   const bc::Rate rate{30, 1};
   std::atomic<bool> run{true};
   std::thread feeder([&] {
-    for (uint64_t t = 0; run && t < 120; ++t) {
+    for (uint64_t t = 0; run; ++t) {
       bc::OutFrame f;
       f.tick = t;
       f.rate = rate;
@@ -101,18 +99,31 @@ TEST_CASE("OmthOutput: an HX output sends the GPU frame" BC_REQUIRES(bc::test::R
     }
   });
 
+  std::this_thread::sleep_for(300ms);  // a few frames fed with nobody pulling
+  CHECK_FALSE(out.wantsGpuRgba8());
+
   const std::string address = waitForAddress(out);
   REQUIRE_FALSE(address.empty());
-  omthx::Receiver rx(address);
-  omthx::VideoFrame vf;
   bool got = false;
-  for (int i = 0; i < 60 && !got; ++i) {
-    if (rx.receiveVideo(vf, 200)) got = vf.format.width == 640 && vf.format.height == 360;
+  omthx::VideoFrame vf;
+  omthx::ReceiverStats stats;
+  {
+    omthx::Receiver rx(address);
+    // The worker learns a receiver joined on the next frame it delivers.
+    for (int i = 0; i < 20 && !out.wantsGpuRgba8(); ++i) std::this_thread::sleep_for(100ms);
+    CHECK(out.wantsGpuRgba8());
+    CHECK_FALSE(out.needsCpu());  // an unkeyed HX output takes the GPU frame, nobody needs it on the CPU
+    for (int i = 0; i < 60 && !got; ++i) {
+      if (rx.receiveVideo(vf, 200)) got = vf.format.width == 640 && vf.format.height == 360;
+    }
+    stats = rx.stats();
   }
-  const omthx::ReceiverStats stats = rx.stats();
+  for (int i = 0; i < 20 && out.wantsGpuRgba8(); ++i) std::this_thread::sleep_for(100ms);
+  CHECK_FALSE(out.wantsGpuRgba8());  // the receiver left: the camera stops making the texture again
   run = false;
   feeder.join();
   out.stop();
+  CHECK_FALSE(out.wantsGpuRgba8());
 
   REQUIRE(got);
   const auto bgr = centreBgr(vf);
@@ -137,11 +148,18 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path" BC_REQUIRE
   bc::OutFrame odd;
   odd.tick = 0;
   odd.rate = rate;
-  odd.rgba8 = rgba8Texture(conv, 641, 360, 230, 40, 20);  // an odd width: the encoder's blit cannot take it
+  // Only the composited frame, as the camera hands it while nobody pulls: no rgba8 (the camera makes none
+  // when wantsGpuRgba8() is false) and no bgra. 641 is an odd width, which the encoder's blit cannot take.
+  odd.linear = rgba8Texture(conv, 641, 360, 230, 40, 20);
   out.submit(std::move(odd));
 
-  for (int i = 0; i < 50 && !out.needsCpu(); ++i) std::this_thread::sleep_for(100ms);
-  REQUIRE(out.needsCpu());
+  bool refused = false;
+  for (int i = 0; i < 50 && !refused; ++i) {
+    const bc::OutputStatus st = out.status();
+    refused = st.error && st.error->code == "omt-gpu-refused";
+    if (!refused) std::this_thread::sleep_for(100ms);
+  }
+  REQUIRE(refused);  // the warning comes with no receiver, and with no picture made for one
   for (int i = 0; i < 50 && out.status().state != bc::SignalState::Live; ++i) std::this_thread::sleep_for(100ms);
   const bc::OutputStatus status = out.status();
   CHECK(bc::toString(status.state) == "live");  // a warning, not a failure: the output keeps sending
@@ -168,6 +186,8 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path" BC_REQUIRE
     }
   });
   omthx::Receiver rx(out.address());
+  for (int i = 0; i < 20 && !out.needsCpu(); ++i) std::this_thread::sleep_for(100ms);
+  CHECK(out.needsCpu());  // the refused GPU path reads back once someone pulls
   omthx::VideoFrame vf;
   bool got = false;
   for (int i = 0; i < 60 && !got; ++i) {
@@ -181,6 +201,43 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path" BC_REQUIRE
   CHECK(std::abs(bgr[2] - 230) <= 8);
   CHECK(std::abs(bgr[1] - 40) <= 8);
   CHECK(std::abs(bgr[0] - 20) <= 8);
+}
+
+TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
+              BC_REQUIRES(bc::test::Req::Omt)) {
+  const bc::Rate rate{30, 1};
+  auto picture = std::make_shared<bc::CpuImage>();
+  picture->width = 640;
+  picture->height = 360;
+  picture->bgra.assign(640 * 360 * 4, 200);
+  for (const bool keyed : {false, true}) {
+    const std::string name = std::string("BreadCamera OMT pull ") + (keyed ? "keyed " : "full ") +
+                             std::to_string(GetCurrentProcessId());
+    bc::OmthOutput out(name, keyed ? omthx::Mode::Hx : omthx::Mode::Full, omthx::Codec::Hevc, keyed);
+    CHECK_FALSE(out.needsCpu());  // nobody is pulling: no readback, no pack
+    CHECK_FALSE(out.wantsGpuRgba8());
+    out.start();
+    std::atomic<bool> run{true};
+    std::thread feeder([&] {
+      for (uint64_t t = 0; run; ++t) {
+        out.submit(frameWith(picture, t, rate, false));
+        std::this_thread::sleep_for(33ms);
+      }
+    });
+    const std::string address = waitForAddress(out);
+    REQUIRE_FALSE(address.empty());
+    {
+      omthx::Receiver rx(address);
+      for (int i = 0; i < 20 && !out.needsCpu(); ++i) std::this_thread::sleep_for(100ms);
+      CHECK(out.needsCpu());
+      CHECK_FALSE(out.wantsGpuRgba8());
+    }
+    for (int i = 0; i < 20 && out.needsCpu(); ++i) std::this_thread::sleep_for(100ms);
+    CHECK_FALSE(out.needsCpu());  // the receiver left: no readback again
+    run = false;
+    feeder.join();
+    out.stop();
+  }
 }
 
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {
@@ -356,9 +413,11 @@ TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc:
 }
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
+TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
+              BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc::test::Req::Omt)) {}
-TEST_CASE("OmthOutput: the HX output without alpha uses the GPU path") {}
+TEST_CASE("OmthOutput: an output nobody pulls asks the camera for no picture") {}
 TEST_CASE("OmthOutput: an HX output sends the GPU frame") {}
 TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path") {}
 #endif
