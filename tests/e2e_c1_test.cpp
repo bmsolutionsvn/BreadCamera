@@ -418,8 +418,8 @@ TEST_CASE("C1 acceptance: two simultaneous guests are two BreadCamera cameras"
   REQUIRE(s1.count(bc::SignalState::Live) >= 1);
   REQUIRE(s2.videoCount() > 0);
   REQUIRE(s2.count(bc::SignalState::Live) >= 1);
-  CHECK(s1.layout == bc::PixelLayout::BGRA8);
-  CHECK(s2.layout == bc::PixelLayout::BGRA8);
+  CHECK(s1.layout == bc::PixelLayout::NV12);
+  CHECK(s2.layout == bc::PixelLayout::NV12);
   CHECK(s1.width > 0);
   CHECK(s2.width > 0);
 

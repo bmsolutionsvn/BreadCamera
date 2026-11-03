@@ -9,14 +9,12 @@
 #include <utility>
 
 #include "core/backoff.h"
-#include "gpu/upload.h"
+#include "io/d3d11va.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/channel_layout.h>
-#include <libavutil/error.h>
 #include <libswresample/swresample.h>
-#include <libswscale/swscale.h>
 }
 
 #if BC_WITH_LIVECALL
@@ -37,12 +35,6 @@ constexpr auto kPoll = milliseconds(200);
 // Bound on the sample queue; a decode that cannot keep up drops the newest
 // sample rather than growing without limit (a live camera may drop frames).
 constexpr size_t kMaxQueued = 256;
-
-std::string averr(int rc) {
-  char buf[AV_ERROR_MAX_STRING_SIZE];
-  av_strerror(rc, buf, sizeof(buf));
-  return buf;
-}
 
 // Mirrors lkc's own admission checks so a bad url/token is a terminal
 // `input-config` without waiting on the client (spec: "bad url/token").
@@ -96,9 +88,8 @@ BreadCallInput::BreadCallInput(GpuDevice& gpu, TexturePool& pool, std::string ur
 
 BreadCallInput::~BreadCallInput() {
   stop();
-  if (sws_) sws_freeContext(sws_);
+  dec_.reset();
   if (swr_) swr_free(&swr_);
-  if (vdec_) avcodec_free_context(&vdec_);
   if (adec_) avcodec_free_context(&adec_);
   if (frame_) av_frame_free(&frame_);
   if (packet_) av_packet_free(&packet_);
@@ -190,7 +181,7 @@ void BreadCallInput::run() {
     }
     // Drop any decoder/resampler state from the previous session so a rejoin or
     // a new stream cannot carry stale H.264 reference frames or audio.
-    if (vdec_) avcodec_flush_buffers(vdec_);
+    dec_.reset();
     if (adec_) avcodec_flush_buffers(adec_);
     if (swr_) swr_free(&swr_);
     auto client = std::make_unique<lkc::Client>(url_, token_);
@@ -300,15 +291,11 @@ void BreadCallInput::checkNoGuest() {
 }
 
 bool BreadCallInput::openVideo() {
-  if (vdec_) return true;
-  const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-  if (!codec) {
-    setFailure(ErrorInfo{"input-failed", "FFmpeg has no H.264 decoder"}, false);
-    return false;
-  }
-  vdec_ = avcodec_alloc_context3(codec);
-  if (!vdec_ || avcodec_open2(vdec_, codec, nullptr) < 0) {
-    setFailure(ErrorInfo{"input-failed", "cannot open the H.264 decoder"}, false);
+  if (dec_) return true;
+  try {
+    dec_ = std::make_unique<GpuDecoder>(gpu_, pool_, AV_CODEC_ID_H264);
+  } catch (const std::exception& e) {
+    setFailure(ErrorInfo{"input-failed", std::string("cannot open the H.264 decoder: ") + e.what()}, false);
     return false;
   }
   return true;
@@ -332,41 +319,22 @@ bool BreadCallInput::openAudio() {
 }
 
 void BreadCallInput::decodeVideo(Event&& ev) {
-  if (ev.bytes.empty() || !frame_ || !packet_) return;
-  if (!openVideo()) return;
-  if (av_new_packet(packet_, static_cast<int>(ev.bytes.size())) < 0) {
-    setFailure(ErrorInfo{"input-failed", "cannot allocate a decode packet"}, false);
-    return;
-  }
-  std::memcpy(packet_->data, ev.bytes.data(), ev.bytes.size());
-  bool got = false;
-  std::string why;
-  const int sendRc = avcodec_send_packet(vdec_, packet_);
-  av_packet_unref(packet_);
-  if (sendRc < 0) {
-    // A partial/first-fragment NAL (the client starts mid-stream) is not fatal:
-    // count it like FfmpegInput does and only give up after a run of them.
-    why = averr(sendRc);
-  } else {
-    for (;;) {
-      const int rc = avcodec_receive_frame(vdec_, frame_);
-      if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF) break;
-      if (rc < 0) {
-        why = averr(rc);
-        break;
-      }
-      got = true;
-      emitVideo(frame_, ev.receiveUs);
-      av_frame_unref(frame_);
-      if (sessionDone_) return;  // emitVideo failed (e.g. conversion/upload)
+  if (ev.bytes.empty() || !openVideo()) return;
+  int got = 0;
+  dec_->decode(ev.bytes, ev.receiveUs, [&](VideoFrameIn f) {
+    ++got;
+    if (!emittedLive_) {
+      emittedLive_ = true;
+      noGuestReported_ = false;
+      sink_->onState(SignalState::Live, std::nullopt);
     }
-  }
+    sink_->onVideo(std::move(f));
+  });
   if (got) {
     videoDecodeFailures_ = 0;
   } else if (++videoDecodeFailures_ >= kMaxConsecutiveDecodeFailures) {
     setFailure(ErrorInfo{"input-failed", "video decode failed: " + std::to_string(videoDecodeFailures_) +
-                                              " consecutive packets produced no frame" +
-                                              (why.empty() ? "" : " (" + why + ")")},
+                                              " consecutive packets produced no frame"},
                false);
   }
 }
@@ -390,41 +358,6 @@ void BreadCallInput::decodeAudio(Event&& ev) {
     av_frame_unref(frame_);
     if (sessionDone_) return;
   }
-}
-
-void BreadCallInput::emitVideo(AVFrame* frame, int64_t receiveUs) {
-  const uint32_t w = static_cast<uint32_t>(frame->width) & ~1u;
-  const uint32_t h = static_cast<uint32_t>(frame->height) & ~1u;
-  if (w == 0 || h == 0) return;
-  sws_ = sws_getCachedContext(sws_, frame->width, frame->height, static_cast<AVPixelFormat>(frame->format),
-                              static_cast<int>(w), static_cast<int>(h), AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr,
-                              nullptr, nullptr);
-  if (!sws_) {
-    setFailure(ErrorInfo{"input-failed", "cannot convert the guest's pixel format"}, false);
-    return;
-  }
-  const int cs = frame->height >= 720 ? SWS_CS_ITU709 : SWS_CS_ITU601;
-  sws_setColorspaceDetails(sws_, sws_getCoefficients(cs), frame->color_range == AVCOL_RANGE_JPEG,
-                           sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
-  bgra_.resize(static_cast<size_t>(w) * h * 4);
-  uint8_t* dst[1] = {bgra_.data()};
-  const int dstStride[1] = {static_cast<int>(w * 4)};
-  sws_scale(sws_, frame->data, frame->linesize, 0, frame->height, dst, dstStride);
-
-  VideoFrameIn out;
-  out.layout = PixelLayout::BGRA8;
-  out.fullRange = true;
-  out.ptsUs = receiveUs;
-  {
-    auto lock = gpu_.lock();
-    out.tex = uploadBgra(gpu_, pool_, bgra_.data(), w * 4, w, h);
-  }
-  if (!emittedLive_) {
-    emittedLive_ = true;
-    noGuestReported_ = false;
-    sink_->onState(SignalState::Live, std::nullopt);
-  }
-  sink_->onVideo(std::move(out));  // after the GPU lock is released
 }
 
 void BreadCallInput::emitAudio(AVFrame* frame) {

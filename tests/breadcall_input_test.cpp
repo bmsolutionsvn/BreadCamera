@@ -235,7 +235,7 @@ TEST_CASE("BreadCallInput: no server reports input-failed and retries, no crash"
   CHECK(sink.errors[1]->code == "input-failed");
 }
 
-TEST_CASE("BreadCallInput: decodes a guest slot's H.264 to BGRA8"
+TEST_CASE("BreadCallInput: decodes a guest slot's H.264 to NV12"
           BC_REQUIRES(bc::test::Req::LiveCall)) {
   Fixture f;
   const std::string url = envVar("BC_LIVECALL_URL").value_or("");
@@ -252,10 +252,10 @@ TEST_CASE("BreadCallInput: decodes a guest slot's H.264 to BGRA8"
   }
   in.stop();
   REQUIRE(got);
-  std::fprintf(stderr, "[breadcall live] decoded %d frame(s), first %ux%u BGRA8\n", sink.video, sink.width,
+  std::fprintf(stderr, "[breadcall live] decoded %d frame(s), first %ux%u NV12\n", sink.video, sink.width,
                sink.height);
   CHECK(sink.video > 0);
-  CHECK(sink.layout == bc::PixelLayout::BGRA8);
+  CHECK(sink.layout == bc::PixelLayout::NV12);
   CHECK(sink.width > 0);
   CHECK(sink.height > 0);
   CHECK(sink.count(bc::SignalState::Live) >= 1);

@@ -13,7 +13,6 @@
 
 struct AVFrame;
 struct AVStream;
-struct AVBufferRef;
 struct SwsContext;
 struct SwrContext;
 
@@ -33,7 +32,6 @@ class FfmpegInput final : public Input {
   void emitVideo(AVFrame* f, AVStream* st);
   void emitAudio(AVFrame* f);
   void pace(int64_t ptsUs);
-  AVBufferRef* makeHwDevice();
   std::string safeUrl() const;
   static int interruptCb(void* self);
 
