@@ -11,14 +11,16 @@
 namespace bc {
 // Open Media Transport sender (spec A4.3), plain OMT or OMT-HX, alpha when the frame has it.
 // An unkeyed HX output sends the frame's texture straight to the encoder (spec §4.2), so its
-// camera does no readback.
+// camera does no readback. While nobody is connected it asks the camera for no picture at all:
+// no readback, no texture, no pack, no encode (OMT-HX drops the frame on the wire side).
 class OmthOutput final : public QueuedOutput {
  public:
   OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec = omthx::Codec::Hevc, bool keyed = false);
   ~OmthOutput() override { stop(); }
-  // Full (plain OMT), a keyed output (it needs the alpha) and a refused GPU path read back.
-  bool needsCpu() const override { return mode_ == omthx::Mode::Full || keyed_ || gpuRefused_; }
-  bool wantsGpuRgba8() const override { return !needsCpu(); }
+  // Full (plain OMT), a keyed output (it needs the alpha) and a refused GPU path read back — but only
+  // while a receiver is connected.
+  bool needsCpu() const override { return receivers_.load() && !gpuPath(); }
+  bool wantsGpuRgba8() const override { return receivers_.load() && gpuPath(); }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
   OutputStatus status() const override;
 
@@ -29,6 +31,8 @@ class OmthOutput final : public QueuedOutput {
   std::string errorCode() const override { return "omt-failed"; }
 
  private:
+  // The GPU path takes an unkeyed HX output's texture; everything else needs the CPU picture.
+  bool gpuPath() const { return mode_ == omthx::Mode::Hx && !keyed_ && !gpuRefused_; }
   // The GPU path cannot take this frame or this device: from now on send through memory, once.
   void refuse(const std::string& why);
 
@@ -40,6 +44,9 @@ class OmthOutput final : public QueuedOutput {
   std::vector<float> planar_;
   omthx::VideoFormat format_;
   std::atomic<bool> gpuRefused_{false};  // read by needsCpu() on the tick thread
+  // send_->hasReceivers(), published by the worker at the end of deliver: the tick thread reads it to
+  // skip the readback and the RGBA texture. The tick thread never touches send_.
+  std::atomic<bool> receivers_{false};
   mutable std::mutex warnMutex_;         // guards warn_
   std::string warn_;
   mutable std::mutex addrMutex_;  // guards address_, set by the worker in open()
