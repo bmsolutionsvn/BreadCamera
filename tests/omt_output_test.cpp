@@ -10,14 +10,17 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "gpu/converter.h"
 #include "gpu/device.h"
 #include "gpu/texture_pool.h"
 #include "io/omt_output.h"
+#include "io/uyvy.h"
 #include "omthx/omthx.h"
 
 using namespace std::chrono_literals;
@@ -58,6 +61,72 @@ std::string waitForAddress(const bc::OmthOutput& out) {
 std::array<int, 3> centreBgr(const omthx::VideoFrame& vf) {
   const size_t c = (static_cast<size_t>(vf.format.height / 2) * vf.format.width + vf.format.width / 2) * 4;
   return {vf.bgra[c], vf.bgra[c + 1], vf.bgra[c + 2]};
+}
+
+std::shared_ptr<const bc::CpuImage> solidBgra(uint32_t w, uint32_t h, uint8_t b, uint8_t g, uint8_t r,
+                                              uint8_t a = 255) {
+  auto img = std::make_shared<bc::CpuImage>();
+  img->width = w;
+  img->height = h;
+  img->bgra.resize(static_cast<size_t>(w) * h * 4);
+  for (size_t i = 0; i < img->bgra.size(); i += 4) {
+    img->bgra[i + 0] = b;
+    img->bgra[i + 1] = g;
+    img->bgra[i + 2] = r;
+    img->bgra[i + 3] = a;
+  }
+  return img;
+}
+
+// The same colour as the camera's UYVY readback hands it over: BT.709 at 720 lines and above, BT.601 below.
+std::shared_ptr<const bc::CpuImage> solidUyvy(uint32_t w, uint32_t h, uint8_t b, uint8_t g, uint8_t r) {
+  const auto bgra = solidBgra(w, h, b, g, r);
+  auto img = std::make_shared<bc::CpuImage>();
+  img->width = w;
+  img->height = h;
+  img->layout = bc::CpuLayout::Uyvy;
+  img->bgra.resize(static_cast<size_t>(w) * h * 2);
+  bc::bgraToUyvy(bgra->bgra.data(), static_cast<int>(w), static_cast<int>(h), img->bgra.data(),
+                 static_cast<int>(w) * 2, h >= 720);
+  return img;
+}
+
+// Starts the output and feeds `img` (as UYVY when `asUyvy`, else as BGRA) until a receiver hands a picture
+// back, or about twelve seconds pass.
+std::optional<omthx::VideoFrame> receiveOne(bc::OmthOutput& out, const std::shared_ptr<const bc::CpuImage>& img,
+                                            bool asUyvy, bool alpha) {
+  out.start();
+  const bc::Rate rate{30, 1};
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    for (uint64_t t = 0; run; ++t) {
+      bc::OutFrame f;
+      f.tick = t;
+      f.rate = rate;
+      if (asUyvy)
+        f.uyvy = img;
+      else
+        f.bgra = img;
+      f.hasAlpha = alpha;
+      out.submit(std::move(f));
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+  std::optional<omthx::VideoFrame> got;
+  const std::string address = waitForAddress(out);
+  if (!address.empty()) {
+    omthx::Receiver rx(address);
+    for (int i = 0; i < 60 && !got; ++i) {
+      omthx::VideoFrame vf;
+      if (rx.receiveVideo(vf, 200) && vf.format.width == static_cast<int>(img->width) &&
+          vf.format.height == static_cast<int>(img->height))
+        got = std::move(vf);
+    }
+  }
+  run = false;
+  feeder.join();
+  out.stop();
+  return got;
 }
 }  // namespace
 
@@ -366,6 +435,47 @@ TEST_CASE("OmthOutput: full mode (plain OMT) also delivers a picture" BC_REQUIRE
   REQUIRE(got);
 }
 
+TEST_CASE("OmthOutput: plain OMT takes UYVY") {
+  const std::string name = "BreadCamera OMT uyvy wants " + std::to_string(GetCurrentProcessId());
+  bc::OmthOutput full(name, omthx::Mode::Full);
+  CHECK(full.wantsUyvy(1920, 1080));
+  CHECK_FALSE(full.wantsUyvy(720, 576));  // SD keeps BGRA: OMT tags every picture BT.709, SD UYVY is BT.601
+  bc::OmthOutput keyed(name + " keyed", omthx::Mode::Full, omthx::Codec::Hevc, /*keyed=*/true);
+  CHECK_FALSE(keyed.wantsUyvy(1920, 1080));
+  bc::OmthOutput hx(name + " hx", omthx::Mode::Hx);
+  CHECK_FALSE(hx.wantsUyvy(1920, 1080));
+}
+
+TEST_CASE("OmthOutput: plain OMT sends a UYVY frame" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "BreadCamera OMT uyvy send " + std::to_string(GetCurrentProcessId());
+  // A receiver sees the same picture as before (Review Focus 1): 1080 lines takes the UYVY readback, 576
+  // lines stays on BGRA (Review Focus 5: through OMT's BT.709 tag, BT.601 SD UYVY measured 17 off in R and G).
+  struct Case {
+    uint32_t w, h;
+    bool uyvy;
+  };
+  for (const auto& c : {Case{1920, 1080, true}, Case{720, 576, false}}) {
+    INFO("at " << c.w << "x" << c.h);
+    bc::OmthOutput out(name + " " + std::to_string(c.h), omthx::Mode::Full);
+    const std::shared_ptr<const bc::CpuImage> img =
+        c.uyvy ? solidUyvy(c.w, c.h, 20, 40, 230) : solidBgra(c.w, c.h, 20, 40, 230);
+    const auto vf = receiveOne(out, img, c.uyvy, /*alpha=*/false);
+    REQUIRE(vf.has_value());
+    const auto bgr = centreBgr(*vf);
+    CHECK(std::abs(bgr[2] - 230) <= 8);  // R
+    CHECK(std::abs(bgr[1] - 40) <= 8);   // G
+    CHECK(std::abs(bgr[0] - 20) <= 8);   // B
+  }
+  // An alpha frame still goes through BGRA: the UYVY readback has no alpha.
+  bc::OmthOutput out(name + " alpha", omthx::Mode::Full);
+  const auto vf = receiveOne(out, solidBgra(640, 360, 20, 40, 230, 128), /*asUyvy=*/false, /*alpha=*/true);
+  REQUIRE(vf.has_value());
+  CHECK(vf->format.alpha);
+  const auto bgr = centreBgr(*vf);
+  CHECK(std::abs(bgr[2] - 230) <= 8);  // straight, not premultiplied
+  CHECK(std::abs(static_cast<int>(vf->bgra[3]) - 128) <= 20);
+}
+
 TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc::test::Req::Omt)) {
   bc::OmthOutput out("BreadCamera OMT tally " + std::to_string(GetCurrentProcessId()), omthx::Mode::Hx);
   auto img = std::make_shared<bc::CpuImage>();
@@ -420,4 +530,6 @@ TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc:
 TEST_CASE("OmthOutput: an output nobody pulls asks the camera for no picture") {}
 TEST_CASE("OmthOutput: an HX output sends the GPU frame") {}
 TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path") {}
+TEST_CASE("OmthOutput: plain OMT takes UYVY") {}
+TEST_CASE("OmthOutput: plain OMT sends a UYVY frame") {}
 #endif
