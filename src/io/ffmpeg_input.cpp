@@ -17,6 +17,7 @@ extern "C" {
 #include <srt/srt.h>
 
 #include "core/backoff.h"
+#include "gpu/upload.h"
 
 namespace bc {
 namespace {
@@ -323,10 +324,9 @@ void FfmpegInput::emitVideo(AVFrame* f, AVStream* st) {
     uint8_t* dst[1] = {swBuf_.data()};
     const int dstStride[1] = {static_cast<int>(w * 4)};
     sws_scale(sws_, f->data, f->linesize, 0, f->height, dst, dstStride);
-    out.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     {
       auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(out.tex->tex.Get(), 0, nullptr, swBuf_.data(), w * 4, 0);
+      out.tex = uploadBgra(gpu_, pool_, swBuf_.data(), w * 4, w, h);
     }
     out.layout = PixelLayout::BGRA8;
     out.fullRange = true;

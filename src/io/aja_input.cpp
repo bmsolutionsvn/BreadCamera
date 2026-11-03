@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "core/backoff.h"
-#include "io/uyvy.h"
+#include "gpu/upload.h"
 #include "ntv2card.h"
 #include "ntv2devicescanner.h"
 #include "ntv2utils.h"
@@ -107,15 +107,14 @@ void AjaInput::runOnce() {
       continue;
     }
     card.AutoCirculateTransfer(ch, xfer);
-    auto bgra = uyvyToBgra(reinterpret_cast<const uint8_t*>(video.data()), w, h, rowBytes, h >= 720);
     VideoFrameIn f;
-    f.layout = PixelLayout::BGRA8;
-    f.fullRange = true;
+    f.layout = PixelLayout::UYVY;
+    f.fullRange = false;  // SDI UYVY is limited range
     f.rate = rate;
-    f.tex = pool_.acquire(static_cast<uint32_t>(w), static_cast<uint32_t>(h), DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     {
       auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.data(), static_cast<UINT>(w * 4), 0);
+      f.tex = uploadUyvy(gpu_, pool_, reinterpret_cast<const uint8_t*>(video.data()),
+                         static_cast<uint32_t>(rowBytes), static_cast<uint32_t>(w), static_cast<uint32_t>(h));
     }
     const ULWord bytes = xfer.GetCapturedAudioByteCount();
     const int frames = static_cast<int>(bytes / (8 * 4));  // 8 channels × int32

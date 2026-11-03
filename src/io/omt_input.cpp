@@ -7,7 +7,7 @@
 
 #include "omthx/omthx.h"
 
-#include "gpu/nv12_upload.h"
+#include "gpu/upload.h"
 
 namespace bc {
 using Clock = std::chrono::steady_clock;

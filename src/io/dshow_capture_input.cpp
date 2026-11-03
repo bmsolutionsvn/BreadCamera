@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "core/backoff.h"
+#include "gpu/upload.h"
 #include "io/dshow_devices.h"
 #include "io/dshow_format.h"
 
@@ -291,10 +292,9 @@ void DShowCaptureInput::runOnce(bool forceRgb32) {
       sink_->onState(SignalState::Live, std::nullopt);
     }
     if (!sink_->wantsGpuVideo()) continue;
-    f.tex = pool_.acquire(width_, height_, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
     {
       auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.data(), pitch, 0);
+      f.tex = uploadBgra(gpu_, pool_, bgra.data(), pitch, width_, height_);
     }
     sink_->onVideo(std::move(f));
   }

@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "core/backoff.h"
+#include "gpu/upload.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -414,10 +415,9 @@ void BreadCallInput::emitVideo(AVFrame* frame, int64_t receiveUs) {
   out.layout = PixelLayout::BGRA8;
   out.fullRange = true;
   out.ptsUs = receiveUs;
-  out.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
   {
     auto lock = gpu_.lock();
-    gpu_.context()->UpdateSubresource(out.tex->tex.Get(), 0, nullptr, bgra_.data(), w * 4, 0);
+    out.tex = uploadBgra(gpu_, pool_, bgra_.data(), w * 4, w, h);
   }
   if (!emittedLive_) {
     emittedLive_ = true;

@@ -11,6 +11,8 @@
 #include <chrono>
 #include <stdexcept>
 
+#include "gpu/upload.h"
+
 namespace bc {
 namespace {
 struct Dims {
@@ -69,6 +71,7 @@ OnnxMatte::OnnxMatte(GpuDevice& gpu, TexturePool& pool, Converter& conv, std::fi
   std::vector<uint8_t> ones(16 * 16, 255);
   opaque_ = pool_.acquire(16, 16, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
   {
+    // A one-time fill at creation, not a per-frame write: UpdateSubresource is safe here.
     auto lock = gpu_.lock();
     gpu_.context()->UpdateSubresource(opaque_->tex.Get(), 0, nullptr, ones.data(), 16, 0);
   }
@@ -193,10 +196,11 @@ void OnnxMatte::infer(const std::string& id, const CpuImage& img, MatteQuality q
       bytes[i] = static_cast<uint8_t>(s[i] * 255.0f + 0.5f);
     }
   }
-  auto tex = pool_.acquire(static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h), DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+  auto tex = pool_.acquire(static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h), DXGI_FORMAT_R8_UNORM,
+                           D3D11_BIND_SHADER_RESOURCE, D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
   {
     auto lock = gpu_.lock();
-    gpu_.context()->UpdateSubresource(tex->tex.Get(), 0, nullptr, bytes.data(), static_cast<UINT>(d.w), 0);
+    writeTexture(gpu_, tex->tex.Get(), bytes.data(), static_cast<uint32_t>(d.w), static_cast<uint32_t>(d.h));
   }
   std::lock_guard l(m_);
   auto it = cams_.find(id);

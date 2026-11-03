@@ -10,7 +10,10 @@
 #include "fit_linear.h"
 #include "linear_to_bgra8.h"
 #include "linear_to_uyvy.h"
+#include "uyvy_to_linear.h"
 #include "yuv_to_linear.h"
+
+#include "gpu/upload.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -72,6 +75,7 @@ Converter::Converter(GpuDevice& gpu, TexturePool& pool) : gpu_(gpu), pool_(pool)
       FAILED(dev->CreateComputeShader(g_bgra_to_linear, sizeof(g_bgra_to_linear), nullptr, &bgraCs_)) ||
       FAILED(dev->CreateComputeShader(g_linear_to_bgra8, sizeof(g_linear_to_bgra8), nullptr, &outCs_)) ||
       FAILED(dev->CreateComputeShader(g_linear_to_uyvy, sizeof(g_linear_to_uyvy), nullptr, &uyvyCs_)) ||
+      FAILED(dev->CreateComputeShader(g_uyvy_to_linear, sizeof(g_uyvy_to_linear), nullptr, &uyvyInCs_)) ||
       FAILED(dev->CreateComputeShader(g_fit_linear, sizeof(g_fit_linear), nullptr, &fitCs_)) ||
       FAILED(dev->CreateComputeShader(g_crop_linear, sizeof(g_crop_linear), nullptr, &cropCs_))) {
     throw std::runtime_error("CreateComputeShader failed");
@@ -114,6 +118,14 @@ TextureRef Converter::toLinear(const GpuTexture& src, PixelLayout layout, bool f
   if (layout == PixelLayout::BGRA8) {
     ID3D11ShaderResourceView* srvs[] = {src.srv.Get()};
     dispatch(bgraCs_.Get(), srvs, 1, out->uav.Get(), p);
+  } else if (layout == PixelLayout::UYVY) {
+    auto m = yuvToRgbMatrix(src.height, fullRange, forceBt709);
+    std::memcpy(p.row0, m.rows[0].data(), sizeof(p.row0));
+    std::memcpy(p.row1, m.rows[1].data(), sizeof(p.row1));
+    std::memcpy(p.row2, m.rows[2].data(), sizeof(p.row2));
+    p.srcW = src.width / 2;  // the packed texture
+    ID3D11ShaderResourceView* srvs[] = {src.srv.Get()};
+    dispatch(uyvyInCs_.Get(), srvs, 1, out->uav.Get(), p);
   } else {
     auto m = yuvToRgbMatrix(src.height, fullRange, forceBt709);
     std::memcpy(p.row0, m.rows[0].data(), sizeof(p.row0));
@@ -229,9 +241,7 @@ TextureRef Converter::solid(uint32_t w, uint32_t h, std::array<float, 4> c) {
 }
 
 TextureRef Converter::uploadBgra8(const uint8_t* data, uint32_t w, uint32_t h, uint32_t stride) {
-  auto out = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
   auto lock = gpu_.lock();
-  gpu_.context()->UpdateSubresource(out->tex.Get(), 0, nullptr, data, stride, 0);
-  return out;
+  return uploadBgra(gpu_, pool_, data, stride, w, h);
 }
 }  // namespace bc

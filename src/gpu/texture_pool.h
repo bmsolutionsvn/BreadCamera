@@ -19,7 +19,8 @@ struct GpuTexture {
   Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srvChroma;  // NV12 / P010
   Microsoft::WRL::ComPtr<ID3D11UnorderedAccessView> uav;
   Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv;
-  // A plane pair (srvLuma/srvChroma) keeps its two pooled textures alive here; `tex` stays null.
+  // A picture over pooled textures keeps them alive here (an NV12/P010 pair, or the packed
+  // texture behind a UYVY picture); `tex` stays null.
   std::shared_ptr<GpuTexture> planeLuma, planeChroma;
   DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
   uint32_t width = 0;
