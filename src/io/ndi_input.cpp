@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cstring>
 
+#include "gpu/upload.h"
+
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
@@ -47,7 +49,8 @@ void NdiInput::run() {
       if (!pick) continue;
       NDIlib_recv_create_v3_t rc{};
       rc.source_to_connect_to = *pick;
-      rc.color_format = NDIlib_recv_color_format_BGRX_BGRA;
+      // UYVY for sources without alpha (2 bytes a pixel), BGRA when the source has alpha.
+      rc.color_format = NDIlib_recv_color_format_UYVY_BGRA;
       // NDI|HX is an NDI source like any other (the SDK decodes it); HX mode asks for the
       // source's lowest-bandwidth stream, which is the HX one, instead of full bandwidth.
       rc.bandwidth = hx_ ? NDIlib_recv_bandwidth_lowest : NDIlib_recv_bandwidth_highest;
@@ -62,9 +65,12 @@ void NdiInput::run() {
     switch (NDIlib_recv_capture_v3(recv, &v, &a, nullptr, 200)) {
       case NDIlib_frame_type_video: {
         const uint32_t w = static_cast<uint32_t>(v.xres), h = static_cast<uint32_t>(v.yres);
+        // The receiver asks for UYVY_BGRA, so a frame is either UYVY (no alpha) or BGRA (alpha).
+        const bool uyvy = v.FourCC == NDIlib_FourCC_type_UYVY;
+        const uint32_t bpp = uyvy ? 2 : 4;
         VideoFrameIn f;
-        f.layout = PixelLayout::BGRA8;
-        f.fullRange = true;
+        f.layout = uyvy ? PixelLayout::UYVY : PixelLayout::BGRA8;
+        f.fullRange = !uyvy;  // SDI-style UYVY is limited range
         f.ptsUs = v.timestamp == NDIlib_recv_timestamp_undefined ? 0 : v.timestamp / 10;
         f.rate = rateFromRational(v.frame_rate_N, v.frame_rate_D);
         if (v.line_stride_in_bytes < 0) {  // bottom-up source; we did not ask for the _flipped format
@@ -76,16 +82,16 @@ void NdiInput::run() {
           NDIlib_recv_free_video_v2(recv, &v);
           break;
         }
-        // NDI: stride 0 means tightly packed (sizeof(one pixel) * xres).
-        const UINT pitch = v.line_stride_in_bytes > 0 ? static_cast<UINT>(v.line_stride_in_bytes) : w * 4;
+        // NDI: stride 0 means tightly packed (bytes per pixel * xres).
+        const UINT pitch = v.line_stride_in_bytes > 0 ? static_cast<UINT>(v.line_stride_in_bytes) : w * bpp;
         if (sink_->wantsCpuVideo()) {
           CpuVideoFrame cf;
           cf.data = static_cast<const uint8_t*>(v.p_data);
           cf.stride = static_cast<int>(pitch);
           cf.width = w;
           cf.height = h;
-          cf.format = CpuPixel::BGRA;
-          cf.fullRange = true;
+          cf.format = uyvy ? CpuPixel::UYVY : CpuPixel::BGRA;
+          cf.fullRange = f.fullRange;
           cf.ptsUs = f.ptsUs;
           cf.rate = f.rate;
           sink_->onCpuVideo(cf);
@@ -96,10 +102,10 @@ void NdiInput::run() {
           sink_->onState(SignalState::Live, std::nullopt);
         }
         if (sink_->wantsGpuVideo()) {
-          f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
           {
             auto lock = gpu_.lock();
-            gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, v.p_data, pitch, 0);
+            f.tex = uyvy ? uploadUyvy(gpu_, pool_, static_cast<const uint8_t*>(v.p_data), pitch, w, h)
+                         : uploadBgra(gpu_, pool_, static_cast<const uint8_t*>(v.p_data), pitch, w, h);
           }
           sink_->onVideo(std::move(f));
         }

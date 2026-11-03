@@ -10,8 +10,8 @@
 
 #include "DeckLinkAPI_h.h"
 #include "core/backoff.h"
+#include "gpu/upload.h"
 #include "io/decklink.h"
-#include "io/uyvy.h"
 
 namespace bc {
 namespace {
@@ -129,16 +129,18 @@ void DeckLinkInput::onFrame(const uint8_t* bytes, int w, int h, int rowBytes, bo
   }
   if (!sink_->wantsGpuVideo()) return;
 
-  std::vector<uint8_t> bgra = bgraInput ? std::vector<uint8_t>() : uyvyToBgra(bytes, w, h, rowBytes, h >= 720);
   VideoFrameIn f;
-  f.layout = PixelLayout::BGRA8;
-  f.fullRange = true;
+  // RGB 4:4:4 arrives as BGRA (full range); SDI UYVY stays 2 bytes a pixel on the GPU.
+  f.layout = bgraInput ? PixelLayout::BGRA8 : PixelLayout::UYVY;
+  f.fullRange = bgraInput;
   f.rate = deckLinkRateFor(mode_.load());
-  f.tex = pool_.acquire(static_cast<uint32_t>(w), static_cast<uint32_t>(h), DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
   {
     auto lock = gpu_.lock();
-    gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, bgra.empty() ? bytes : bgra.data(),
-                                      static_cast<UINT>(bgra.empty() ? rowBytes : w * 4), 0);
+    f.tex = bgraInput
+                ? uploadBgra(gpu_, pool_, bytes, static_cast<uint32_t>(rowBytes), static_cast<uint32_t>(w),
+                             static_cast<uint32_t>(h))
+                : uploadUyvy(gpu_, pool_, bytes, static_cast<uint32_t>(rowBytes), static_cast<uint32_t>(w),
+                             static_cast<uint32_t>(h));
   }
   sink_->onVideo(std::move(f));
 }

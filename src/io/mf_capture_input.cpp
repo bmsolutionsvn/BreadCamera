@@ -17,6 +17,7 @@
 
 #include "core/backoff.h"
 #include "core/utf8.h"
+#include "gpu/upload.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -311,10 +312,9 @@ void MfCaptureInput::runOnce() {
       sink_->onState(SignalState::Live, std::nullopt);
     }
     if (sink_->wantsGpuVideo()) {
-      f.tex = pool_.acquire(w, h, DXGI_FORMAT_B8G8R8A8_UNORM, D3D11_BIND_SHADER_RESOURCE);
       {
         auto lock = gpu_.lock();
-        gpu_.context()->UpdateSubresource(f.tex->tex.Get(), 0, nullptr, src, pitch, 0);
+        f.tex = uploadBgra(gpu_, pool_, src, pitch, w, h);
       }
       sink_->onVideo(std::move(f));
     }

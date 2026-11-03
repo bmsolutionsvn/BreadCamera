@@ -10,6 +10,8 @@
 #include "nvVFXGreenScreen.h"
 #include "nvVideoEffects.h"
 
+#include "gpu/upload.h"
+
 namespace bc {
 namespace {
 void check(NvCV_Status s, const char* what) {
@@ -160,10 +162,11 @@ void MaxineMatte::process(std::vector<MatteJob*>& jobs) {
     check(NvCVImage_Transfer(nth(&m.dst, &view, i, kHeight), &m.cpuOut, 1.0f, m.stream, &m.tmp), "download");
     // alphaBytes is read below (and overwritten by the next download), so the DtoH must have completed.
     syncStream(m.stream);
-    auto tex = pool_.acquire(kWidth, kHeight, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE);
+    auto tex = pool_.acquire(kWidth, kHeight, DXGI_FORMAT_R8_UNORM, D3D11_BIND_SHADER_RESOURCE,
+                             D3D11_USAGE_DYNAMIC, D3D11_CPU_ACCESS_WRITE);
     {
       auto lock = gpu_.lock();
-      gpu_.context()->UpdateSubresource(tex->tex.Get(), 0, nullptr, m.alphaBytes.data(), kWidth, 0);
+      writeTexture(gpu_, tex->tex.Get(), m.alphaBytes.data(), kWidth, kHeight);
     }
     jobs[i]->alpha = tex;
   }

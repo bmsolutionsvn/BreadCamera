@@ -8,7 +8,7 @@
 #include "io/input.h"
 
 namespace bc {
-// NDI receive → BGRA8 frames + 48 kHz stereo audio (spec §4.2).
+// NDI receive → UYVY (no alpha) or BGRA8 (alpha) frames + 48 kHz stereo audio (spec §4.2).
 class NdiInput final : public Input {
  public:
   NdiInput(GpuDevice& gpu, TexturePool& pool, std::string source, bool hx = false)
