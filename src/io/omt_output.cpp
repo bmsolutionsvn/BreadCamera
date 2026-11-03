@@ -54,6 +54,17 @@ void OmthOutput::deliver(const OutFrame& f) {
     }
   }
 
+  if (!sentVideo && !f.hasAlpha && f.uyvy && !f.uyvy->bgra.empty()) {
+    // The camera's UYVY readback, sent as it is: libomt takes it with no conversion (the wire stays VMX).
+    format_.width = static_cast<int>(f.uyvy->width);
+    format_.height = static_cast<int>(f.uyvy->height);
+    format_.fpsN = static_cast<int>(f.rate.num);
+    format_.fpsD = static_cast<int>(f.rate.den);
+    format_.alpha = false;
+    send_->sendVideoUyvy(format_, f.uyvy->bgra.data(), format_.width * 2, nullptr, 0, false, ts);
+    sentVideo = true;
+  }
+
   if (!sentVideo && f.bgra && !f.bgra->bgra.empty()) {
     format_.width = static_cast<int>(f.bgra->width);
     format_.height = static_cast<int>(f.bgra->height);

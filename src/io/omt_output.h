@@ -21,6 +21,10 @@ class OmthOutput final : public QueuedOutput {
   // while a receiver is connected.
   bool needsCpu() const override { return receivers_.load() && !gpuPath(); }
   bool wantsGpuRgba8() const override { return receivers_.load() && gpuPath(); }
+  // An unkeyed plain OMT output sends the camera's UYVY readback: libomt takes it with no conversion,
+  // and the wire stays standard VMX (spec §3.1 item 2). OMT-HX tags every picture BT.709, so SD, whose
+  // UYVY is BT.601, keeps BGRA.
+  bool wantsUyvy(uint32_t, uint32_t h) const override { return mode_ == omthx::Mode::Full && !keyed_ && h >= 720; }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
   OutputStatus status() const override;
 
