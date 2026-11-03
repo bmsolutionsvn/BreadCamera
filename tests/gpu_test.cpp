@@ -322,6 +322,17 @@ TEST_CASE("Converter: UYVY in matches uyvyToBgra" BC_REQUIRES(bc::test::Req::Har
       for (size_t k = 0; k < 3; ++k) CHECK(std::abs(img.bgra[i + k] - want[i + k]) <= 6);
     }
   }
+
+  // Each pixel of a pair keeps its own luma: Y0 = 16 (black) then Y1 = 235 (white), U = V = 128.
+  const std::vector<uint8_t> pair = {128, 16, 128, 235};
+  bc::TextureRef pairUp;
+  {
+    auto lock = g.dev->lock();
+    pairUp = bc::uploadUyvy(*g.dev, g.pool, pair.data(), 4, 2, 1);
+  }
+  auto pairImg = g.conv.readback(*g.conv.toBgra8(*g.conv.toLinear(*pairUp, bc::PixelLayout::UYVY, false), 2, 1));
+  CHECK(pairImg.bgra[0] < 10);
+  CHECK(pairImg.bgra[4] > 245);
 }
 
 TEST_CASE("uploadUyvy refuses an odd width") {

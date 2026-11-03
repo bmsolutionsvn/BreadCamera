@@ -36,7 +36,7 @@ void NdiInput::run() {
     return;
   }
   NDIlib_recv_instance_t recv = nullptr;
-  bool live = false, rateReported = false, flipReported = false;  // ponytail: flipped frames are reported once and skipped
+  bool live = false, rateReported = false, flipReported = false, oddReported = false;  // ponytail: flipped frames are reported once and skipped
   auto lastVideo = Clock::now();
   while (!stopping_) {
     if (!recv) {
@@ -78,6 +78,15 @@ void NdiInput::run() {
             flipReported = true;
             sink_->onState(live ? SignalState::Live : SignalState::Connecting,
                            ErrorInfo{"ndi-format", "flipped NDI video frames are not supported"});
+          }
+          NDIlib_recv_free_video_v2(recv, &v);
+          break;
+        }
+        if (uyvy && (w & 1)) {  // a UYVY pair covers 2 pixels; an odd width has no GPU upload
+          if (!oddReported) {
+            oddReported = true;
+            sink_->onState(live ? SignalState::Live : SignalState::Connecting,
+                           ErrorInfo{"ndi-format", "NDI UYVY frames with an odd width are not supported"});
           }
           NDIlib_recv_free_video_v2(recv, &v);
           break;

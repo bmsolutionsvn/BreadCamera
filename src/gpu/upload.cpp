@@ -9,9 +9,12 @@ void writeTexture(GpuDevice& gpu, ID3D11Texture2D* tex, const uint8_t* src, uint
   auto* ctx = gpu.context();
   D3D11_MAPPED_SUBRESOURCE m{};
   if (FAILED(ctx->Map(tex, 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) throw std::runtime_error("Map failed");
+  // A source stride wider than the texture's row pitch (a padded capture) must not spill into the
+  // next row: copy only the bytes the row has room for, as UpdateSubresource did.
+  const size_t n = rowBytes < m.RowPitch ? rowBytes : m.RowPitch;
   for (uint32_t y = 0; y < rows; ++y) {
     std::memcpy(static_cast<uint8_t*>(m.pData) + static_cast<size_t>(y) * m.RowPitch,
-                src + static_cast<size_t>(y) * rowBytes, rowBytes);
+                src + static_cast<size_t>(y) * rowBytes, n);
   }
   ctx->Unmap(tex, 0);
 }
