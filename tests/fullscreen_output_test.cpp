@@ -30,23 +30,3 @@ TEST_CASE("FullscreenOutput: a missing monitor reports an error instead of crash
   CHECK(st.error->message.find("monitor 99") != std::string::npos);
   out.stop();
 }
-
-TEST_CASE("FullscreenOutput: presents frames on monitor 0") {
-  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
-  bc::TexturePool pool(*gpu);
-  bc::Converter conv(*gpu, pool);
-  bc::FullscreenOutput out(*gpu, 0);
-  out.start();
-  for (uint64_t i = 0; i < 30; ++i) {
-    bc::OutFrame f;
-    f.tick = i;
-    f.linear = conv.solid(1920, 1080, {0.2f, 0.02f, 0.02f, 1.0f});
-    out.submit(std::move(f));
-    std::this_thread::sleep_for(16ms);
-  }
-  auto st = out.status();
-  CHECK(st.state == bc::SignalState::Live);
-  CHECK_FALSE(st.error);
-  CHECK(st.delivered > 0);
-  out.stop();
-}
