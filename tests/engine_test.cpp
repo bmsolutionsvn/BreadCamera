@@ -770,8 +770,8 @@ TEST_CASE("Camera: an alpha frame stays on the memory path for an HX output") {
   camera.stop();
 }
 
-// Plan review focus 2: an output that asked for UYVY gets BGRA instead on a tick whose frame
-// has alpha (the keyed background), and never a UYVY image without the key.
+// Plan review focus 2: a keyer turned on mid-show. Opaque ticks travel as UYVY; from the tick
+// the matte arrives they fall back to BGRA, and an alpha frame is never sent as UYVY.
 TEST_CASE("Camera: a UYVY output sends BGRA, not UYVY, when the frame gains alpha") {
   Rig r;
   RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
@@ -783,17 +783,24 @@ TEST_CASE("Camera: a UYVY output sends BGRA, not UYVY, when the frame gains alph
   RecordingOutput* o = factory.all[0];
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
   auto alpha = r.conv.solid(64, 36, {1, 1, 1, 1});
-  bool sawBgra = false;
-  for (int i = 0; i < 30; ++i) {
+  bool sawUyvy = false, alphaOn = false, sawBgraAfter = false;
+  for (int i = 0; i < 40; ++i) {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
-    camera.endTick(now, alpha);
-    CHECK(o->lastUyvy == nullptr);  // an alpha frame never travels as UYVY
-    if (o->last) sawBgra = true;
+    camera.endTick(now, alphaOn ? alpha : nullptr);
+    if (!alphaOn) {
+      if (o->lastUyvy) sawUyvy = true;
+      if (sawUyvy) alphaOn = true;  // the keyer comes on once the UYVY path is live
+    } else {
+      CHECK(o->lastUyvy == nullptr);  // an alpha frame never travels as UYVY
+      if (o->last) sawBgraAfter = true;
+    }
     std::this_thread::sleep_for(3ms);
   }
-  CHECK(sawBgra);
+  CHECK(sawUyvy);
+  CHECK(sawBgraAfter);
+  if (o->last) CHECK(o->last->layout == bc::CpuLayout::Bgra);
   camera.stop();
 }
 

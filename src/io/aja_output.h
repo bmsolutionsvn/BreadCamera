@@ -29,6 +29,7 @@ class AjaOutput final : public QueuedOutput {
   Rate rate_;
   std::unique_ptr<CNTV2Card> card_;
   SwsContext* sws_ = nullptr;
+  std::shared_ptr<const CpuImage> lastUyvy_;  // keeps a handed-on UYVY buffer alive past deliver()
   std::vector<uint8_t> uyvy_, scaled_;
   std::vector<int32_t> pcm_;
 };

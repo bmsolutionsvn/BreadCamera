@@ -59,9 +59,12 @@ void AjaOutput::deliver(const OutFrame& f) {
   constexpr int W = 1920, H = 1080;
   const uint8_t* video = nullptr;
   if (f.uyvy && !f.uyvy->bgra.empty()) {
-    // Already 4:2:2 from the GPU: hand the buffer on, no conversion and no copy.
+    // Already 4:2:2 from the GPU: hand the buffer on, no conversion and no copy. Hold the image
+    // so nothing frees it until this delivery (and any deferred DMA) is done with it.
+    lastUyvy_ = f.uyvy;
     video = f.uyvy->bgra.data();
   } else if (f.bgra && !f.bgra->bgra.empty()) {
+    lastUyvy_.reset();
     const uint8_t* bgra = f.bgra->bgra.data();
     if (static_cast<int>(f.bgra->width) != W || static_cast<int>(f.bgra->height) != H) {
       scaled_.resize(static_cast<size_t>(W) * H * 4);

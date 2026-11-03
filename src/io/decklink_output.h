@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <vector>
 
 #include "core/rate.h"
@@ -18,7 +19,8 @@ class DeckLinkOutput final : public QueuedOutput {
   ~DeckLinkOutput() override { stop(); }
   bool needsCpu() const override { return true; }
   // Keyed outputs keep BGRA; the card runs a fixed 1080p mode, so only that size takes UYVY.
-  bool wantsUyvy(uint32_t w, uint32_t h) const override { return !keyed_ && w == 1920 && h == 1080; }
+  // A card that refused the UYVY frame pool keeps the working BGRA path instead.
+  bool wantsUyvy(uint32_t w, uint32_t h) const override { return yuvOk_ && !keyed_ && w == 1920 && h == 1080; }
 
  protected:
   void open() override;
@@ -35,6 +37,7 @@ class DeckLinkOutput final : public QueuedOutput {
   IDeckLinkKeyer* keyer_ = nullptr;
   IDeckLinkMutableVideoFrame* yuvFrames_[3] = {};
   int yuvNext_ = 0;
+  std::atomic<bool> yuvOk_{true};  // false when the card refused the pool: stay on BGRA
   SwsContext* sws_ = nullptr;
   std::vector<int16_t> pcm_;
 };

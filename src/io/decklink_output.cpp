@@ -28,10 +28,21 @@ void DeckLinkOutput::open() {
     throw std::runtime_error("the DeckLink output could not start (in use, or the mode is not supported)");
   }
   // Reused UYVY frames. The SDK says of DisplayVideoFrameSync: "after call return, the frame
-  // may be released", so a pool frame is free again once that call returns.
-  for (auto*& f : yuvFrames_) {
-    if (output_->CreateVideoFrame(1920, 1080, 1920 * 2, bmdFormat8BitYUV, bmdFrameFlagDefault, &f) != S_OK || !f)
-      throw std::runtime_error("cannot allocate a DeckLink UYVY frame");
+  // may be released", so a pool frame is free again once that call returns. Keyed outputs never
+  // ask for UYVY, so they skip the pool; a card that refuses it keeps the working BGRA path.
+  if (!keyed_) {
+    for (auto*& f : yuvFrames_) {
+      if (output_->CreateVideoFrame(1920, 1080, 1920 * 2, bmdFormat8BitYUV, bmdFrameFlagDefault, &f) != S_OK || !f) {
+        for (auto*& g : yuvFrames_) {
+          if (g) {
+            g->Release();
+            g = nullptr;
+          }
+        }
+        yuvOk_ = false;
+        break;
+      }
+    }
   }
   output_->EnableAudioOutput(bmdAudioSampleRate48kHz, bmdAudioSampleType16bitInteger, 2, bmdAudioOutputStreamContinuous);
   if (keyed_) {
@@ -44,7 +55,7 @@ void DeckLinkOutput::open() {
 
 void DeckLinkOutput::deliver(const OutFrame& f) {
   constexpr int W = 1920, H = 1080;
-  if (f.uyvy && !f.uyvy->bgra.empty()) {
+  if (f.uyvy && yuvFrames_[0] && !f.uyvy->bgra.empty()) {
     // One memcpy into a reused 8-bit UYVY frame; the frame is already 4:2:2, so no alpha loop.
     IDeckLinkMutableVideoFrame* frame = yuvFrames_[yuvNext_];
     yuvNext_ = (yuvNext_ + 1) % 3;
