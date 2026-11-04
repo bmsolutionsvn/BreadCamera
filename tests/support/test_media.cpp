@@ -11,6 +11,8 @@ extern "C" {
 #include <memory>
 #include <stdexcept>
 
+#include "io/h264_encoder.h"
+
 namespace bc::test {
 namespace {
 void check(int rc, const char* what) {
@@ -128,6 +130,80 @@ void writeTestTs(const std::filesystem::path& path, int width, int height, int f
     avcodec_send_frame(a.get(), nullptr);
     drain(oc, a.get(), as);
   }
+  check(av_write_trailer(oc), "trailer");
+  avio_closep(&oc->pb);
+}
+
+void writeH264TestTs(const std::filesystem::path& path, int width, int height, int fps, int seconds, int gop) {
+  const std::string file = path.string();
+  AVFormatContext* oc = nullptr;
+  check(avformat_alloc_output_context2(&oc, nullptr, "mpegts", file.c_str()), "alloc_output");
+  std::unique_ptr<AVFormatContext, decltype(&avformat_free_context)> ocGuard(oc, &avformat_free_context);
+
+  auto enc = bc::openH264Encoder(width, height, fps, 1, 4'000'000, gop, false);
+  CodecPtr v(enc.ctx);
+  AVStream* vs = avformat_new_stream(oc, nullptr);
+  avcodec_parameters_from_context(vs->codecpar, v.get());
+  vs->time_base = v->time_base;
+
+  const AVCodec* ac = avcodec_find_encoder(AV_CODEC_ID_MP2);
+  CodecPtr a(avcodec_alloc_context3(ac));
+  a->sample_rate = 48000;
+  a->sample_fmt = AV_SAMPLE_FMT_S16;
+  av_channel_layout_default(&a->ch_layout, 2);
+  a->bit_rate = 192000;
+  a->time_base = {1, 48000};
+  check(avcodec_open2(a.get(), ac, nullptr), "open mp2");
+  AVStream* as = avformat_new_stream(oc, nullptr);
+  avcodec_parameters_from_context(as->codecpar, a.get());
+  as->time_base = a->time_base;
+
+  check(avio_open(&oc->pb, file.c_str(), AVIO_FLAG_WRITE), "avio_open");
+  check(avformat_write_header(oc, nullptr), "write_header");
+
+  FramePtr vf(av_frame_alloc());
+  vf->format = AV_PIX_FMT_NV12;
+  vf->width = width;
+  vf->height = height;
+  check(av_frame_get_buffer(vf.get(), 0), "frame buffer");
+  FramePtr af(av_frame_alloc());
+  af->format = AV_SAMPLE_FMT_S16;
+  av_channel_layout_copy(&af->ch_layout, &a->ch_layout);
+  af->sample_rate = 48000;
+  af->nb_samples = a->frame_size;
+  check(av_frame_get_buffer(af.get(), 0), "audio buffer");
+
+  int64_t audioPts = 0;
+  for (int i = 0; i < fps * seconds; ++i) {
+    check(av_frame_make_writable(vf.get()), "writable");
+    for (int y = 0; y < height; ++y)
+      for (int x = 0; x < width; ++x) vf->data[0][y * vf->linesize[0] + x] = static_cast<uint8_t>(16 + (x + i * 4) % 220);
+    for (int y = 0; y < height / 2; ++y)
+      for (int x = 0; x < width / 2; ++x) {  // NV12: one interleaved chroma plane
+        vf->data[1][y * vf->linesize[1] + 2 * x] = 128;
+        vf->data[1][y * vf->linesize[1] + 2 * x + 1] = static_cast<uint8_t>(64 + i % 128);
+      }
+    vf->pts = i;
+    vf->pict_type = (gop > 0 && i % gop == 0) ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
+    check(avcodec_send_frame(v.get(), vf.get()), "send video");
+    drain(oc, v.get(), vs);
+    while (audioPts < static_cast<int64_t>(i + 1) * 48000 / fps) {
+      check(av_frame_make_writable(af.get()), "writable audio");
+      auto* s = reinterpret_cast<int16_t*>(af->data[0]);
+      for (int n = 0; n < af->nb_samples; ++n) {
+        auto val = static_cast<int16_t>(std::sin(2.0 * 3.141592653589793 * 1000.0 * (audioPts + n) / 48000.0) * 8000);
+        s[2 * n] = s[2 * n + 1] = val;
+      }
+      af->pts = audioPts;
+      audioPts += af->nb_samples;
+      check(avcodec_send_frame(a.get(), af.get()), "send audio");
+      drain(oc, a.get(), as);
+    }
+  }
+  avcodec_send_frame(v.get(), nullptr);
+  drain(oc, v.get(), vs);
+  avcodec_send_frame(a.get(), nullptr);
+  drain(oc, a.get(), as);
   check(av_write_trailer(oc), "trailer");
   avio_closep(&oc->pb);
 }

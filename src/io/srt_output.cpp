@@ -10,6 +10,7 @@ extern "C" {
 #include <stdexcept>
 
 #include "io/h264_encoder.h"
+#include "io/remux.h"
 
 namespace bc {
 namespace {
@@ -23,6 +24,8 @@ void check(int rc, const char* what) {
 }  // namespace
 
 int SrtOutput::interrupt(void* self) { return static_cast<SrtOutput*>(self)->stopRequested() ? 1 : 0; }
+
+SrtOutput::~SrtOutput() { stop(); }
 
 void SrtOutput::open() {
   check(avformat_alloc_output_context2(&fmt_, nullptr, "mpegts", opts_.url.c_str()), "mpegts muxer");
@@ -102,6 +105,33 @@ void SrtOutput::writePacket(AVCodecContext* c, AVStream* st) {
 }
 
 void SrtOutput::deliver(const OutFrame& f) {
+  if (f.packet) {
+    if (consumeDrop()) dropUntilKey_ = true;  // a lost packet breaks the GOP: resume at a keyframe
+    if (dropUntilKey_) {
+      if (!f.packet->video || !f.packet->pkt || !(f.packet->pkt->flags & AV_PKT_FLAG_KEY)) return;
+      dropUntilKey_ = false;
+    }
+    if (!remux_) {
+      if (headerWritten_) {  // pictures were being encoded: a new muxer for a new stream
+        close();
+        open();
+      }
+      remux_ = std::make_unique<RemuxWriter>(fmt_);
+      remuxing_ = true;
+    }
+    try {
+      remux_->write(*f.packet);
+    } catch (...) {
+      if (remux_->wroteHeader()) headerWritten_ = true;  // close() writes the trailer
+      remux_.reset();
+      throw;  // the worker closes and retries with a fresh muxer
+    }
+    return;
+  }
+  if (remux_) {  // an effect came on: back to encoding, with a fresh header (a stream restart)
+    close();
+    open();
+  }
   if (!f.bgra || f.bgra->bgra.empty()) return;
   const int w = static_cast<int>(f.bgra->width) & ~1;
   const int h = static_cast<int>(f.bgra->height) & ~1;
@@ -138,8 +168,17 @@ void SrtOutput::deliver(const OutFrame& f) {
   }
 }
 
+OutputStatus SrtOutput::status() const {
+  OutputStatus s = QueuedOutput::status();
+  if (remuxing_.load()) s.note = "re-muxing the source";
+  return s;
+}
+
 void SrtOutput::close() noexcept {
-  if (fmt_ && headerWritten_) av_write_trailer(fmt_);
+  if (fmt_ && (headerWritten_ || (remux_ && remux_->wroteHeader()))) av_write_trailer(fmt_);
+  remux_.reset();
+  remuxing_ = false;
+  dropUntilKey_ = false;
   if (fmt_ && fmt_->pb) avio_closep(&fmt_->pb);
   if (fmt_) avformat_free_context(fmt_);
   fmt_ = nullptr;

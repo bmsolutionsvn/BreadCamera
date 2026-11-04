@@ -12,6 +12,7 @@
 #include "engine/face_detector.h"
 #include "gpu/color_grader.h"
 #include "gpu/image_io.h"
+#include "io/remux.h"
 #include "omthx/omthx.h"
 
 namespace bc {
@@ -452,8 +453,11 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   // Before the first CPU picture arrives, the camera's own size is the best guess for the input's.
   const uint32_t guessW = cpuW ? cpuW : lastSize_.w, guessH = cpuH ? cpuH : lastSize_.h;
   const bool sdiInput = sdiOutputKind(cfg_.input.kind);
+  const bool srtInput = cfg_.input.kind == "srt";  // the only FfmpegInput kind the show builds
+  const int codec = packetCodec_.load();
   bool codedPossible = false;
   bool cpuPossible = false;
+  bool packetsPossible = false;
   std::vector<Output*> targets;
   {
     std::lock_guard lock(passMutex_);
@@ -464,6 +468,14 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
       const bool either = s.out->takesCodedOmt(omthx::Mode::Full) || s.out->takesCodedOmt(omthx::Mode::Hx);
       codedPossible = codedPossible || either;
       const bool takes = mode >= 0 && s.out->takesCodedOmt(static_cast<omthx::Mode>(mode));
+      // Packets: before the source's codec is known, an output that re-muxes either codec is a
+      // target (a camera that never decodes has no tick in which to learn it); afterwards only the
+      // output that takes the source's own codec. A packet is itself the input's proof of signal,
+      // so these targets need no Live state.
+      const bool packetEither = !s.cfg.halfRate && srtInput &&
+                                 (s.out->takesPackets(AV_CODEC_ID_H264) || s.out->takesPackets(AV_CODEC_ID_HEVC));
+      packetsPossible = packetsPossible || packetEither;
+      const bool packets = srtInput && (codec >= 0 ? s.out->takesPackets(static_cast<AVCodecID>(codec)) : packetEither);
       // UYVY: the output takes this picture's size, the input is sending UYVY, and (for a card) the
       // output runs at the input's rate. A half-rate output always keeps the tick path.
       const bool uyvyOutput = !s.cfg.halfRate && s.out->needsCpu() && s.out->wantsUyvy(guessW, guessH);
@@ -472,13 +484,18 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
       if (live && !stages && !s.cfg.halfRate && cpuUyvy && cpuW && cpuH && s.out->wantsUyvy(cpuW, cpuH)) {
         uyvy = !sdiOutputKind(s.cfg.kind) || (cpuRate.num > 0 && s.outRate == cpuRate);
       }
-      if ((takes || uyvy) && !stages && live && !s.cfg.halfRate) targets.push_back(s.out.get());
+      if ((takes || uyvy || packets) && !stages && !s.cfg.halfRate && (live || packets))
+        targets.push_back(s.out.get());
     }
     passTargets_.swap(targets);
     targets = passTargets_;  // the caller's this-tick snapshot
     if (passTargets_.empty()) passAudio_.clear();
   }
   wantCodedOmt_ = codedPossible && !stages;
+  // Ask for packets only while one of them can be re-muxed: once the source's codec is known and
+  // no output takes it, the camera decodes instead.
+  wantPackets_ = packetsPossible && !stages &&
+                 (codec < 0 || codec == AV_CODEC_ID_H264 || codec == AV_CODEC_ID_HEVC);
   // Ask for CPU pictures only from an SDI input (the pair this phase handles), or once one has
   // actually shown it sends UYVY: other adapters choose hardware decode off this answer.
   wantCpuVideo_ = cpuPossible && !stages && (sdiInput || (cpuW && cpuUyvy));
@@ -616,6 +633,47 @@ bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
     ++relayedThisSecond_;  // the camera's rate while it passes through: no tick runs
   }
   return wanted;
+}
+
+bool Camera::wantsPackets() const { return wantPackets_.load(); }
+
+void Camera::onPacket(std::shared_ptr<const MediaPacket> packet) {
+  if (!packet || !packet->params) return;
+  // A params-only packet declares a stream to the muxer; it is not signal and carries no data.
+  const bool payload = packet->pkt != nullptr;
+  if (payload) lastArrivalNs_.store(Clock::now().time_since_epoch().count());
+  if (packet->video) {
+    packetCodec_ = static_cast<int>(packet->params->codec_id);
+    // A camera that re-muxes everything never decodes a frame to report the signal; its first
+    // video packet is the evidence that the input is live.
+    if (payload && inputState_.load() != SignalState::Live) onState(SignalState::Live, std::nullopt);
+  }
+  bool delivered = false;
+  {
+    std::lock_guard lock(passMutex_);
+    // A packet target is chosen by the source's video codec (known, or either before the first
+    // video packet); its audio packets ride along without their own codec being questioned.
+    const int codec = packetCodec_.load();
+    for (Output* out : passTargets_) {
+      const bool takes = codec >= 0 ? out->takesPackets(static_cast<AVCodecID>(codec))
+                                    : (out->takesPackets(AV_CODEC_ID_H264) || out->takesPackets(AV_CODEC_ID_HEVC));
+      if (!takes) continue;
+      OutFrame f;
+      f.rate = nominalRate();  // the packet's own timestamp paces the output
+      f.packet = packet;
+      out->submit(std::move(f));
+      delivered = true;
+    }
+  }
+  if (!delivered && packet->video && payload) {
+    // No output takes this video codec (or it just changed): the tick path needs pictures.
+    // Set on the input thread so the input decodes again before the camera can tick. An audio
+    // packet is not a reason to decode: it rides with the video packets.
+    wantGpuVideo_ = true;
+  } else if (delivered && packet->video && payload) {
+    std::lock_guard l(statsMutex_);
+    ++relayedThisSecond_;  // the camera's rate while it passes through: no tick runs
+  }
 }
 
 TextureRef Camera::fittedSlate(const TextureRef& source) {
@@ -1050,6 +1108,11 @@ void Camera::publishStatus() {
       auto st = s.out->status();
       state_.set(p + "/state", std::string(toString(st.state)));
       state_.set(p + "/error", errorToJson(st.error));
+      if (st.note.empty()) {
+        state_.erase(p + "/note");
+      } else {
+        state_.set(p + "/note", st.note);
+      }
       state_.set(p + "/tally", {{"program", st.program}, {"preview", st.preview}});
     }
   }

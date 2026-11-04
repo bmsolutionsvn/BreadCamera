@@ -19,7 +19,11 @@ void QueuedOutput::start() {
 }
 
 void QueuedOutput::submit(OutFrame frame) {
-  if (queue_.push(std::move(frame))) dropPending_ = true;
+  // A re-muxed packet may not be dropped: it is part of a picture that decodes across packets.
+  // shortcut: 512 packets (about 7 s at 30 fps with audio) absorbs a network burst; a longer
+  // stall still drops the oldest. Upgrade to backpressure if a stall that long must not lose data.
+  const size_t capacity = frame.packet ? 512 : 2;
+  if (queue_.push(std::move(frame), capacity)) dropPending_ = true;
 }
 
 void QueuedOutput::stop() {

@@ -16,6 +16,7 @@ struct CodedFrame;
 }  // namespace omthx
 
 namespace bc {
+struct MediaPacket;
 struct VideoFrameIn {
   TextureRef tex;  // NV12/P010 (planar SRVs) or BGRA8 (srv)
   PixelLayout layout = PixelLayout::NV12;
@@ -71,6 +72,10 @@ class InputSink {
   // wants a keyframe, so the input asks its source for one.
   virtual bool wantsCodedOmt() const { return false; }
   virtual bool onCodedOmt(std::shared_ptr<const omthx::CodedFrame>) { return false; }
+  // The SRT pass-through path: true when the camera wants the input's coded packets (video and
+  // audio) without decoding them. onPacket runs on the input thread.
+  virtual bool wantsPackets() const { return false; }
+  virtual void onPacket(std::shared_ptr<const MediaPacket>) {}
 };
 
 // spec §4.1: every adapter runs its own thread; start()/stop() never block for long.
