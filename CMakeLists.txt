@@ -269,6 +269,8 @@ endif()
 add_library(bc_io STATIC
   src/io/srt_params.cpp
   src/io/ffmpeg_input.cpp
+  # lean phase 5c
+  src/io/remux.cpp
   # lean phase 4
   src/io/d3d11va.cpp
   # M4b Task 1 (always built)
@@ -492,6 +494,8 @@ add_executable(bc_tests
   # Task 6
   tests/srt_params_test.cpp
   tests/ffmpeg_input_test.cpp
+  # lean phase 5c
+  tests/remux_test.cpp
   # lean phase 4
   tests/gpu_decoder_test.cpp
   # M4a Task 1
