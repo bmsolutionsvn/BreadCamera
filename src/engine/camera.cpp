@@ -401,6 +401,7 @@ bool Camera::anyStageEnabled() const {
 std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   const bool stages = anyStageEnabled();
   const bool live = inputState_.load() == SignalState::Live;
+  const int mode = codedMode_.load();  // -1 until the source's first coded frame says which
   const bool wasFullPass = !wantGpuVideo_.load();
   bool codedPossible = false;
   std::vector<Output*> targets;
@@ -408,10 +409,11 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
     std::lock_guard lock(passMutex_);
     for (auto& s : outputs_) {
       if (!s.out) continue;
-      // The frame's own mode is checked when it arrives; here the question is only whether the
-      // output could take coded frames at all.
-      const bool takes = s.out->takesCodedOmt(omthx::Mode::Full) || s.out->takesCodedOmt(omthx::Mode::Hx);
-      codedPossible = codedPossible || takes;
+      // An output passes through only the mode the source actually sends; the question for the
+      // coded receiver is the wider one (either mode), since the mode is not known until a frame.
+      const bool either = s.out->takesCodedOmt(omthx::Mode::Full) || s.out->takesCodedOmt(omthx::Mode::Hx);
+      codedPossible = codedPossible || either;
+      const bool takes = mode >= 0 && s.out->takesCodedOmt(static_cast<omthx::Mode>(mode));
       if (takes && !stages && live && !s.cfg.halfRate) targets.push_back(s.out.get());
     }
     passTargets_.swap(targets);
@@ -450,6 +452,7 @@ bool Camera::wantsGpuVideo() const {
 
 bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
   if (!frame) return false;
+  codedMode_ = static_cast<int>(frame->mode);  // the source's mode, for the next target rebuild
   std::lock_guard lock(passMutex_);
   std::shared_ptr<const std::vector<float>> audio;
   if (!passAudio_.empty()) {
@@ -457,6 +460,7 @@ bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
     passAudio_.clear();
   }
   bool wanted = false;
+  bool delivered = false;
   for (Output* out : passTargets_) {
     if (!out->takesCodedOmt(frame->mode)) continue;
     OutFrame f;
@@ -464,7 +468,13 @@ bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
     f.coded = frame;
     f.audio = audio;
     out->submit(std::move(f));
+    delivered = true;
     if (out->takeKeyframeRequest()) wanted = true;
+  }
+  if (!delivered) {
+    // No output takes this source's mode (or the mode just changed): the tick path needs pictures.
+    // Set here, on the input thread, so the input decodes again before the camera can tick.
+    wantGpuVideo_ = true;
   }
   return wanted;
 }

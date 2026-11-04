@@ -567,6 +567,7 @@ TEST_CASE("Camera: pass-through sends coded frames, not tick pictures") {
     camera.beginTick(now, slate);
     camera.endTick(now, nullptr);
   };
+  camera.onCodedOmt(dummyCoded(0));  // the source's mode is known from its first coded frame
   tick();
   tick();  // the first rebuild happens at the end of the previous tick
   CHECK(camera.wantsCodedOmt());
@@ -593,6 +594,7 @@ TEST_CASE("Camera: pass-through leaves a tick output beside it") {
   REQUIRE(factory.all.size() == 2);
   camera.onState(bc::SignalState::Live, std::nullopt);
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onCodedOmt(dummyCoded(0));  // the source's mode is known from its first coded frame
   for (int i = 0; i < 3; ++i) {
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
@@ -626,6 +628,7 @@ TEST_CASE("Camera: enabling a stage leaves pass-through") {
     camera.beginTick(now, slate);
     camera.endTick(now, nullptr);
   };
+  camera.onCodedOmt(dummyCoded(0));  // the source's mode is known from its first coded frame
   tick();
   tick();
   REQUIRE(camera.wantsCodedOmt());
@@ -654,6 +657,7 @@ TEST_CASE("Camera: a pass-through target asks for a keyframe once") {
   camera.onState(bc::SignalState::Live, std::nullopt);
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
   for (int i = 0; i < 2; ++i) {
+    if (i == 0) camera.onCodedOmt(dummyCoded(0));  // learn the source's mode
     camera.onVideo(solidFrame(r.conv, 120));
     const auto now = Clock::now();
     camera.beginTick(now, slate);
@@ -666,6 +670,69 @@ TEST_CASE("Camera: a pass-through target asks for a keyframe once") {
   camera.stop();
 }
 
+TEST_CASE("Camera: a Full coded source with only an HX output keeps decoding") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Hx)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&] {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  tick();
+  CHECK(camera.wantsGpuVideo());  // the source's mode is not known yet
+  const int before = factory.made->submitted;
+  CHECK_FALSE(camera.onCodedOmt(dummyCoded(1, omthx::Mode::Full)));
+  CHECK(camera.wantsGpuVideo());  // a Full frame and an HX-only output: no pass-through
+  tick();
+  tick();
+  CHECK(factory.made->submitted > before);  // the HX output gets tick pictures instead
+  CHECK(factory.made->coded == 0);
+  camera.stop();
+}
+
+TEST_CASE("Camera: an HX pass-through falls back to decoding when the source turns to Full") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Hx)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&] {
+    camera.onVideo(solidFrame(r.conv, 120));
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  for (int i = 0; i < 3; ++i) {
+    camera.onCodedOmt(dummyCoded(static_cast<uint64_t>(i), omthx::Mode::Hx));
+    tick();
+  }
+  CHECK(camera.wantsCodedOmt());
+  REQUIRE_FALSE(camera.wantsGpuVideo());  // HX source, HX output: pass-through
+  REQUIRE(factory.made->coded == 2);
+
+  // The source turns to Full: the camera must decode again within a frame or two.
+  camera.onCodedOmt(dummyCoded(9, omthx::Mode::Full));
+  CHECK(camera.wantsGpuVideo());  // known on the input thread: no tick is needed to decide
+  const int before = factory.made->submitted;
+  tick();
+  tick();
+  CHECK(factory.made->submitted > before);  // pictures resume on the tick path
+  CHECK(factory.made->coded == 2);          // and the Full frames were not passed on
+  camera.stop();
+}
+
 TEST_CASE("Camera: reconfiguring pass-through outputs while coded frames flow is safe") {
   Rig r;
   RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
@@ -675,6 +742,7 @@ TEST_CASE("Camera: reconfiguring pass-through outputs while coded frames flow is
   camera.start();
   camera.onState(bc::SignalState::Live, std::nullopt);
   auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onCodedOmt(dummyCoded(0));  // learn the source's mode, so this output becomes a target
   camera.onVideo(solidFrame(r.conv, 120));
   const auto now = Clock::now();
   camera.beginTick(now, slate);

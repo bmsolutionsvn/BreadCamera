@@ -291,6 +291,7 @@ class Camera final : public InputSink {
   std::vector<Output*> passTargets_;
   std::vector<float> passAudio_;  // this camera's audio since the last coded frame, while targets exist
   std::function<bool()> previewQuery_;
+  std::atomic<int> codedMode_{-1};        // the source's last coded frame's omthx::Mode, -1 until one arrives
   std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
   std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
   // Match state (Task 7). All tick-thread only.
