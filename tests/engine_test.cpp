@@ -373,6 +373,7 @@ struct RecSpec {
   bool wantsGpu;
   bool wantsUyvy = false;
   int codedMode = -1;  // an omthx::Mode value this output takes coded frames for, or -1 for none
+  uint32_t uyvyW = 0, uyvyH = 0;  // the only size it takes UYVY for; 0 = any size
 };
 
 class RecordingOutput final : public bc::Output {
@@ -380,7 +381,9 @@ class RecordingOutput final : public bc::Output {
   explicit RecordingOutput(RecSpec spec) : spec_(spec) {}
   bool needsCpu() const override { return spec_.needsCpu; }
   bool wantsGpuRgba8() const override { return spec_.wantsGpu; }
-  bool wantsUyvy(uint32_t, uint32_t) const override { return spec_.wantsUyvy; }
+  bool wantsUyvy(uint32_t w, uint32_t h) const override {
+    return spec_.wantsUyvy && (spec_.uyvyW == 0 || (w == spec_.uyvyW && h == spec_.uyvyH));
+  }
   bool takesCodedOmt(omthx::Mode mode) const override { return spec_.codedMode == static_cast<int>(mode); }
   bool takeKeyframeRequest() override { return keyframe.exchange(false); }
   void start() override {}
@@ -391,6 +394,7 @@ class RecordingOutput final : public bc::Output {
       codedSamples = f.audio ? f.audio->size() : 0;
       return;
     }
+    if (f.linear) ++tickFrames;  // a picture from the tick path, not a pass-through frame
     last = std::move(f.bgra);
     lastUyvy = std::move(f.uyvy);
     lastRgba8 = std::move(f.rgba8);
@@ -403,6 +407,7 @@ class RecordingOutput final : public bc::Output {
   std::shared_ptr<const bc::CpuImage> lastUyvy;
   bc::TextureRef lastRgba8;
   int submitted = 0;
+  int tickFrames = 0;  // frames carrying a tick picture (a tick path submit)
   int coded = 0;
   std::shared_ptr<const omthx::CodedFrame> lastCoded;
   size_t codedSamples = 0;
@@ -740,6 +745,231 @@ TEST_CASE("Camera: an HX pass-through falls back to decoding when the source tur
   tick();
   CHECK(factory.made->submitted > before);  // pictures resume on the tick path
   CHECK(factory.made->coded == 2);          // and the Full frames were not passed on
+  camera.stop();
+}
+
+namespace {
+std::vector<uint8_t> uyvyPattern(uint32_t w, uint32_t h, uint32_t stride) {
+  std::vector<uint8_t> px(static_cast<size_t>(stride) * h, 0);
+  for (uint32_t y = 0; y < h; ++y)
+    for (uint32_t x = 0; x < w * 2; ++x)
+      px[static_cast<size_t>(y) * stride + x] = static_cast<uint8_t>((x * 7 + y * 13) & 0xff);
+  return px;
+}
+
+// The tight rows the camera must publish, from a source with padded rows.
+std::vector<uint8_t> tightUyvy(const std::vector<uint8_t>& px, uint32_t w, uint32_t h, uint32_t stride) {
+  std::vector<uint8_t> out(static_cast<size_t>(w) * 2 * h);
+  for (uint32_t y = 0; y < h; ++y)
+    std::copy_n(px.begin() + static_cast<ptrdiff_t>(y) * stride, static_cast<size_t>(w) * 2,
+                out.begin() + static_cast<ptrdiff_t>(y) * w * 2);
+  return out;
+}
+
+bc::CpuVideoFrame cpuFrame(const std::vector<uint8_t>& px, uint32_t w, uint32_t h, uint32_t stride) {
+  bc::CpuVideoFrame f;
+  f.data = px.data();
+  f.stride = static_cast<int>(stride);
+  f.width = w;
+  f.height = h;
+  f.format = bc::CpuPixel::UYVY;
+  f.rate = bc::Rate{30, 1};
+  return f;
+}
+}  // namespace
+
+// Plan review focus 1: a UYVY target receives the input's bytes unchanged, with no upload and no
+// readback. The camera stops decoding while it passes the pictures straight through.
+TEST_CASE("UYVY pass-through: an SDI-like input reaches a UYVY output byte for byte") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.input.kind = "decklink";  // the input that asks a camera for CPU pictures
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  const uint32_t w = 1920, h = 1080, stride = w * 2 + 128;
+  auto px = uyvyPattern(w, h, stride);
+  const auto want = tightUyvy(px, w, h, stride);
+  camera.onCpuVideo(cpuFrame(px, w, h, stride));  // the source's first picture: size and format
+  tick();                                          // the rebuild happens at the end of a tick
+  REQUIRE(camera.wantsCpuVideo());
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+  tick();  // the tick path's readback slot is dropped now that the output passes
+  CHECK(camera.readbackSlotCount() == 0);
+  const int before = factory.made->tickFrames;
+  camera.onCpuVideo(cpuFrame(px, w, h, stride));
+  REQUIRE(factory.made->lastUyvy != nullptr);
+  CHECK(factory.made->lastUyvy->layout == bc::CpuLayout::Uyvy);
+  CHECK(factory.made->lastUyvy->width == w);
+  CHECK(factory.made->lastUyvy->height == h);
+  CHECK(factory.made->lastUyvy->bgra == want);
+  CHECK(factory.made->tickFrames == before);  // no tick picture for a pass target
+  camera.stop();
+}
+
+// Plan review focus 2: outputs that cannot pass through keep the tick path beside the UYVY target.
+TEST_CASE("UYVY pass-through: a GPU output on the same camera keeps the tick path") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{
+      {/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}, {/*needsCpu=*/false, /*wantsGpu=*/true}});
+  bc::CameraConfig cfg = cam("a", {out("o1"), out("o2")});
+  cfg.input.kind = "decklink";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.all.size() == 2);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  const uint32_t w = 1920, h = 1080;
+  auto px = uyvyPattern(w, h, w * 2);
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));
+  tick();
+  CHECK(camera.wantsCpuVideo());
+  CHECK(camera.wantsGpuVideo());  // the GPU output still needs a picture
+  const int gpuTicks = factory.all[1]->submitted;
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));
+  CHECK(factory.all[0]->lastUyvy != nullptr);  // the pass target took the CPU picture
+  const int uyvyTicks = factory.all[0]->tickFrames;
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));
+  CHECK(factory.all[0]->tickFrames == uyvyTicks);  // and no tick picture beside it
+  CHECK(factory.all[1]->lastUyvy == nullptr);  // the GPU output is not a pass target
+  CHECK(factory.all[1]->lastRgba8 != nullptr);
+  tick();
+  CHECK(factory.all[1]->submitted > gpuTicks);  // the GPU path still runs
+  camera.stop();
+}
+
+// Plan review focus 3: a size mismatch is not a pass target; the tick path scales as today.
+TEST_CASE("UYVY pass-through: a size mismatch is not passed through") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{
+      {/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true, /*codedMode=*/-1, /*uyvyW=*/1920, /*uyvyH=*/1080}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.input.kind = "decklink";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(1280, 720, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  const uint32_t w = 1280, h = 720;
+  auto px = uyvyPattern(w, h, w * 2);
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));
+  tick();
+  tick();
+  CHECK_FALSE(camera.wantsCpuVideo());
+  CHECK(camera.wantsGpuVideo());
+  CHECK(factory.made->lastUyvy == nullptr);  // never handed a pass frame
+  CHECK(factory.made->submitted > 0);        // the tick path still sends pictures
+  camera.stop();
+}
+
+// Plan review focus 4: losing the signal holds the card's last picture for the hold time, then
+// returns the camera to the tick path (the slate). The engine must wake at the hold's end though
+// no input frame arrives. A camera whose whole output set was passing through runs no ticks.
+TEST_CASE("UYVY pass-through: signal loss holds, then falls back to the slate") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{{/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.input.kind = "decklink";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{std::chrono::milliseconds(250), std::chrono::milliseconds(100)});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  const uint32_t w = 1920, h = 1080;
+  camera.onVideo(solidFrame(r.conv, 120, w, h));  // SDI delivers pictures both ways at first
+  auto px = uyvyPattern(w, h, w * 2);
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));  // the source's first picture: size and format
+  for (int i = 0; i < 2; ++i) tick();            // the rebuild happens at the end of a tick
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+  camera.onCpuVideo(cpuFrame(px, w, h, w * 2));  // a picture on the pass target
+  auto passed = factory.made->lastUyvy;
+  REQUIRE(passed != nullptr);
+
+  const auto lostAt = Clock::now();
+  camera.onState(bc::SignalState::Offline, bc::ErrorInfo{"decklink-no-signal", "no signal"});
+  CHECK_FALSE(camera.ready(lostAt + 10ms));  // the card holds its last frame: no tick yet
+  auto deadline = camera.nextRepeatAt(lostAt + 10ms);
+  REQUIRE(deadline.has_value());  // the engine wakes when the hold ends
+  CHECK(camera.ready(*deadline + 1ms));  // the fallback tick is due
+  camera.beginTick(*deadline + 1ms, slate);
+  camera.endTick(*deadline + 1ms, nullptr);
+  CHECK(camera.wantsGpuVideo());
+  CHECK(factory.made->lastUyvy == passed);  // no pass frame after the loss
+  const int before = factory.made->tickFrames;
+  for (int i = 1; i <= 6; ++i) {
+    const auto at = *deadline + std::chrono::milliseconds(60 * i);
+    camera.beginTick(at, slate);
+    camera.endTick(at, nullptr);
+  }
+  CHECK(factory.made->tickFrames > before);  // the tick path sends the held frame, then the slate
+  CHECK(static_cast<int>(camera.tickPhase()) == static_cast<int>(bc::FeedPhase::Slate));
+  CHECK(factory.made->lastUyvy != passed);  // a tick picture, not a replay of the pass frame
+  camera.stop();
+}
+
+// Plan review focus 3: the source can change size mid-show. A pass-through camera runs no ticks,
+// so the input thread's next CPU picture must wake it for the target rebuild; the 1080p card must
+// not be handed the 720p pass frame.
+TEST_CASE("UYVY pass-through: an input size change returns to the tick path") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{
+      {/*needsCpu=*/true, /*wantsGpu=*/false, /*wantsUyvy=*/true, /*codedMode=*/-1, /*uyvyW=*/1920, /*uyvyH=*/1080}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.input.kind = "decklink";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(1920, 1080, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  auto big = uyvyPattern(1920, 1080, 1920 * 2);
+  camera.onCpuVideo(cpuFrame(big, 1920, 1080, 1920 * 2));
+  for (int i = 0; i < 2; ++i) tick();
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+  camera.onCpuVideo(cpuFrame(big, 1920, 1080, 1920 * 2));
+  auto passed = factory.made->lastUyvy;
+  REQUIRE(passed != nullptr);
+
+  auto tiny = uyvyPattern(1280, 720, 1280 * 2 + 64);
+  camera.onCpuVideo(cpuFrame(tiny, 1280, 720, 1280 * 2 + 64));
+  CHECK(camera.ready(Clock::now()));         // the rebuild is due without any tick-path frame
+  CHECK(factory.made->lastUyvy == passed);   // the 1080p card was not handed the 720p frame
+  tick();
+  CHECK(camera.wantsGpuVideo());
+  CHECK_FALSE(camera.wantsCpuVideo());       // no output takes this size: the tick path scales
   camera.stop();
 }
 

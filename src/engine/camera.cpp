@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <map>
 
@@ -19,6 +20,18 @@ using Clock = std::chrono::steady_clock;
 namespace {
 // Match's tiny readbacks (spec §3.1: the main path never copies a full frame to the CPU).
 constexpr uint32_t kMatchW = 128, kMatchH = 72;
+
+uint64_t packRate(Rate r) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(r.num)) << 32) | static_cast<uint32_t>(r.den);
+}
+
+Rate unpackRate(uint64_t p) {
+  const int num = static_cast<int>(p >> 32);
+  const int den = static_cast<int>(p & 0xffffffffu);
+  return num > 0 && den > 0 ? Rate{num, den} : Rate{0, 1};
+}
+
+bool sdiOutputKind(const std::string& kind) { return kind == "decklink" || kind == "aja"; }
 
 AutoFrameSettings autoFrameFrom(const nlohmann::json& p) {
   AutoFrameSettings s;
@@ -337,16 +350,13 @@ void Camera::reconfigure(const CameraConfig& next) {
 void Camera::onVideo(VideoFrameIn frame) {
   const auto now = Clock::now();
   lastArrivalNs_.store(now.time_since_epoch().count());
-  const auto pack = [](Rate r) {
-    return (static_cast<uint64_t>(static_cast<uint32_t>(r.num)) << 32) | static_cast<uint32_t>(r.den);
-  };
   if (frame.rate && frame.rate->num > 0 && frame.rate->den > 0) {
-    nominalPacked_.store(pack(*frame.rate));
+    nominalPacked_.store(packRate(*frame.rate));
     rateStale_.store(false);
   } else if (rateStale_.load() || nominalPacked_.load() == 0) {
     estimator_.push(now);
     if (auto r = estimator_.rate()) {
-      nominalPacked_.store(pack(*r));
+      nominalPacked_.store(packRate(*r));
       rateStale_.store(false);
     }
   }
@@ -357,6 +367,16 @@ void Camera::onVideo(VideoFrameIn frame) {
 }
 
 bool Camera::ready(Clock::time_point now) const {
+  if (passRebuild_.exchange(false)) return true;  // an input change needs one target rebuild
+  if (passLost_.load()) {
+    // Still holding: the outputs repeat their last frame until the hold ends.
+    const int64_t last = lastArrivalNs_.load();
+    if (last == 0) return false;
+    const auto deadline = Clock::time_point(Clock::duration(last)) + policy_.hold;
+    if (now < deadline) return false;
+    passLost_ = false;
+    return true;
+  }
   if (arrivals_.load() > taken_) return true;
   const int64_t last = lastArrivalNs_.load();
   if (!sawFrame_ || last == 0) return false;
@@ -365,6 +385,10 @@ bool Camera::ready(Clock::time_point now) const {
 }
 
 std::optional<Clock::time_point> Camera::nextRepeatAt(Clock::time_point now) const {
+  if (passLost_.load()) {
+    const int64_t lost = lastArrivalNs_.load();
+    if (lost != 0) return Clock::time_point(Clock::duration(lost)) + policy_.hold;
+  }
   const int64_t last = lastArrivalNs_.load();
   if (!sawFrame_ || last == 0) return std::nullopt;
   const auto stallAt = Clock::time_point(Clock::duration(last)) + policy_.stallAfter;
@@ -388,9 +412,26 @@ void Camera::onAudio(AudioBlock a) {
 }
 
 void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
-  inputState_ = s;
+  const SignalState prev = inputState_.exchange(s);
   state_.set(path("/input/state"), std::string(toString(s)));
   state_.set(path("/input/error"), errorToJson(e));
+  if (s == SignalState::Live) {
+    passLost_ = false;  // the signal returned before the hold ended: no fallback tick
+    return;
+  }
+  if (prev == SignalState::Live) {
+    // A pass-through camera runs no ticks, so nothing would rebuild its targets after the loss:
+    // hold the outputs' last frame for policy_.hold, then wake the engine for the fallback tick.
+    bool hadTargets = false;
+    {
+      std::lock_guard lock(passMutex_);
+      hadTargets = !passTargets_.empty();
+    }
+    if (hadTargets) {
+      passLost_ = true;
+      if (wake_) wake_();
+    }
+  }
 }
 
 bool Camera::anyStageEnabled() const {
@@ -405,7 +446,14 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   const bool stages = anyStageEnabled();
   const bool live = inputState_.load() == SignalState::Live;
   const int mode = codedMode_.load();  // -1 until the source's first coded frame says which
+  const bool cpuUyvy = cpuUyvy_.load();
+  const uint32_t cpuW = cpuWidth_.load(), cpuH = cpuHeight_.load();
+  const Rate cpuRate = unpackRate(cpuRatePacked_.load());
+  // Before the first CPU picture arrives, the camera's own size is the best guess for the input's.
+  const uint32_t guessW = cpuW ? cpuW : lastSize_.w, guessH = cpuH ? cpuH : lastSize_.h;
+  const bool sdiInput = sdiOutputKind(cfg_.input.kind);
   bool codedPossible = false;
+  bool cpuPossible = false;
   std::vector<Output*> targets;
   {
     std::lock_guard lock(passMutex_);
@@ -416,13 +464,24 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
       const bool either = s.out->takesCodedOmt(omthx::Mode::Full) || s.out->takesCodedOmt(omthx::Mode::Hx);
       codedPossible = codedPossible || either;
       const bool takes = mode >= 0 && s.out->takesCodedOmt(static_cast<omthx::Mode>(mode));
-      if (takes && !stages && live && !s.cfg.halfRate) targets.push_back(s.out.get());
+      // UYVY: the output takes this picture's size, the input is sending UYVY, and (for a card) the
+      // output runs at the input's rate. A half-rate output always keeps the tick path.
+      const bool uyvyOutput = !s.cfg.halfRate && s.out->needsCpu() && s.out->wantsUyvy(guessW, guessH);
+      cpuPossible = cpuPossible || uyvyOutput;
+      bool uyvy = false;
+      if (live && !stages && !s.cfg.halfRate && cpuUyvy && cpuW && cpuH && s.out->wantsUyvy(cpuW, cpuH)) {
+        uyvy = !sdiOutputKind(s.cfg.kind) || (cpuRate.num > 0 && s.outRate == cpuRate);
+      }
+      if ((takes || uyvy) && !stages && live && !s.cfg.halfRate) targets.push_back(s.out.get());
     }
     passTargets_.swap(targets);
     targets = passTargets_;  // the caller's this-tick snapshot
     if (passTargets_.empty()) passAudio_.clear();
   }
   wantCodedOmt_ = codedPossible && !stages;
+  // Ask for CPU pictures only from an SDI input (the pair this phase handles), or once one has
+  // actually shown it sends UYVY: other adapters choose hardware decode off this answer.
+  wantCpuVideo_ = cpuPossible && !stages && (sdiInput || (cpuW && cpuUyvy));
   bool allPass = true;
   for (auto& s : outputs_) {
     if (!s.out) continue;
@@ -449,6 +508,76 @@ void Camera::clearPassTargets() {
 }
 
 bool Camera::wantsCodedOmt() const { return wantCodedOmt_.load(); }
+
+bool Camera::wantsCpuVideo() const { return wantCpuVideo_.load(); }
+
+void Camera::onCpuVideo(const CpuVideoFrame& frame) {
+  if (!frame.data || frame.width == 0 || frame.height == 0) return;
+  const uint32_t prevW = cpuWidth_.load(), prevH = cpuHeight_.load();
+  const bool prevUyvy = cpuUyvy_.load();
+  const uint64_t prevRate = cpuRatePacked_.load();
+  const bool newUyvy = frame.format == CpuPixel::UYVY;
+  const uint64_t newRate = frame.rate && frame.rate->num > 0 && frame.rate->den > 0 ? packRate(*frame.rate) : 0;
+  cpuWidth_ = frame.width;
+  cpuHeight_ = frame.height;
+  cpuUyvy_ = newUyvy;
+  if (newRate) cpuRatePacked_ = newRate;
+  lastArrivalNs_.store(Clock::now().time_since_epoch().count());
+  // Pass-through runs no ticks: an input format/size/rate change must wake the engine for the
+  // one tick that rebuilds the targets, or the outputs would hold a picture of the old shape.
+  if (prevW != 0 && (prevW != frame.width || prevH != frame.height || prevUyvy != newUyvy ||
+                     (newRate && prevRate && newRate != prevRate))) {
+    passRebuild_ = true;
+    if (wake_) wake_();
+  }
+  if (!newUyvy) return;  // the tick path handles every other format
+  const size_t row = static_cast<size_t>(frame.width) * 2;
+  if (frame.stride < static_cast<int>(row)) return;  // a malformed row would read past the buffer
+  // The input's buffer lives only during this call: one tight copy, shared by every UYVY target.
+  bool wanted = false;
+  {
+    std::lock_guard lock(passMutex_);
+    for (Output* out : passTargets_) {
+      if (out->needsCpu() && out->wantsUyvy(frame.width, frame.height)) {
+        wanted = true;
+        break;
+      }
+    }
+  }
+  if (!wanted) return;  // no target takes this picture: no copy at all
+  auto img = std::make_shared<CpuImage>();
+  img->width = frame.width;
+  img->height = frame.height;
+  img->layout = CpuLayout::Uyvy;
+  img->bgra.resize(row * frame.height);
+  for (uint32_t y = 0; y < frame.height; ++y)
+    std::memcpy(img->bgra.data() + row * y, frame.data + static_cast<size_t>(y) * frame.stride, row);
+  std::shared_ptr<const std::vector<float>> audio;
+  bool delivered = false;
+  {
+    std::lock_guard lock(passMutex_);
+    if (!passAudio_.empty()) {
+      audio = std::make_shared<const std::vector<float>>(std::move(passAudio_));
+      passAudio_.clear();
+    }
+    const uint64_t tick = ++passTick_;  // one timestamp per picture, not per target
+    for (Output* out : passTargets_) {
+      if (!out->needsCpu() || !out->wantsUyvy(frame.width, frame.height)) continue;
+      OutFrame f;
+      f.tick = tick;
+      const Rate rate = unpackRate(cpuRatePacked_.load());
+      f.rate = rate.num > 0 ? rate : nominalRate();  // never 0/1: an output divides by num
+      f.uyvy = img;
+      f.audio = audio;
+      out->submit(std::move(f));
+      delivered = true;
+    }
+  }
+  if (delivered) {
+    std::lock_guard l(statsMutex_);
+    ++relayedThisSecond_;  // the camera's rate while it passes pictures through: no tick runs
+  }
+}
 
 bool Camera::wantsGpuVideo() const {
   if (previewQuery_ && previewQuery_()) return true;  // a visible preview decodes even on full pass-through
@@ -578,15 +707,18 @@ TextureRef Camera::beginTick(Clock::time_point now, const TextureRef& slateSourc
   tickArrival_.reset();
   tickPhase_ = pick.phase;
   if (pick.frame) {
+    sawFrame_ = true;
     if (pick.fresh || !lastConverted_) {
       const auto& f = pick.frame->frame;
       // The frame is the input's own size: there is no show-wide frame size to scale to.
       lastConverted_ = tools_.conv.toLinear(*f.tex, f.layout, f.fullRange, f.bt709);
-      sawFrame_ = true;
       if (pick.fresh) tickArrival_ = pick.frame->arrival;
     }
   } else {
     lastConverted_.reset();
+    // A camera that stopped ticking for pass-through still needs its hold/slate repeats after a
+    // signal loss: a last arrival arms them even when no decoded picture is left to hold.
+    if (lastArrivalNs_.load() != 0) sawFrame_ = true;
   }
   if (pick.fresh) {
     for (auto& s : outputs_) {
