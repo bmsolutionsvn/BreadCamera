@@ -107,14 +107,18 @@ void AjaInput::runOnce() {
       continue;
     }
     card.AutoCirculateTransfer(ch, xfer);
-    VideoFrameIn f;
-    f.layout = PixelLayout::UYVY;
-    f.fullRange = false;  // SDI UYVY is limited range
-    f.rate = rate;
-    {
-      auto lock = gpu_.lock();
-      f.tex = uploadUyvy(gpu_, pool_, reinterpret_cast<const uint8_t*>(video.data()),
-                         static_cast<uint32_t>(rowBytes), static_cast<uint32_t>(w), static_cast<uint32_t>(h));
+    const auto* picture = reinterpret_cast<const uint8_t*>(video.data());
+    if (sink_->wantsCpuVideo()) {
+      // Pass-through: the card's own UYVY buffer goes to the outputs in RAM, with no upload.
+      CpuVideoFrame cf;
+      cf.data = picture;
+      cf.stride = rowBytes;
+      cf.width = static_cast<uint32_t>(w);
+      cf.height = static_cast<uint32_t>(h);
+      cf.format = CpuPixel::UYVY;
+      cf.fullRange = false;  // SDI UYVY is limited range
+      cf.rate = rate;
+      sink_->onCpuVideo(cf);
     }
     const ULWord bytes = xfer.GetCapturedAudioByteCount();
     const int frames = static_cast<int>(bytes / (8 * 4));  // 8 channels × int32
@@ -131,6 +135,16 @@ void AjaInput::runOnce() {
     if (!live) {
       live = true;
       sink_->onState(SignalState::Live, std::nullopt);
+    }
+    if (!sink_->wantsGpuVideo()) continue;  // pass-through: no upload
+    VideoFrameIn f;
+    f.layout = PixelLayout::UYVY;
+    f.fullRange = false;  // SDI UYVY is limited range
+    f.rate = rate;
+    {
+      auto lock = gpu_.lock();
+      f.tex = uploadUyvy(gpu_, pool_, picture, static_cast<uint32_t>(rowBytes), static_cast<uint32_t>(w),
+                         static_cast<uint32_t>(h));
     }
     sink_->onVideo(std::move(f));
   }

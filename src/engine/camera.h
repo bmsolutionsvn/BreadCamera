@@ -139,6 +139,11 @@ class Camera final : public InputSink {
   // needs a picture, so the engine sets the same query it passes to endTick.
   void setPreviewQuery(std::function<bool()> query) { previewQuery_ = std::move(query); }
   bool wantsCodedOmt() const override;
+  // Phase 5b: true while an output can take the input's UYVY pictures in RAM. The input then
+  // delivers them through onCpuVideo as well as (while the GPU path runs) onVideo.
+  bool wantsCpuVideo() const override;
+  // One copy of the picture, shared by every UYVY pass target, with the pass audio FIFO's samples.
+  void onCpuVideo(const CpuVideoFrame& frame) override;
   // False only when at least one output passes coded frames through and every output does, no
   // stage is enabled, and no preview is wanted: the input then decodes nothing.
   bool wantsGpuVideo() const override;
@@ -295,6 +300,15 @@ class Camera final : public InputSink {
   std::atomic<int> codedMode_{-1};        // the source's last coded frame's omthx::Mode, -1 until one arrives
   std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
   std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
+  // Phase 5b: the last CPU picture's shape, its format and rate (0 = not known yet), so a tick can
+  // rebuild the UYVY targets without asking the input thread.
+  std::atomic<uint32_t> cpuWidth_{0}, cpuHeight_{0};
+  std::atomic<bool> cpuUyvy_{false};
+  std::atomic<uint64_t> cpuRatePacked_{0};
+  std::atomic<bool> wantCpuVideo_{false};
+  // A signal loss must reach evaluatePass even though no input frame (and so no tick) follows.
+  mutable std::atomic<bool> passDirty_{false};
+  uint64_t passTick_ = 0;  // the UYVY pass path's frame counter, under passMutex_
   // Match state (Task 7). All tick-thread only.
   uint64_t matchTick_ = 0;                             // beginTick counter, for the every-6th cadence
   std::optional<MatchRound> matchRound_;               // one measurement at a time
