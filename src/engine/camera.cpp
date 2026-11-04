@@ -472,7 +472,8 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
       // target (a camera that never decodes has no tick in which to learn it); afterwards only the
       // output that takes the source's own codec. A packet is itself the input's proof of signal,
       // so these targets need no Live state.
-      const bool packetEither = srtInput && (s.out->takesPackets(AV_CODEC_ID_H264) || s.out->takesPackets(AV_CODEC_ID_HEVC));
+      const bool packetEither = !s.cfg.halfRate && srtInput &&
+                                 (s.out->takesPackets(AV_CODEC_ID_H264) || s.out->takesPackets(AV_CODEC_ID_HEVC));
       packetsPossible = packetsPossible || packetEither;
       const bool packets = srtInput && (codec >= 0 ? s.out->takesPackets(static_cast<AVCodecID>(codec)) : packetEither);
       // UYVY: the output takes this picture's size, the input is sending UYVY, and (for a card) the
@@ -637,12 +638,15 @@ bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
 bool Camera::wantsPackets() const { return wantPackets_.load(); }
 
 void Camera::onPacket(std::shared_ptr<const MediaPacket> packet) {
-  if (!packet || !packet->pkt || !packet->params) return;
+  if (!packet || !packet->params) return;
+  // A params-only packet declares a stream to the muxer; it is not signal and carries no data.
+  const bool payload = packet->pkt != nullptr;
+  if (payload) lastArrivalNs_.store(Clock::now().time_since_epoch().count());
   if (packet->video) {
     packetCodec_ = static_cast<int>(packet->params->codec_id);
     // A camera that re-muxes everything never decodes a frame to report the signal; its first
     // video packet is the evidence that the input is live.
-    if (inputState_.load() != SignalState::Live) onState(SignalState::Live, std::nullopt);
+    if (payload && inputState_.load() != SignalState::Live) onState(SignalState::Live, std::nullopt);
   }
   bool delivered = false;
   {
@@ -661,12 +665,12 @@ void Camera::onPacket(std::shared_ptr<const MediaPacket> packet) {
       delivered = true;
     }
   }
-  if (!delivered && packet->video) {
+  if (!delivered && packet->video && payload) {
     // No output takes this video codec (or it just changed): the tick path needs pictures.
     // Set on the input thread so the input decodes again before the camera can tick. An audio
     // packet is not a reason to decode: it rides with the video packets.
     wantGpuVideo_ = true;
-  } else if (delivered && packet->video) {
+  } else if (delivered && packet->video && payload) {
     std::lock_guard l(statsMutex_);
     ++relayedThisSecond_;  // the camera's rate while it passes through: no tick runs
   }

@@ -29,21 +29,31 @@ RemuxWriter::~RemuxWriter() { av_packet_free(&scratch_); }
 
 AVStream* RemuxWriter::streamFor(const MediaPacket& p) {
   for (const Seen& s : streams_)
-    if (s.key == p.params.get()) return s.out;
+    if (s.params == p.params) return s.out;
   if (headerWritten_) return nullptr;  // a live mpegts muxer takes no new stream
+  // A stream whose parameters were renewed before the header replaces its old shape rather than
+  // adding a second stream (and a stale one) to the PMT.
+  for (Seen& s : streams_) {
+    if (s.video != p.video) continue;
+    check(avcodec_parameters_copy(s.out->codecpar, p.params.get()), "remux: stream parameters");
+    s.out->codecpar->codec_tag = 0;
+    s.out->time_base = p.timeBase;
+    s.params = p.params;
+    return s.out;
+  }
   AVStream* out = avformat_new_stream(fmt_, nullptr);
   if (!out) throw std::runtime_error("remux: no stream");
   check(avcodec_parameters_copy(out->codecpar, p.params.get()), "remux: stream parameters");
   out->codecpar->codec_tag = 0;
   out->time_base = p.timeBase;
-  streams_.push_back({p.params.get(), out});
+  streams_.push_back({p.params, out, p.video});
   return out;
 }
 
 void RemuxWriter::write(const MediaPacket& p) {
-  if (!p.pkt) return;
   AVStream* st = streamFor(p);
   if (st == nullptr) throw std::runtime_error("remux: the input's streams changed");
+  if (!p.pkt) return;  // a stream declaration: registered, nothing written yet
   if (!headerWritten_) {
     // The header carries the stream list, so it waits for the first video keyframe; everything
     // before it (audio too — the muxer cannot know the audio stream later) is dropped.

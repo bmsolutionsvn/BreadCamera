@@ -106,12 +106,18 @@ void SrtOutput::writePacket(AVCodecContext* c, AVStream* st) {
 
 void SrtOutput::deliver(const OutFrame& f) {
   if (f.packet) {
+    if (consumeDrop()) dropUntilKey_ = true;  // a lost packet breaks the GOP: resume at a keyframe
+    if (dropUntilKey_) {
+      if (!f.packet->video || !f.packet->pkt || !(f.packet->pkt->flags & AV_PKT_FLAG_KEY)) return;
+      dropUntilKey_ = false;
+    }
     if (!remux_) {
       if (headerWritten_) {  // pictures were being encoded: a new muxer for a new stream
         close();
         open();
       }
       remux_ = std::make_unique<RemuxWriter>(fmt_);
+      remuxing_ = true;
     }
     try {
       remux_->write(*f.packet);
@@ -120,7 +126,6 @@ void SrtOutput::deliver(const OutFrame& f) {
       remux_.reset();
       throw;  // the worker closes and retries with a fresh muxer
     }
-    remuxing_ = true;
     return;
   }
   if (remux_) {  // an effect came on: back to encoding, with a fresh header (a stream restart)
@@ -173,6 +178,7 @@ void SrtOutput::close() noexcept {
   if (fmt_ && (headerWritten_ || (remux_ && remux_->wroteHeader()))) av_write_trailer(fmt_);
   remux_.reset();
   remuxing_ = false;
+  dropUntilKey_ = false;
   if (fmt_ && fmt_->pb) avio_closep(&fmt_->pb);
   if (fmt_) avformat_free_context(fmt_);
   fmt_ = nullptr;

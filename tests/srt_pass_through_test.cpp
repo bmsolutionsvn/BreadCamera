@@ -90,6 +90,7 @@ struct SrtReader {
 struct SourcePackets {
   std::vector<int> sizes;
   std::vector<bool> key;
+  std::vector<std::vector<uint8_t>> payloads;
 };
 SourcePackets readSource(const std::filesystem::path& file) {
   SourcePackets out;
@@ -104,6 +105,7 @@ SourcePackets readSource(const std::filesystem::path& file) {
     if (p->stream_index == vi) {
       out.sizes.push_back(p->size);
       out.key.push_back((p->flags & AV_PKT_FLAG_KEY) != 0);
+      out.payloads.emplace_back(p->data, p->data + p->size);
     }
     av_packet_unref(p);
   }
@@ -216,6 +218,7 @@ TEST_CASE("SRT pass-through: packets reach the output unchanged" BC_REQUIRES(bc:
   CHECK(reader.fmt->streams[vi]->codecpar->height == 360);
 
   std::vector<int> got;
+  std::vector<uint8_t> firstBytes;
   AVPacket* p = av_packet_alloc();
   REQUIRE(p != nullptr);
   const auto until = std::chrono::steady_clock::now() + 6s;
@@ -223,7 +226,10 @@ TEST_CASE("SRT pass-through: packets reach the output unchanged" BC_REQUIRES(bc:
   while (got.size() < 30 && std::chrono::steady_clock::now() < until) {
     if (reader.read(p, 2s) < 0) break;
     if (p->stream_index == vi) {
-      if (got.empty()) firstKey = (p->flags & AV_PKT_FLAG_KEY) != 0;
+      if (got.empty()) {
+        firstKey = (p->flags & AV_PKT_FLAG_KEY) != 0;
+        firstBytes.assign(p->data, p->data + p->size);
+      }
       got.push_back(p->size);
     }
     av_packet_unref(p);
@@ -247,6 +253,7 @@ TEST_CASE("SRT pass-through: packets reach the output unchanged" BC_REQUIRES(bc:
     }
   }
   REQUIRE(k < n);
+  CHECK(firstBytes == source.payloads[k]);  // the first keyframe's bytes are the source's own
 
   CHECK(factory.input() != nullptr);
   CHECK(factory.input()->videoFrames() == 0);  // nothing was decoded: the packets were remuxed

@@ -83,7 +83,8 @@ std::shared_ptr<const AVCodecParameters> copyParams(const AVCodecParameters* src
 
 bool paramsDiffer(const AVCodecParameters* a, const AVCodecParameters* b) {
   return a->codec_id != b->codec_id || a->codec_type != b->codec_type || a->width != b->width ||
-         a->height != b->height || a->format != b->format || a->extradata_size != b->extradata_size ||
+         a->height != b->height || a->format != b->format || a->sample_rate != b->sample_rate ||
+         a->ch_layout.nb_channels != b->ch_layout.nb_channels || a->extradata_size != b->extradata_size ||
          (a->extradata_size > 0 && std::memcmp(a->extradata, b->extradata, static_cast<size_t>(a->extradata_size)) != 0);
 }
 }  // namespace
@@ -202,6 +203,20 @@ void FfmpegInput::runOnce() {
   } cleanup{this};
 
   int decodeFailures = 0;  // consecutive video packets that produced no frame
+  // The remuxer needs every stream's shape before the first keyframe: a stream first seen after
+  // its header cannot be added to a live mpegts muxer and would force a reconnect.
+  if (sink_->wantsPackets()) {
+    for (int si : {vi, ai}) {
+      if (si < 0) continue;
+      auto p = copyParams(fmt->streams[si]->codecpar);
+      if (!p) continue;
+      auto mp = std::make_shared<MediaPacket>();
+      mp->params = p;
+      mp->timeBase = fmt->streams[si]->time_base;
+      mp->video = si == vi;
+      sink_->onPacket(mp);  // no packet: the target registers the stream and writes nothing
+    }
+  }
   // Pass-through: one shared parameter copy per stream, and the video decoder's on/off state.
   std::vector<std::shared_ptr<const AVCodecParameters>> params(fmt->nb_streams);
   bool videoDecoding = true;

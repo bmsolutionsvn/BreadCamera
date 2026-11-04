@@ -44,8 +44,9 @@ class RemuxWriter {
   AVFormatContext* fmt_;
   AVPacket* scratch_ = nullptr;
   struct Seen {
-    const AVCodecParameters* key;
+    std::shared_ptr<const AVCodecParameters> params;
     AVStream* out;
+    bool video;
   };
   std::vector<Seen> streams_;
   bool headerWritten_ = false;

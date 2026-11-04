@@ -54,5 +54,6 @@ class SrtOutput final : public QueuedOutput {
   bool headerWritten_ = false;
   std::unique_ptr<RemuxWriter> remux_;  // present while packets are re-muxed
   std::atomic<bool> remuxing_{false};   // for status(): the picture path is not encoding
+  bool dropUntilKey_ = false;           // a queue drop broke the GOP: resume at a keyframe
 };
 }  // namespace bc

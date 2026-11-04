@@ -801,6 +801,14 @@ TEST_CASE("Packets pass-through: an SRT target takes the packets and stops the d
   CHECK(factory.made->packets == 1);
   CHECK(factory.made->lastPacket == p);
 
+  // A packets-only camera holds over its last packet, then wakes for the slate tick.
+  camera.onState(bc::SignalState::Offline, bc::ErrorInfo{"input-ended", "ended"});
+  CHECK_FALSE(camera.ready(Clock::now()));
+  const auto due = camera.nextRepeatAt(Clock::now());
+  REQUIRE(due.has_value());
+  CHECK(camera.ready(*due + 1ms));
+  camera.onState(bc::SignalState::Live, std::nullopt);
+
   cfg.stages["color"] = {{"enabled", true}};
   camera.reconfigure(cfg);
   CHECK_FALSE(camera.wantsPackets());
