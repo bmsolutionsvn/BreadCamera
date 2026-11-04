@@ -149,13 +149,16 @@ TEST_CASE("PreviewService: a second frame inside 33 ms is suppressed" BC_REQUIRE
     std::lock_guard l(mu);
     sent[c].push_back(std::move(m));
   });
+  // The 33 ms cap comes from the test's clock, not the wall: a busy suite cannot move it.
+  auto clock = std::chrono::steady_clock::time_point{} + std::chrono::hours(1);
+  svc.setClock([&] { return clock; });
   hub.subscribe("c1", {"a"}, PreviewSize::Small);
   auto img = std::make_shared<const bc::CpuImage>(bc::CpuImage{320, 180, std::vector<uint8_t>(320 * 180 * 4, 128)});
-  // Warm the encoder: the first packets can take a frame or two to appear.
+  // Warm the encoder: the first packets can take a frame or two to appear, one frame per 34 ms.
   for (uint64_t t = 0; t < 5; ++t) {
+    clock += std::chrono::milliseconds(34);
     svc.onTick(t, {bc::FrameTap{"a", 0, nullptr, img}});
     svc.drain();
-    if (t < 4) std::this_thread::sleep_for(std::chrono::milliseconds(34));
   }
   size_t first = 0;
   {
@@ -163,18 +166,19 @@ TEST_CASE("PreviewService: a second frame inside 33 ms is suppressed" BC_REQUIRE
     first = sent["c1"].size();
   }
   REQUIRE(first > 0);
-  svc.onTick(2, {bc::FrameTap{"a", 0, nullptr, img}});
+  clock += std::chrono::milliseconds(10);  // inside the cap: no second encode
+  svc.onTick(5, {bc::FrameTap{"a", 0, nullptr, img}});
   svc.drain();
   {
     std::lock_guard l(mu);
-    CHECK(sent["c1"].size() == first);  // within 33 ms: no second encode
+    CHECK(sent["c1"].size() == first);
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(40));
-  svc.onTick(4, {bc::FrameTap{"a", 0, nullptr, img}});
+  clock += std::chrono::milliseconds(24);  // 34 ms after the last encode: the next frame encodes
+  svc.onTick(6, {bc::FrameTap{"a", 0, nullptr, img}});
   svc.drain();
   {
     std::lock_guard l(mu);
-    CHECK(sent["c1"].size() > first);  // past the cap: the next frame encodes
+    CHECK(sent["c1"].size() > first);
   }
 }
 

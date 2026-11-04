@@ -454,6 +454,10 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   const uint32_t guessW = cpuW ? cpuW : lastSize_.w, guessH = cpuH ? cpuH : lastSize_.h;
   const bool sdiInput = sdiOutputKind(cfg_.input.kind);
   const bool srtInput = cfg_.input.kind == "srt";  // the only FfmpegInput kind the show builds
+  // Nothing uses an OMT input's pictures (no outputs, no stage, no preview, and it is not another
+  // camera's Match reference): it only receives.
+  const bool noConsumer =
+      cfg_.input.kind == "omt" && outputs_.empty() && !stages && !previewWanted && !matchedBy_;
   const int codec = packetCodec_.load();
   bool codedPossible = false;
   bool cpuPossible = false;
@@ -491,7 +495,7 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
     targets = passTargets_;  // the caller's this-tick snapshot
     if (passTargets_.empty()) passAudio_.clear();
   }
-  wantCodedOmt_ = codedPossible && !stages;
+  wantCodedOmt_ = (codedPossible || noConsumer) && !stages;
   // Ask for packets only while one of them can be re-muxed: once the source's codec is known and
   // no output takes it, the camera decodes instead.
   wantPackets_ = packetsPossible && !stages &&
@@ -505,13 +509,16 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
     if (std::find(targets.begin(), targets.end(), s.out.get()) == targets.end()) allPass = false;
   }
   // With no outputs nothing passes through, so the camera keeps decoding: only a camera whose whole
-  // output set is pass targets may stop.
+  // output set is pass targets may stop. An OMT camera with nothing that uses its pictures stops
+  // too: it only receives, and the coded frames are its signal and its rate.
   const bool full = !targets.empty() && allPass && !stages && !previewWanted;
-  wantGpuVideo_ = !full;
-  if (full) {
-    // While the whole output set is passed through, this camera holds no picture and takes no
-    // repeats: a frame that still arrived as decoding stopped must not re-arm the tick path (it
-    // would repeat the slate until an effect comes back, and then send that stale picture).
+  receiveOnly_ = noConsumer;
+  wantGpuVideo_ = !(full || noConsumer);
+  if (full || noConsumer) {
+    // While the whole output set is passed through (or nothing uses the pictures), this camera
+    // holds no picture and takes no repeats: a frame that still arrived as decoding stopped must
+    // not re-arm the tick path (it would repeat the slate until an effect comes back, and then
+    // send that stale picture).
     lastFrame_.reset();
     sawFrame_ = false;
   }
@@ -626,9 +633,11 @@ bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
   }
   if (!delivered) {
     // No output takes this source's mode (or the mode just changed): the tick path needs pictures.
-    // Set here, on the input thread, so the input decodes again before the camera can tick.
-    wantGpuVideo_ = true;
-  } else {
+    // Set here, on the input thread, so the input decodes again before the camera can tick. A
+    // receive-only camera keeps the coded frames as its signal, so it needs no pictures.
+    if (!receiveOnly_.load()) wantGpuVideo_ = true;
+  }
+  if (delivered || receiveOnly_.load()) {
     std::lock_guard l(statsMutex_);
     ++relayedThisSecond_;  // the camera's rate while it passes through: no tick runs
   }
@@ -1051,6 +1060,8 @@ void Camera::publishStatus() {
     relayedThisSecond_ = 0;
     latency = latencyEwmaMs_;
     phase = phase_;
+    // A receive-only camera runs no ticks: the coded frames it receives are its whole live signal.
+    if (receiveOnly_.load() && inputState_.load() == SignalState::Live) phase = FeedPhase::Live;
     stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
   }
   state_.set(path("/phase"), toString(phase));

@@ -106,7 +106,12 @@ class Camera final : public InputSink {
   std::optional<SkinStats> matchOutputStats() const { return matchOutput_; }
   void setMatchReference(std::optional<SkinStats> ref, bool refHasPicture);
   // True while another camera matches this one: it measures its output even out of Match mode.
-  void setMatchedBy(bool matched) { matchedBy_ = matched; }
+  void setMatchedBy(bool matched) {
+    if (matchedBy_ == matched) return;
+    matchedBy_ = matched;
+    // Becoming a reference makes the pictures wanted again: decode before any tick can run.
+    if (matched) evaluatePass(previewQuery_ && previewQuery_());
+  }
   // Second half: rawAlpha (null = no matte this tick) → stages → readback → fan-out.
   // previewWanted forces the one readback even when no output needsCpu(), so a visible preview
   // (D5) still gets the image through the frame tap.
@@ -305,6 +310,9 @@ class Camera final : public InputSink {
   std::atomic<int> codedMode_{-1};        // the source's last coded frame's omthx::Mode, -1 until one arrives
   std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
   std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
+  // An OMT input with nothing that uses its pictures (no outputs, no stage, no preview) only
+  // receives coded frames; the input thread reads this so it neither decodes nor asks again.
+  std::atomic<bool> receiveOnly_{false};
   // Phase 5c: the input's video codec once a packet says so (-1 until then), and whether an output
   // can re-mux packets, so the FfmpegInput hands them over instead of decoding them.
   std::atomic<int> packetCodec_{-1};

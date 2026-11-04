@@ -202,8 +202,9 @@ void PreviewService::onTick(uint64_t tick, const std::vector<FrameTap>& frames) 
   std::set<std::string> forceCams;
   for (const auto& [id, size] : keys) forceCams.insert(id);
 
-  const int64_t ptsUs = std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now().time_since_epoch()).count();
+  const auto now = clock_();
+  const int64_t ptsUs =
+      std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
   size_t skipped = 0;
   for (const auto& cam : cams) {
     auto it = slots_.find(cam);
@@ -231,7 +232,6 @@ void PreviewService::onTick(uint64_t tick, const std::vector<FrameTap>& frames) 
     }
     if (!tap || !tap->cpu) continue;
     it = slots_.find(cam);
-    const auto now = std::chrono::steady_clock::now();
     if (it != slots_.end() && now - it->second->lastEncode < std::chrono::milliseconds(33)) continue;
     if (it == slots_.end()) {
       if (slots_.size() >= kMaxPreviewEncoders) {
