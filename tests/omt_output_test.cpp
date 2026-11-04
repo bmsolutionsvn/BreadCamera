@@ -572,6 +572,25 @@ TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding" BC_
   CHECK(std::abs(bgr[1] - 40) <= 8);   // G
   CHECK(std::abs(bgr[0] - 20) <= 8);   // B
 }
+TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe" BC_REQUIRES(bc::test::Req::Omt)) {
+  bc::OmthOutput out("bc-coded-drop", omthx::Mode::Full, omthx::Codec::Hevc, /*keyed=*/false);
+  auto c = std::make_shared<omthx::CodedFrame>();
+  c->mode = omthx::Mode::Full;
+  c->format = omthx::VideoFormat{64, 36, 60, 1, false};
+  c->data.assign(64, 0);  // never encoded: nobody is connected, so the sender drops it
+  bc::OutFrame f;
+  f.coded = c;
+  for (int i = 0; i < 5; ++i) out.submit(f);  // the queue holds 2: the rest drop
+  out.start();
+  bool asked = false;
+  for (int i = 0; i < 40 && !asked; ++i) {
+    asked = out.takeKeyframeRequest();
+    if (!asked) std::this_thread::sleep_for(50ms);
+  }
+  out.stop();
+  CHECK(asked);  // a lost coded frame breaks the receiver's picture: the source is asked for a keyframe
+}
+
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
@@ -584,4 +603,5 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path") {}
 TEST_CASE("OmthOutput: plain OMT takes UYVY") {}
 TEST_CASE("OmthOutput: plain OMT sends a UYVY frame") {}
 TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding") {}
+TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe") {}
 #endif

@@ -28,21 +28,46 @@ void OmtInput::run() {
   std::unique_ptr<omthx::Receiver> receiver;
   // A recorder takes full OMT (VMX) frames as they are; an Hx source cannot be passed through,
   // so it reopens as decoded pictures (the same path a Camera sink uses).
-  bool coded = sink_->wantsCodedVmx();
+  bool codedVmx = sink_->wantsCodedVmx();
+  // A camera with no enabled stage passes coded OMT frames on itself and asks for pictures only
+  // while a preview or another output needs one. That answer changes (an effect comes on), so it is
+  // re-read once a second and the receiver is reopened when it does.
+  bool codedOmt = sink_->wantsCodedOmt();
+  auto nextCodedCheck = Clock::now() + std::chrono::seconds(1);
   // An HX source decodes to full-range BT.709 NV12 for a GPU sink. A sink that wants CPU frames
   // (BreadReplay's recorder tap) keeps the BGRA receiver it had before, so it still gets pictures;
   // one that wants neither keeps the old BGRA receiver too.
   bool nv12 = sink_->wantsGpuVideo() && !sink_->wantsCpuVideo();
   bool checkedMode = false;
   bool live = false;
+  bool decoding = false;  // the pass-through decoder has been fed since it was last reset
+  std::unique_ptr<omthx::FrameDecoder> decoder;
   auto lastVideo = Clock::now();
+
+  // A decoder's NV12 picture, uploaded exactly as a Receiver's Nv12 picture is.
+  const auto uploadNv12 = [this](const omthx::VideoFrame& v) {
+    const uint32_t w = static_cast<uint32_t>(v.format.width);
+    const uint32_t h = static_cast<uint32_t>(v.format.height);
+    if (w == 0 || h == 0 || !v.nv12Y || !v.nv12UV) return;
+    VideoFrameIn f;
+    f.layout = PixelLayout::NV12;
+    f.fullRange = true;
+    f.bt709 = true;  // OMT-HX decodes full-range BT.709 at every size, not by height
+    f.ptsUs = v.timestamp / 10;  // omthx timestamps are 100 ns units
+    f.rate = rateFromRational(v.format.fpsN, v.format.fpsD);
+    {
+      auto lock = gpu_.lock();
+      f.tex = uploadNv12Planes(gpu_, pool_, v.nv12Y, v.nv12UV, w, h);
+    }
+    sink_->onVideo(std::move(f));
+  };
 
   while (!stopping_) {
     if (!receiver) {
       try {
         receiver = std::make_unique<omthx::Receiver>(
-            source_, coded ? omthx::PixelFormat::Coded
-                            : (nv12 ? omthx::PixelFormat::Nv12 : omthx::PixelFormat::Bgra));
+            source_, (codedVmx || codedOmt) ? omthx::PixelFormat::Coded
+                                            : (nv12 ? omthx::PixelFormat::Nv12 : omthx::PixelFormat::Bgra));
         receiver->requestKeyframe();
         checkedMode = false;
         lastVideo = Clock::now();
@@ -56,11 +81,11 @@ void OmtInput::run() {
     }
 
     try {
-      if (coded) {
+      if (codedVmx) {
         omthx::CodedFrame c;
         if (receiver->receiveCoded(c, 20)) {
           if (c.mode != omthx::Mode::Full) {
-            coded = false;  // Hx (HEVC/H.264): reopen with the picture receiver
+            codedVmx = false;  // Hx (HEVC/H.264): reopen with the picture receiver
             receiver.reset();
             live = false;
             continue;
@@ -84,6 +109,36 @@ void OmtInput::run() {
             sink_->onCodedVideo(f);
           }
         }
+      } else if (codedOmt) {
+        omthx::CodedFrame c;
+        if (receiver->receiveCoded(c, 20)) {
+          const uint32_t w = static_cast<uint32_t>(c.format.width);
+          const uint32_t h = static_cast<uint32_t>(c.format.height);
+          if (w != 0 && h != 0 && !c.data.empty()) {
+            lastVideo = Clock::now();
+            if (!live) {
+              live = true;
+              sink_->onState(SignalState::Live, std::nullopt);
+            }
+            auto coded = std::make_shared<const omthx::CodedFrame>(std::move(c));
+            if (sink_->onCodedOmt(coded)) receiver->requestKeyframe();  // a downstream receiver asked
+            if (sink_->wantsGpuVideo()) {
+              if (!decoding) {  // pictures start again: the stream may be mid-GOP
+                decoding = true;
+                if (!decoder) decoder = std::make_unique<omthx::FrameDecoder>(omthx::PixelFormat::Nv12);
+                decoder->reset();
+                receiver->requestKeyframe();
+              }
+              omthx::VideoFrame v;
+              if (decoder->decode(*coded, v)) {
+                ++framesDecoded_;
+                uploadNv12(v);
+              }
+            } else {
+              decoding = false;  // nobody needs a picture: the next one starts from a keyframe
+            }
+          }
+        }
       } else {
         omthx::VideoFrame v;
         if (receiver->receiveVideo(v, 20)) {
@@ -101,26 +156,12 @@ void OmtInput::run() {
           }
           if (nv12) {
             if (w != 0 && h != 0 && v.nv12Y && v.nv12UV) {
-              VideoFrameIn f;
-              f.layout = PixelLayout::NV12;
-              f.fullRange = true;
-              f.bt709 = true;  // OMT-HX decodes full-range BT.709 at every size, not by height
-              f.ptsUs = v.timestamp / 10;  // omthx timestamps are 100 ns units
-              f.rate = rateFromRational(v.format.fpsN, v.format.fpsD);
               lastVideo = Clock::now();
               if (!live) {
                 live = true;
                 sink_->onState(SignalState::Live, std::nullopt);
               }
-              if (sink_->wantsGpuVideo()) {
-                // Copy the decoder's planes before the next receive; the upload maps DYNAMIC
-                // textures rather than calling UpdateSubresource, which leaks (see Task 1).
-                {
-                  auto lock = gpu_.lock();
-                  f.tex = uploadNv12Planes(gpu_, pool_, v.nv12Y, v.nv12UV, w, h);
-                }
-                sink_->onVideo(std::move(f));
-              }
+              if (sink_->wantsGpuVideo()) uploadNv12(v);
             }
           } else if (w != 0 && h != 0 && v.bgra.size() >= static_cast<size_t>(w) * h * 4) {
             VideoFrameIn f;
@@ -190,6 +231,18 @@ void OmtInput::run() {
       sink_->onState(SignalState::Offline, ErrorInfo{"omt-failed", e.what()});
       receiver.reset();  // open again; a sender restart is the usual cause
       live = false;
+    }
+
+    if (!codedVmx && Clock::now() >= nextCodedCheck) {
+      nextCodedCheck = Clock::now() + std::chrono::seconds(1);
+      const bool want = sink_->wantsCodedOmt();
+      if (want != codedOmt) {
+        codedOmt = want;  // the same source, read as coded frames or as pictures
+        nv12 = sink_->wantsGpuVideo() && !sink_->wantsCpuVideo();
+        receiver.reset();
+        live = false;
+        continue;
+      }
     }
 
     if (live && Clock::now() - lastVideo > std::chrono::seconds(2)) {

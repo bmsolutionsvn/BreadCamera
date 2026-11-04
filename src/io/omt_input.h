@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <string>
 #include <thread>
 
@@ -19,6 +20,9 @@ class OmtInput final : public Input {
   ~OmtInput() override { stop(); }
   void start(InputSink& sink) override;
   void stop() override;
+  // Pictures this input has decoded off the wire. A pass-through camera that needs no picture
+  // leaves this flat: the coded frames are relayed without being decoded.
+  uint64_t framesDecoded() const { return framesDecoded_.load(); }
 
  private:
   void run();
@@ -27,6 +31,7 @@ class OmtInput final : public Input {
   std::string source_;
   InputSink* sink_ = nullptr;
   std::atomic<bool> stopping_{false};
+  std::atomic<uint64_t> framesDecoded_{0};
   std::thread thread_;
 };
 }  // namespace bc

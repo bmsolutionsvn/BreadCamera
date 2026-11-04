@@ -22,6 +22,7 @@
 #include <psapi.h>
 
 #include "io/omt_input.h"
+#include "io/omt_output.h"
 #include "omthx/omthx.h"
 
 using namespace std::chrono_literals;
@@ -421,6 +422,240 @@ TEST_CASE("OmtInput: memory stays flat while a camera receives 300 frames" BC_RE
 TEST_CASE("OmtInput: memory stays flat while a camera receives 300 HX frames" BC_REQUIRES(bc::test::Req::Omt)
           BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   leakCase(omthx::Mode::Hx, "bc-leak-test-hx");
+}
+
+// ---------------------------------------------------------------- pass-through
+
+namespace {
+// The real default adapters, with the OMT output and input kept for the test: the output's address
+// is only reachable through the object, and the input reports its decoder's work.
+class PassThroughFactory final : public bc::AdapterFactory {
+ public:
+  PassThroughFactory(bc::AdapterFactory& inner, omthx::Mode outputMode) : inner_(inner), mode_(outputMode) {}
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig& cfg) override {
+    auto in = inner_.makeInput(cfg);
+    input = dynamic_cast<bc::OmtInput*>(in.get());
+    return in;
+  }
+  std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig& cfg, const bc::CameraConfig& cam,
+                                         bc::Rate) override {
+    const std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
+    auto out = std::make_unique<bc::OmthOutput>(name, mode_, omthx::Codec::Hevc, /*keyed=*/false);
+    output = out.get();
+    return out;
+  }
+  bc::OmtInput* input = nullptr;    // valid until the camera is stopped
+  bc::OmthOutput* output = nullptr;  // ditto
+
+ private:
+  bc::AdapterFactory& inner_;
+  omthx::Mode mode_;
+};
+
+struct PassRig {
+  explicit PassRig(omthx::Mode outputMode)
+      : gpu(bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp)),
+        pool(*gpu),
+        conv(*gpu, pool),
+        comp(*gpu, pool),
+        grader(*gpu, pool),
+        inner(*gpu, pool),
+        factory(inner, outputMode),
+        engine(bc::GpuTools{conv, comp, grader}, state, factory) {}
+  std::unique_ptr<bc::GpuDevice> gpu;
+  bc::TexturePool pool;
+  bc::Converter conv;
+  bc::Compositor comp;
+  bc::ColorGrader grader;
+  bc::StateStore state;
+  bc::DefaultAdapterFactory inner;
+  PassThroughFactory factory;
+  bc::Engine engine;
+};
+
+// One camera, its OMT input fed by `source`, and one OMT output.
+bc::Show passShow(const std::string& source) {
+  bc::Show show;
+  bc::CameraConfig c;
+  c.id = "a";
+  c.name = "Cam a";
+  c.input.kind = "omt";
+  c.input.params = {{"source", source}};
+  c.outputs.push_back(bc::OutputConfig{"o1", "omt", false, true, nlohmann::json::object()});
+  show.cameras.push_back(c);
+  return show;
+}
+
+std::string waitForPassAddress(const bc::OmthOutput& out) {
+  std::string address;
+  for (int i = 0; i < 50 && address.empty(); ++i) {
+    address = out.address();
+    if (address.empty()) std::this_thread::sleep_for(100ms);
+  }
+  return address;
+}
+
+// A bright picture that changes each frame, as the test source.
+void brightPattern(std::vector<uint8_t>& bgra, int i, uint32_t w, uint32_t h) {
+  bgra.resize(static_cast<size_t>(w) * h * 4);
+  const uint8_t k = static_cast<uint8_t>(180 + (i % 3) * 20);
+  for (size_t p = 0; p < bgra.size(); p += 4) {
+    bgra[p + 0] = 30;
+    bgra[p + 1] = k;
+    bgra[p + 2] = k;
+    bgra[p + 3] = 255;
+  }
+}
+
+int centreLuma(const omthx::VideoFrame& vf) {
+  const size_t c = (static_cast<size_t>(vf.format.height / 2) * vf.format.width + vf.format.width / 2) * 4;
+  if (vf.bgra.size() < c + 4) return -1;
+  return (299 * vf.bgra[c + 2] + 587 * vf.bgra[c + 1] + 114 * vf.bgra[c + 0]) / 1000;
+}
+
+// Sends a bright pattern at 30 fps on its own thread until stopped.
+class PatternFeeder {
+ public:
+  PatternFeeder(omthx::Sender& sender, omthx::VideoFormat fmt) : thread_([this, &sender, fmt] {
+    std::vector<uint8_t> bgra;
+    const std::vector<float> tone(2 * 1600, 0.2f);
+    auto next = std::chrono::steady_clock::now();
+    for (int i = 0; !stop_; ++i) {
+      brightPattern(bgra, i, static_cast<uint32_t>(fmt.width), static_cast<uint32_t>(fmt.height));
+      const int64_t ts = static_cast<int64_t>(i) * 10'000'000 / fmt.fpsN;
+      sender.sendVideo(fmt, bgra, false, ts);
+      sender.sendAudio(tone, 48000, 2, ts);
+      next += std::chrono::microseconds(1'000'000 / fmt.fpsN);
+      std::this_thread::sleep_until(next);
+    }
+  }) {}
+  ~PatternFeeder() {
+    stop_ = true;
+    thread_.join();
+  }
+
+ private:
+  std::atomic<bool> stop_{false};
+  std::thread thread_;
+};
+}  // namespace
+
+TEST_CASE("OMT pass-through: an idle preview decodes nothing" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "bc-passthrough-idle-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Full, omthx::Quality::Medium);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  PassRig rig(omthx::Mode::Full);
+  rig.engine.apply(passShow(source.address()));
+  rig.engine.start();
+  REQUIRE(rig.factory.output != nullptr);
+  REQUIRE(rig.factory.input != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  bool got = false;
+  for (int i = 0; i < 100 && !got; ++i) got = rx.receiveVideo(vf, 100);
+  CHECK(got);  // the pass-through output delivers the source's frames
+  std::this_thread::sleep_for(600ms);  // let the camera settle into pass-through
+  const uint64_t decoded = rig.factory.input->framesDecoded();
+  std::this_thread::sleep_for(1000ms);
+  CHECK(rig.factory.input->framesDecoded() == decoded);  // nothing needs a picture, so nothing decodes
+  rig.engine.stop();
+}
+
+TEST_CASE("OMT pass-through: a late receiver gets a picture" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "bc-passthrough-late-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Full, omthx::Quality::Medium);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  PassRig rig(omthx::Mode::Full);
+  rig.engine.apply(passShow(source.address()));
+  rig.engine.start();
+  REQUIRE(rig.factory.output != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+
+  std::this_thread::sleep_for(2s);  // the stream runs with nobody watching
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  bool got = false;
+  for (int i = 0; i < 10 && !got; ++i) got = rx.receiveVideo(vf, 100);  // within one second
+  CHECK(got);
+  rig.engine.stop();
+}
+
+TEST_CASE("OMT pass-through: audio flows" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "bc-passthrough-audio-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Full, omthx::Quality::Medium);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  PassRig rig(omthx::Mode::Full);
+  rig.engine.apply(passShow(source.address()));
+  rig.engine.start();
+  REQUIRE(rig.factory.output != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+
+  omthx::Receiver rx(address);
+  int64_t videoTs = -1;
+  int64_t audioTs = -1;
+  std::vector<int64_t> videoStamps;
+  for (int i = 0; i < 100 && (videoTs < 0 || audioTs < 0); ++i) {
+    omthx::VideoFrame vf;
+    if (rx.receiveVideo(vf, 20)) {
+      videoTs = vf.timestamp;
+      videoStamps.push_back(videoTs);
+    }
+    omthx::AudioFrame af;
+    if (rx.receiveAudio(af, 0)) audioTs = af.timestamp;
+  }
+  REQUIRE(videoTs >= 0);
+  REQUIRE(audioTs >= 0);  // the tone keeps flowing on the pass-through output
+  int64_t nearest = videoStamps.front();
+  for (int64_t t : videoStamps) {
+    if (std::abs(t - audioTs) < std::abs(nearest - audioTs)) nearest = t;
+  }
+  CHECK(std::abs(nearest - audioTs) <= 10'000'000 / 30);  // one frame period
+  rig.engine.stop();
+}
+
+TEST_CASE("OMT pass-through: an effect turned on mid-stream sends no black"
+          BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  const std::string name = "bc-passthrough-effect-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  PassRig rig(omthx::Mode::Hx);
+  bc::Show show = passShow(source.address());
+  rig.engine.apply(show);
+  rig.engine.start();
+  REQUIRE(rig.factory.output != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+
+  std::vector<int> lumas;
+  std::string encoder;
+  {
+    omthx::Receiver rx(address);
+    const auto start = std::chrono::steady_clock::now();
+    bool switched = false;
+    while (std::chrono::steady_clock::now() - start < 3s) {
+      omthx::VideoFrame vf;
+      if (rx.receiveVideo(vf, 20)) lumas.push_back(centreLuma(vf));
+      if (!switched && std::chrono::steady_clock::now() - start > 1s) {
+        switched = true;
+        show.cameras[0].stages["color"] = {{"enabled", true}};
+        rig.engine.apply(show);  // the effect comes on mid-stream
+      }
+    }
+    encoder = rx.stats().encoder;
+  }
+  rig.engine.stop();
+  REQUIRE(lumas.size() > 30);
+  for (int y : lumas) CHECK(y > 40);  // never black and never the dark slate
+  CHECK(encoder != "none");  // after the switch the tick path encodes again
 }
 
 #endif
