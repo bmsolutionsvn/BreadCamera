@@ -586,6 +586,31 @@ TEST_CASE("OMT pass-through: a late receiver gets a picture" BC_REQUIRES(bc::tes
   rig.engine.stop();
 }
 
+TEST_CASE("OMT pass-through: a late receiver of an HX source gets a keyframe relayed"
+          BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  const std::string name = "bc-passthrough-late-hx-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  PassRig rig(omthx::Mode::Hx);
+  rig.engine.apply(passShow(source.address()));
+  rig.engine.start();
+  REQUIRE(rig.factory.output != nullptr);
+  REQUIRE(rig.factory.input != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+
+  std::this_thread::sleep_for(2s);  // mid-GOP: the source's next keyframe is 10 s away on its own
+  const uint64_t decoded = rig.factory.input->framesDecoded();
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  bool got = false;
+  for (int i = 0; i < 10 && !got; ++i) got = rx.receiveVideo(vf, 100);  // within one second
+  CHECK(got);                                          // the keyframe request was relayed back
+  CHECK(rig.factory.input->framesDecoded() == decoded);  // still relayed, not decoded locally
+  rig.engine.stop();
+}
+
 TEST_CASE("OMT pass-through: audio flows" BC_REQUIRES(bc::test::Req::Omt)) {
   const std::string name = "bc-passthrough-audio-" + std::to_string(GetCurrentProcessId());
   omthx::Sender source(name, omthx::Mode::Full, omthx::Quality::Medium);
@@ -637,6 +662,7 @@ TEST_CASE("OMT pass-through: an effect turned on mid-stream sends no black"
 
   std::vector<int> lumas;
   std::string encoder;
+  uint64_t decodedAfterSwitch = 0;
   {
     omthx::Receiver rx(address);
     const auto start = std::chrono::steady_clock::now();
@@ -648,14 +674,16 @@ TEST_CASE("OMT pass-through: an effect turned on mid-stream sends no black"
         switched = true;
         show.cameras[0].stages["color"] = {{"enabled", true}};
         rig.engine.apply(show);  // the effect comes on mid-stream
+        decodedAfterSwitch = rig.factory.input->framesDecoded();
       }
     }
     encoder = rx.stats().encoder;
   }
   rig.engine.stop();
   REQUIRE(lumas.size() > 30);
-  for (int y : lumas) CHECK(y > 40);  // never black and never the dark slate
+  for (int y : lumas) CHECK(y > 120);  // never black, and never the dark slate (about 75)
   CHECK(encoder != "none");  // after the switch the tick path encodes again
+  CHECK(rig.factory.input->framesDecoded() > decodedAfterSwitch);  // and decodes the pictures it sends
 }
 
 #endif

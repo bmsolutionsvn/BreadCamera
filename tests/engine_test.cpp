@@ -413,8 +413,15 @@ class RecordingOutput final : public bc::Output {
 
 class NoInput final : public bc::Input {
  public:
-  void start(bc::InputSink&) override {}
+  explicit NoInput(bool* codedWantedAtStart = nullptr) : codedWanted_(codedWantedAtStart) {}
+  void start(bc::InputSink& sink) override {
+    // What the camera answers before this input's thread exists: its first receiver's format.
+    if (codedWanted_) *codedWanted_ = sink.wantsCodedOmt();
+  }
   void stop() override {}
+
+ private:
+  bool* codedWanted_;
 };
 
 class RecordingFactory final : public bc::AdapterFactory {
@@ -423,7 +430,9 @@ class RecordingFactory final : public bc::AdapterFactory {
   explicit RecordingFactory(bool needsCpu) : spec_{needsCpu, false} {}
   // One spec per output, in creation order (the last one repeats).
   explicit RecordingFactory(std::vector<RecSpec> specs) : specs_(std::move(specs)) {}
-  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override { return std::make_unique<NoInput>(); }
+  std::unique_ptr<bc::Input> makeInput(const bc::InputConfig&) override {
+    return std::make_unique<NoInput>(codedWantedAtStart);
+  }
   std::unique_ptr<bc::Output> makeOutput(const bc::OutputConfig&, const bc::CameraConfig&, bc::Rate) override {
     const RecSpec spec = all.size() < specs_.size() ? specs_[all.size()] : spec_;
     auto o = std::make_unique<RecordingOutput>(spec);
@@ -431,6 +440,7 @@ class RecordingFactory final : public bc::AdapterFactory {
     all.push_back(o.get());
     return o;
   }
+  bool* codedWantedAtStart = nullptr;  // written by NoInput::start
   RecordingOutput* made = nullptr;
   std::vector<RecordingOutput*> all;  // in creation (show output) order
 
@@ -730,6 +740,71 @@ TEST_CASE("Camera: an HX pass-through falls back to decoding when the source tur
   tick();
   CHECK(factory.made->submitted > before);  // pictures resume on the tick path
   CHECK(factory.made->coded == 2);          // and the Full frames were not passed on
+  camera.stop();
+}
+
+TEST_CASE("Camera: the input learns pass-through before its thread starts") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bool codedAtStart = false;
+  factory.codedWantedAtStart = &codedAtStart;
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.start();
+  CHECK(codedAtStart);  // the input's first receiver is the coded one, not a picture one
+  camera.stop();
+}
+
+TEST_CASE("Camera: a frame arriving as pass-through begins does not start repeat ticks") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  auto tick = [&] {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  };
+  camera.onVideo(solidFrame(r.conv, 120));
+  camera.onCodedOmt(dummyCoded(0));
+  tick();
+  tick();
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+  // A picture the input decoded just before it learned not to lands after that tick.
+  camera.onVideo(solidFrame(r.conv, 120));
+  tick();
+  CHECK_FALSE(camera.ready(Clock::now() + 2s));  // no hold or repeat ticks once pass-through began
+  CHECK(camera.lastFrame() == nullptr);          // and nothing is held for the way back
+  camera.stop();
+}
+
+TEST_CASE("Camera: a pass-through camera reports the rate of the frames it relays") {
+  Rig r;
+  RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(omthx::Mode::Full)}});
+  bc::Camera camera(cam("a", {out("o1")}), factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state,
+                    bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onVideo(solidFrame(r.conv, 120));
+  camera.onCodedOmt(dummyCoded(0));
+  for (int i = 0; i < 2; ++i) {
+    const auto now = Clock::now();
+    camera.beginTick(now, slate);
+    camera.endTick(now, nullptr);
+  }
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+  camera.publishStatus();  // start a fresh second: the ticks above must not be counted
+  for (int i = 0; i < 30; ++i) camera.onCodedOmt(dummyCoded(static_cast<uint64_t>(i)));
+  camera.publishStatus();
+  CHECK(camera.stats().fps == 30);  // the relay is the camera's rate, though no tick runs
   camera.stop();
 }
 
