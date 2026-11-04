@@ -162,7 +162,12 @@ void GpuDecoder::drain(const std::function<void(VideoFrameIn)>& emit, int64_t fa
     const uint32_t h = static_cast<uint32_t>(frame_->height) & ~1u;
     if (w != 0 && h != 0) {
       VideoFrameIn out;
-      out.ptsUs = fallbackPtsUs;
+      // The picture's own pts identifies the access unit it came from; a B-frame is emitted
+      // later than the packet that carried it, so fallbackPtsUs would mislabel it.
+      out.ptsUs = frame_->pts != AV_NOPTS_VALUE
+                      ? frame_->pts
+                      : (frame_->best_effort_timestamp != AV_NOPTS_VALUE ? frame_->best_effort_timestamp
+                                                                         : fallbackPtsUs);
       out.fullRange = frame_->color_range == AVCOL_RANGE_JPEG;
       if (!copyDecodedFrame(gpu_, pool_, frame_, w, h, out)) {
         uploadSoftwareFrame(gpu_, pool_, frame_, w, h, sws_, scratch_, out);
