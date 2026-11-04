@@ -448,6 +448,9 @@ static void leakCase(omthx::Mode mode, const char* sourceName) {
   camera.name = "Cam a";
   camera.input.kind = "omt";
   camera.input.params = {{"source", sender.address()}};
+  // An OMT camera with no outputs and no preview only receives now, so a stage keeps the frames
+  // (and their decode) flowing: the leak this measures is one per decoded picture.
+  camera.stages["color"] = {{"enabled", true}};
   show.cameras.push_back(camera);
   engine.apply(show);
   engine.start();
@@ -760,6 +763,81 @@ TEST_CASE("OMT pass-through: an effect turned on mid-stream sends no black"
   for (int y : lumas) CHECK(y > 120);  // never black, and never the dark slate (about 75)
   CHECK(encoder != "none");  // after the switch the tick path encodes again
   CHECK(rig.factory.input->framesDecoded() > decodedAfterSwitch);  // and decodes the pictures it sends
+}
+
+// Review focus 1 and 3: nothing that uses the pictures, so nothing decodes; a preview brings
+// the decoded pictures back within a second.
+TEST_CASE("OMT pass-through: a camera with no consumer only receives"
+          BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  const std::string name = "bc-idle-omt-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  std::atomic<bool> preview{false};
+  std::atomic<uint64_t> ticks{0};  // frames handed to the tick path's tap
+  PassRig rig(omthx::Mode::Hx);
+  rig.engine.setPreviewWanted([&](const std::string&) { return preview.load(); });
+  rig.engine.setFrameTap([&](uint64_t, const std::vector<bc::FrameTap>& frames) { ticks += frames.size(); });
+  bc::Show show = passShow(source.address());
+  show.cameras[0].outputs.clear();
+  rig.engine.apply(show);
+  rig.engine.start();
+  REQUIRE(rig.factory.input != nullptr);
+
+  std::this_thread::sleep_for(1500ms);  // connect, learn the source, settle
+  const uint64_t decoded = rig.factory.input->framesDecoded();
+  const uint64_t ticked = ticks.load();
+  std::this_thread::sleep_for(1000ms);
+  CHECK(ticks.load() == ticked);                        // no tick runs for a camera nobody watches
+  CHECK(rig.factory.input->framesDecoded() == decoded);  // and its own decoder never runs
+  CHECK(rig.engine.stats().cameras.at("a").fps > 0);     // the coded frames are its rate
+  const auto snap = rig.state.snapshot();
+  CHECK(snap.at(nlohmann::json::json_pointer("/cameras/a/input/state")) == "live");
+
+  preview = true;  // the preview comes on: pictures resume within a second
+  bool grew = false;
+  for (int i = 0; i < 20 && !grew; ++i) {
+    std::this_thread::sleep_for(50ms);
+    grew = rig.factory.input->framesDecoded() > decoded;
+  }
+  CHECK(grew);
+  rig.engine.stop();
+}
+
+// Review focus 2: an output added to the idle camera gets pictures within two seconds.
+TEST_CASE("OMT pass-through: an output added to an idle camera gets pictures"
+          BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  const std::string name = "bc-idle-omt-out-" + std::to_string(GetCurrentProcessId());
+  omthx::Sender source(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  PatternFeeder feeder(source, omthx::VideoFormat{640, 360, 30, 1, false});
+
+  std::atomic<uint64_t> ticks{0};
+  PassRig rig(omthx::Mode::Hx);
+  rig.engine.setFrameTap([&](uint64_t, const std::vector<bc::FrameTap>& frames) { ticks += frames.size(); });
+  bc::Show show = passShow(source.address());
+  show.cameras[0].outputs.clear();
+  rig.engine.apply(show);
+  rig.engine.start();
+  REQUIRE(rig.factory.input != nullptr);
+  std::this_thread::sleep_for(1500ms);  // it only receives, so it does not decode
+  const uint64_t ticked = ticks.load();
+  std::this_thread::sleep_for(500ms);
+  REQUIRE(ticks.load() == ticked);
+  const uint64_t decoded = rig.factory.input->framesDecoded();
+
+  show.cameras[0].outputs.push_back(bc::OutputConfig{"o1", "omt", false, true, nlohmann::json::object()});
+  rig.engine.apply(show);
+  REQUIRE(rig.factory.output != nullptr);
+  const std::string address = waitForPassAddress(*rig.factory.output);
+  REQUIRE_FALSE(address.empty());
+  omthx::Receiver rx(address);
+  omthx::VideoFrame vf;
+  bool got = false;
+  for (int i = 0; i < 20 && !got; ++i) got = rx.receiveVideo(vf, 100);  // within two seconds
+  CHECK(got);
+  // The output takes the coded frames the camera was already receiving: nothing reopens or decodes.
+  CHECK(rig.factory.input->framesDecoded() == decoded);
+  rig.engine.stop();
 }
 
 #endif

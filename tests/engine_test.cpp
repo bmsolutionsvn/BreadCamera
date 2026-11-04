@@ -783,6 +783,127 @@ TEST_CASE("Camera: an HX pass-through falls back to decoding when the source tur
   camera.stop();
 }
 
+// A camera with nothing that uses its pictures (no outputs, no stage, no preview) only receives:
+// the input asks for coded frames, which are the camera's rate, and never decodes.
+TEST_CASE("Camera: an OMT input with no consumer only receives") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {});
+  cfg.input.kind = "omt";
+  bool codedAtStart = false;
+  factory.codedWantedAtStart = &codedAtStart;
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  CHECK(codedAtStart);  // its first receiver is already the coded one
+  REQUIRE(camera.wantsCodedOmt());
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  camera.publishStatus();
+  for (int i = 0; i < 30; ++i) {
+    camera.onCodedOmt(dummyCoded(static_cast<uint64_t>(i)));
+    CHECK_FALSE(camera.wantsGpuVideo());  // receiving only: the input never decodes
+  }
+  camera.publishStatus();
+  CHECK(camera.stats().fps == 30);  // the coded frames are its rate, though no tick runs
+  CHECK_FALSE(camera.ready(Clock::now() + 2s));  // and nothing is held for the tick path
+  camera.stop();
+}
+
+// Adding an output hands the pictures back through the existing path: a pass-through output takes
+// the coded frames at once, with no decoded picture needed.
+TEST_CASE("Camera: adding an output to an OMT input with no consumer passes pictures on") {
+  for (const auto mode : {omthx::Mode::Full, omthx::Mode::Hx}) {
+    Rig r;
+    RecordingFactory factory(std::vector<RecSpec>{RecSpec{false, false, false, static_cast<int>(mode)}});
+    bc::CameraConfig cfg = cam("a", {});
+    cfg.input.kind = "omt";
+    bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+    camera.setPreviewQuery([] { return false; });
+    camera.start();
+    camera.onState(bc::SignalState::Live, std::nullopt);
+    camera.onCodedOmt(dummyCoded(0, mode));
+    REQUIRE(camera.wantsCodedOmt());
+    REQUIRE_FALSE(camera.wantsGpuVideo());
+
+    cfg.outputs = {out("o1")};
+    camera.reconfigure(cfg);
+    REQUIRE(factory.made != nullptr);
+    CHECK(camera.wantsCodedOmt());
+    CHECK_FALSE(camera.wantsGpuVideo());
+    camera.onCodedOmt(dummyCoded(1, mode));
+    CHECK(factory.made->coded == 1);  // the new output gets the source's pictures
+    camera.stop();
+  }
+}
+
+// A preview turning on makes the input decode again without waiting for a tick to decide.
+TEST_CASE("Camera: a preview on an OMT input with no consumer resumes pictures") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {});
+  cfg.input.kind = "omt";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  std::atomic<bool> preview{false};
+  camera.setPreviewQuery([&] { return preview.load(); });
+  camera.start();
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  for (int i = 0; i < 3; ++i) camera.onCodedOmt(dummyCoded(static_cast<uint64_t>(i)));
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+
+  preview = true;
+  CHECK(camera.wantsGpuVideo());  // the input decodes on its next coded frame
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onVideo(solidFrame(r.conv, 120));
+  auto now = Clock::now();
+  camera.beginTick(now, slate);
+  camera.endTick(now, nullptr, true);
+  CHECK(camera.lastFrame() != nullptr);  // a decoded picture is held again
+
+  preview = false;
+  camera.onVideo(solidFrame(r.conv, 120));
+  now = Clock::now();
+  camera.beginTick(now, slate);
+  camera.endTick(now, nullptr, false);
+  CHECK_FALSE(camera.wantsGpuVideo());  // nothing wants it again
+  CHECK(camera.wantsCodedOmt());
+  camera.stop();
+}
+
+// A stage may need every frame it sees, so an effect keeps the decoder running.
+TEST_CASE("Camera: a stage on an OMT input with no consumer keeps decoding") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {});
+  cfg.input.kind = "omt";
+  cfg.stages["color"] = {{"enabled", true}};
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  CHECK_FALSE(camera.wantsCodedOmt());
+  CHECK(camera.wantsGpuVideo());
+  camera.onCodedOmt(dummyCoded(0));
+  CHECK(camera.wantsGpuVideo());  // the stage's frames keep coming
+  camera.stop();
+}
+
+// Task 1 covers OMT only: an SRT input with no outputs keeps decoding as it does today.
+TEST_CASE("Camera: an SRT input with no consumer keeps decoding") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {});
+  cfg.input.kind = "srt";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  CHECK_FALSE(camera.wantsCodedOmt());
+  CHECK(camera.wantsGpuVideo());
+  camera.onCodedOmt(dummyCoded(0));
+  CHECK(camera.wantsGpuVideo());
+  camera.stop();
+}
+
 TEST_CASE("Packets pass-through: an SRT target takes the packets and stops the decode") {
   Rig r;
   RecordingFactory factory(

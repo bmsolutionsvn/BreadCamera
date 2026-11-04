@@ -305,6 +305,9 @@ class Camera final : public InputSink {
   std::atomic<int> codedMode_{-1};        // the source's last coded frame's omthx::Mode, -1 until one arrives
   std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
   std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
+  // An OMT input with nothing that uses its pictures (no outputs, no stage, no preview) only
+  // receives coded frames; the input thread reads this so it neither decodes nor asks again.
+  std::atomic<bool> receiveOnly_{false};
   // Phase 5c: the input's video codec once a packet says so (-1 until then), and whether an output
   // can re-mux packets, so the FfmpegInput hands them over instead of decoding them.
   std::atomic<int> packetCodec_{-1};
