@@ -1,5 +1,9 @@
 #include <doctest/doctest.h>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 #include <atomic>
 #include <set>
 #include <thread>
@@ -11,6 +15,7 @@
 #include "gpu/color_grader.h"
 #include "gpu/compositor.h"
 #include "gpu/device.h"
+#include "io/remux.h"
 #include "omthx/omthx.h"
 #include "support/fake_input.h"
 
@@ -374,6 +379,7 @@ struct RecSpec {
   bool wantsUyvy = false;
   int codedMode = -1;  // an omthx::Mode value this output takes coded frames for, or -1 for none
   uint32_t uyvyW = 0, uyvyH = 0;  // the only size it takes UYVY for; 0 = any size
+  int packetCodec = 0;            // an AVCodecID value this output takes remuxed packets for, or 0 for none
 };
 
 class RecordingOutput final : public bc::Output {
@@ -385,9 +391,17 @@ class RecordingOutput final : public bc::Output {
     return spec_.wantsUyvy && (spec_.uyvyW == 0 || (w == spec_.uyvyW && h == spec_.uyvyH));
   }
   bool takesCodedOmt(omthx::Mode mode) const override { return spec_.codedMode == static_cast<int>(mode); }
+  bool takesPackets(AVCodecID video) const override {
+    return spec_.packetCodec != 0 && video == static_cast<AVCodecID>(spec_.packetCodec);
+  }
   bool takeKeyframeRequest() override { return keyframe.exchange(false); }
   void start() override {}
   void submit(bc::OutFrame f) override {
+    if (f.packet) {
+      ++packets;
+      lastPacket = std::move(f.packet);
+      return;
+    }
     if (f.coded) {
       ++coded;
       lastCoded = std::move(f.coded);
@@ -411,6 +425,8 @@ class RecordingOutput final : public bc::Output {
   int coded = 0;
   std::shared_ptr<const omthx::CodedFrame> lastCoded;
   size_t codedSamples = 0;
+  int packets = 0;
+  std::shared_ptr<const bc::MediaPacket> lastPacket;
 
  private:
   RecSpec spec_;
@@ -563,6 +579,25 @@ std::shared_ptr<omthx::CodedFrame> dummyCoded(uint64_t seq = 0, omthx::Mode mode
   c->format = omthx::VideoFormat{64, 36, 30, 1, false};
   c->timestamp = static_cast<int64_t>(seq) * 10'000'000 / 30;
   return c;
+}
+
+std::shared_ptr<bc::MediaPacket> dummyPacket(int64_t pts = 0) {
+  auto m = std::make_shared<bc::MediaPacket>();
+  auto params = std::shared_ptr<AVCodecParameters>(avcodec_parameters_alloc(), [](AVCodecParameters* p) {
+    avcodec_parameters_free(&p);
+  });
+  params->codec_type = AVMEDIA_TYPE_VIDEO;
+  params->codec_id = AV_CODEC_ID_H264;
+  params->width = 64;
+  params->height = 36;
+  m->params = params;
+  m->timeBase = {1, 30};
+  m->video = true;
+  m->pkt = av_packet_alloc();
+  av_new_packet(m->pkt, 8);
+  m->pkt->pts = m->pkt->dts = pts;
+  m->pkt->flags |= AV_PKT_FLAG_KEY;
+  return m;
 }
 }  // namespace
 
@@ -745,6 +780,47 @@ TEST_CASE("Camera: an HX pass-through falls back to decoding when the source tur
   tick();
   CHECK(factory.made->submitted > before);  // pictures resume on the tick path
   CHECK(factory.made->coded == 2);          // and the Full frames were not passed on
+  camera.stop();
+}
+
+TEST_CASE("Packets pass-through: an SRT target takes the packets and stops the decode") {
+  Rig r;
+  RecordingFactory factory(
+      std::vector<RecSpec>{{true, false, false, -1, 0, 0, static_cast<int>(AV_CODEC_ID_H264)}});
+  bc::CameraConfig cfg = cam("a", {out("o1")});
+  cfg.input.kind = "srt";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE(factory.made != nullptr);
+  CHECK(camera.wantsPackets());
+  CHECK_FALSE(camera.wantsGpuVideo());  // the whole output set re-muxes: nothing is decoded
+  camera.onState(bc::SignalState::Live, std::nullopt);
+  auto p = dummyPacket(0);
+  camera.onPacket(p);
+  CHECK(factory.made->packets == 1);
+  CHECK(factory.made->lastPacket == p);
+
+  cfg.stages["color"] = {{"enabled", true}};
+  camera.reconfigure(cfg);
+  CHECK_FALSE(camera.wantsPackets());
+  CHECK(camera.wantsGpuVideo());
+  const int before = factory.made->packets;
+  camera.onPacket(dummyPacket(1));
+  CHECK(factory.made->packets == before);  // no longer a pass target
+
+  camera.onVideo(solidFrame(r.conv, 120));
+  const auto now = Clock::now();
+  camera.beginTick(now, r.conv.solid(64, 36, {0, 0, 0, 1}));
+  camera.endTick(now, nullptr);
+  CHECK(factory.made->submitted > 0);  // back on the picture path
+
+  // Another input kind is never re-muxed: an SDI camera with an SRT output must keep decoding.
+  cfg.stages = nlohmann::json::object();
+  cfg.input.kind = "decklink";
+  camera.reconfigure(cfg);
+  CHECK_FALSE(camera.wantsPackets());
+  CHECK(camera.wantsGpuVideo());
   camera.stop();
 }
 

@@ -150,6 +150,11 @@ class Camera final : public InputSink {
   // Submits one coded frame (and the audio queued since the last one) to the pass targets, and
   // returns true when one of them wants a keyframe.
   bool onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) override;
+  // Phase 5c: true while an output re-muxes the input's packets without decoding them.
+  bool wantsPackets() const override;
+  // One packet to every packet target. The first video packet also marks the camera Live, since a
+  // fully re-muxing camera never decodes a frame to report it.
+  void onPacket(std::shared_ptr<const MediaPacket> packet) override;
 
  private:
   struct Pending {
@@ -300,6 +305,10 @@ class Camera final : public InputSink {
   std::atomic<int> codedMode_{-1};        // the source's last coded frame's omthx::Mode, -1 until one arrives
   std::atomic<bool> wantCodedOmt_{false};  // a slot can take coded OMT frames, and no stage is on
   std::atomic<bool> wantGpuVideo_{true};   // the input must decode: a tick consumer or a preview needs it
+  // Phase 5c: the input's video codec once a packet says so (-1 until then), and whether an output
+  // can re-mux packets, so the FfmpegInput hands them over instead of decoding them.
+  std::atomic<int> packetCodec_{-1};
+  std::atomic<bool> wantPackets_{false};
   // Phase 5b: the last CPU picture's shape, its format and rate (0 = not known yet), so a tick can
   // rebuild the UYVY targets without asking the input thread.
   std::atomic<uint32_t> cpuWidth_{0}, cpuHeight_{0};

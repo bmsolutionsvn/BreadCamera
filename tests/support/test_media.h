@@ -10,6 +10,10 @@ namespace bc::test {
 void writeTestTs(const std::filesystem::path& path, int width, int height, int fps, int seconds,
                  bool withAudio = true);
 
+// MPEG-TS with a moving pattern encoded by the machine's H.264 encoder and a 1 kHz tone (mp2,
+// 48 kHz stereo), for the SRT pass-through tests. Throws when no H.264 encoder opens.
+void writeH264TestTs(const std::filesystem::path& path, int width, int height, int fps, int seconds, int gop);
+
 // Re-muxes a TS file to `url` (e.g. "srt://127.0.0.1:47901?mode=caller") in real time on
 // its own thread. Retries the connection until the receiver is up or stop() is called.
 class TsPusher {

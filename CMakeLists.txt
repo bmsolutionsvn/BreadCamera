@@ -500,6 +500,8 @@ add_executable(bc_tests
   tests/gpu_decoder_test.cpp
   # M4a Task 1
   tests/srt_output_test.cpp
+  # lean phase 5c
+  tests/srt_pass_through_test.cpp
   tests/support/test_media.cpp
   # Task 7
   tests/queued_output_test.cpp

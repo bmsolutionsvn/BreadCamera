@@ -3,7 +3,9 @@
 #include <memory>
 #include <vector>
 
+extern "C" {
 #include <libavutil/rational.h>
+}
 
 struct AVCodecParameters;
 struct AVFormatContext;

@@ -25,6 +25,8 @@ class FfmpegInput final : public Input {
   ~FfmpegInput() override;
   void start(InputSink& sink) override;
   void stop() override;
+  // Video frames decoded since start, across reconnects; 0 while the camera re-muxes the packets.
+  uint64_t videoFrames() const { return videoFrames_.load(); }
 
  private:
   void run();
@@ -42,6 +44,7 @@ class FfmpegInput final : public Input {
   std::thread thread_;
   std::atomic<bool> stopping_{false};
   std::atomic<int64_t> deadlineMs_{INT64_MAX};
+  std::atomic<uint64_t> videoFrames_{0};
   std::mutex waitMutex_;
   std::condition_variable waitCv_;
   bool wentLive_ = false;

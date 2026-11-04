@@ -14,12 +14,16 @@ class BoundedQueue {
  public:
   explicit BoundedQueue(size_t capacity) : capacity_(capacity) {}
 
-  bool push(T v) {
+  bool push(T v) { return push(std::move(v), capacity_); }
+
+  // `capacity` lets a caller that must not lose frames (a re-muxed packet) wait longer before the
+  // oldest goes; a picture keeps the small latency the tick path relies on.
+  bool push(T v, size_t capacity) {
     bool dropped = false;
     {
       std::lock_guard l(m_);
       if (closed_) return false;
-      if (q_.size() >= capacity_) {
+      if (q_.size() >= capacity) {
         q_.pop_front();
         ++dropped_;
         dropped = true;

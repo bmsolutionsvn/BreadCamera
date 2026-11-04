@@ -1,8 +1,11 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "io/queued_output.h"
+#include "io/remux.h"
 #include "io/srt_params.h"
 
 struct AVFormatContext;
@@ -12,12 +15,17 @@ struct AVFrame;
 struct SwsContext;
 
 namespace bc {
-// H.264 (hardware) + AAC in MPEG-TS over SRT (spec §4.3). No alpha.
+// H.264 (hardware) + AAC in MPEG-TS over SRT (spec §4.3). No alpha. In lean phase 5c it can
+// re-mux the input's H.264/HEVC packets without encoding them.
 class SrtOutput final : public QueuedOutput {
  public:
   explicit SrtOutput(SrtOutputOptions opts) : opts_(std::move(opts)) {}
-  ~SrtOutput() override { stop(); }
+  ~SrtOutput() override;
   bool needsCpu() const override { return true; }
+  bool takesPackets(AVCodecID video) const override {
+    return video == AV_CODEC_ID_H264 || video == AV_CODEC_ID_HEVC;
+  }
+  OutputStatus status() const override;
 
  protected:
   void open() override;
@@ -44,5 +52,7 @@ class SrtOutput final : public QueuedOutput {
   std::vector<float> audioFifo_;  // interleaved stereo
   int64_t vpts_ = 0, apts_ = 0;
   bool headerWritten_ = false;
+  std::unique_ptr<RemuxWriter> remux_;  // present while packets are re-muxed
+  std::atomic<bool> remuxing_{false};   // for status(): the picture path is not encoding
 };
 }  // namespace bc

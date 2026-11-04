@@ -8,6 +8,7 @@ extern "C" {
 }
 
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 
@@ -16,6 +17,7 @@ extern "C" {
 #include "core/backoff.h"
 #include "gpu/upload.h"
 #include "io/d3d11va.h"
+#include "io/remux.h"
 
 namespace bc {
 namespace {
@@ -61,6 +63,28 @@ CodecPtr openDecoder(AVStream* st, AVBufferRef* hw) {
   int rc = avcodec_open2(ctx.get(), codec, nullptr);
   if (rc < 0) throw std::runtime_error("cannot open decoder: " + averr(rc));
   return ctx;
+}
+
+// The stream's codec parameters as the remuxer needs them: one shared copy per stream, renewed
+// when the source's own parameters change (a new stream, a size change).
+std::shared_ptr<const AVCodecParameters> copyParams(const AVCodecParameters* src) {
+  AVCodecParameters* p = avcodec_parameters_alloc();
+  if (!p) return nullptr;
+  if (avcodec_parameters_copy(p, src) < 0) {
+    avcodec_parameters_free(&p);
+    return nullptr;
+  }
+  p->codec_tag = 0;
+  return std::shared_ptr<const AVCodecParameters>(p, [](const AVCodecParameters* x) {
+    auto* q = const_cast<AVCodecParameters*>(x);
+    avcodec_parameters_free(&q);
+  });
+}
+
+bool paramsDiffer(const AVCodecParameters* a, const AVCodecParameters* b) {
+  return a->codec_id != b->codec_id || a->codec_type != b->codec_type || a->width != b->width ||
+         a->height != b->height || a->format != b->format || a->extradata_size != b->extradata_size ||
+         (a->extradata_size > 0 && std::memcmp(a->extradata, b->extradata, static_cast<size_t>(a->extradata_size)) != 0);
 }
 }  // namespace
 
@@ -178,6 +202,10 @@ void FfmpegInput::runOnce() {
   } cleanup{this};
 
   int decodeFailures = 0;  // consecutive video packets that produced no frame
+  // Pass-through: one shared parameter copy per stream, and the video decoder's on/off state.
+  std::vector<std::shared_ptr<const AVCodecParameters>> params(fmt->nb_streams);
+  bool videoDecoding = true;
+  bool needKey = false;  // decoding just resumed: wait for a keyframe
 
   while (!stopping_) {
     deadlineMs_ = nowMs() + opts_.readTimeout.count();
@@ -190,8 +218,44 @@ void FfmpegInput::runOnce() {
       }
       throw std::runtime_error("read failed on " + safeUrl() + ": " + averr(rc));
     }
-    AVCodecContext* dec = pkt->stream_index == vi ? vdec.get() : (pkt->stream_index == ai ? adec.get() : nullptr);
-    if (dec) {
+    const bool isVideo = pkt->stream_index == vi;
+    const bool isAudio = pkt->stream_index == ai;
+
+    // The pass-through path: every video and audio packet goes on as it came, before any decode.
+    if (sink_->wantsPackets() && (isVideo || isAudio)) {
+      const size_t idx = static_cast<size_t>(pkt->stream_index);
+      if (!params[idx] || paramsDiffer(params[idx].get(), fmt->streams[idx]->codecpar))
+        params[idx] = copyParams(fmt->streams[idx]->codecpar);
+      if (params[idx]) {
+        auto mp = std::make_shared<MediaPacket>();
+        mp->params = params[idx];
+        mp->timeBase = fmt->streams[idx]->time_base;
+        mp->video = isVideo;
+        mp->pkt = av_packet_alloc();
+        if (mp->pkt && av_packet_ref(mp->pkt, pkt.get()) >= 0) sink_->onPacket(std::move(mp));
+      }
+    }
+
+    AVCodecContext* dec = isVideo ? vdec.get() : (isAudio ? adec.get() : nullptr);
+    const bool wantGpu = sink_->wantsGpuVideo();
+    // A CPU tap (the UYVY pass, or a recorder) still needs decoded pictures.
+    const bool wantPicture = wantGpu || sink_->wantsCpuVideo();
+    const bool decode = dec && (isVideo ? wantPicture : (!sink_->wantsPackets() || wantPicture));
+    if (isVideo) {
+      if (!wantPicture) {
+        videoDecoding = false;
+      } else if (!videoDecoding) {
+        avcodec_flush_buffers(vdec.get());  // the pictures stopped being needed: a clean restart
+        videoDecoding = true;
+        needKey = true;
+      }
+      if (decode && needKey && !(pkt->flags & AV_PKT_FLAG_KEY)) {
+        av_packet_unref(pkt.get());  // decoding resumed mid-GOP: nothing decodable yet
+        continue;
+      }
+      if (decode) needKey = false;
+    }
+    if (decode) {
       bool gotFrame = false;
       std::string why;
       const int sendRc = avcodec_send_packet(dec, pkt.get());
@@ -205,8 +269,12 @@ void FfmpegInput::runOnce() {
             break;
           }
           gotFrame = true;
-          if (dec == vdec.get()) emitVideo(frame.get(), vst);
-          else emitAudio(frame.get());
+          if (dec == vdec.get()) {
+            ++videoFrames_;
+            emitVideo(frame.get(), vst);
+          } else {
+            emitAudio(frame.get());
+          }
           av_frame_unref(frame.get());
         }
       }
