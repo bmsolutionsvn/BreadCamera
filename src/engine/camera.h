@@ -307,7 +307,11 @@ class Camera final : public InputSink {
   std::atomic<uint64_t> cpuRatePacked_{0};
   std::atomic<bool> wantCpuVideo_{false};
   // A signal loss must reach evaluatePass even though no input frame (and so no tick) follows.
-  mutable std::atomic<bool> passDirty_{false};
+  // The outputs keep repeating their last frame until the hold from the last input picture ends.
+  mutable std::atomic<bool> passLost_{false};
+  // An input format/size/rate change needs one tick to rebuild the targets while pass-through
+  // runs no ticks: the input thread sets this and wakes the engine.
+  mutable std::atomic<bool> passRebuild_{false};
   uint64_t passTick_ = 0;  // the UYVY pass path's frame counter, under passMutex_
   // Match state (Task 7). All tick-thread only.
   uint64_t matchTick_ = 0;                             // beginTick counter, for the every-6th cadence

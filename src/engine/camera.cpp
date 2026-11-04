@@ -367,7 +367,16 @@ void Camera::onVideo(VideoFrameIn frame) {
 }
 
 bool Camera::ready(Clock::time_point now) const {
-  if (passDirty_.exchange(false)) return true;  // a pass-through camera lost its signal: rebuild
+  if (passRebuild_.exchange(false)) return true;  // an input change needs one target rebuild
+  if (passLost_.load()) {
+    // Still holding: the outputs repeat their last frame until the hold ends.
+    const int64_t last = lastArrivalNs_.load();
+    if (last == 0) return false;
+    const auto deadline = Clock::time_point(Clock::duration(last)) + policy_.hold;
+    if (now < deadline) return false;
+    passLost_ = false;
+    return true;
+  }
   if (arrivals_.load() > taken_) return true;
   const int64_t last = lastArrivalNs_.load();
   if (!sawFrame_ || last == 0) return false;
@@ -376,6 +385,10 @@ bool Camera::ready(Clock::time_point now) const {
 }
 
 std::optional<Clock::time_point> Camera::nextRepeatAt(Clock::time_point now) const {
+  if (passLost_.load()) {
+    const int64_t lost = lastArrivalNs_.load();
+    if (lost != 0) return Clock::time_point(Clock::duration(lost)) + policy_.hold;
+  }
   const int64_t last = lastArrivalNs_.load();
   if (!sawFrame_ || last == 0) return std::nullopt;
   const auto stallAt = Clock::time_point(Clock::duration(last)) + policy_.stallAfter;
@@ -402,16 +415,20 @@ void Camera::onState(SignalState s, std::optional<ErrorInfo> e) {
   const SignalState prev = inputState_.exchange(s);
   state_.set(path("/input/state"), std::string(toString(s)));
   state_.set(path("/input/error"), errorToJson(e));
-  if (s != SignalState::Live && prev == SignalState::Live) {
+  if (s == SignalState::Live) {
+    passLost_ = false;  // the signal returned before the hold ended: no fallback tick
+    return;
+  }
+  if (prev == SignalState::Live) {
     // A pass-through camera runs no ticks, so nothing would rebuild its targets after the loss:
-    // wake the engine once for the tick that returns it to the hold/slate path.
+    // hold the outputs' last frame for policy_.hold, then wake the engine for the fallback tick.
     bool hadTargets = false;
     {
       std::lock_guard lock(passMutex_);
       hadTargets = !passTargets_.empty();
     }
     if (hadTargets) {
-      passDirty_ = true;
+      passLost_ = true;
       if (wake_) wake_();
     }
   }
@@ -449,7 +466,7 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
       const bool takes = mode >= 0 && s.out->takesCodedOmt(static_cast<omthx::Mode>(mode));
       // UYVY: the output takes this picture's size, the input is sending UYVY, and (for a card) the
       // output runs at the input's rate. A half-rate output always keeps the tick path.
-      const bool uyvyOutput = s.out->needsCpu() && s.out->wantsUyvy(guessW, guessH);
+      const bool uyvyOutput = !s.cfg.halfRate && s.out->needsCpu() && s.out->wantsUyvy(guessW, guessH);
       cpuPossible = cpuPossible || uyvyOutput;
       bool uyvy = false;
       if (live && !stages && !s.cfg.halfRate && cpuUyvy && cpuW && cpuH && s.out->wantsUyvy(cpuW, cpuH)) {
@@ -496,13 +513,38 @@ bool Camera::wantsCpuVideo() const { return wantCpuVideo_.load(); }
 
 void Camera::onCpuVideo(const CpuVideoFrame& frame) {
   if (!frame.data || frame.width == 0 || frame.height == 0) return;
+  const uint32_t prevW = cpuWidth_.load(), prevH = cpuHeight_.load();
+  const bool prevUyvy = cpuUyvy_.load();
+  const uint64_t prevRate = cpuRatePacked_.load();
+  const bool newUyvy = frame.format == CpuPixel::UYVY;
+  const uint64_t newRate = frame.rate && frame.rate->num > 0 && frame.rate->den > 0 ? packRate(*frame.rate) : 0;
   cpuWidth_ = frame.width;
   cpuHeight_ = frame.height;
-  cpuUyvy_ = frame.format == CpuPixel::UYVY;
-  if (frame.rate && frame.rate->num > 0 && frame.rate->den > 0) cpuRatePacked_ = packRate(*frame.rate);
-  if (frame.format != CpuPixel::UYVY) return;  // the tick path handles every other format
-  // The input's buffer lives only during this call: one tight copy, shared by every UYVY target.
+  cpuUyvy_ = newUyvy;
+  if (newRate) cpuRatePacked_ = newRate;
+  lastArrivalNs_.store(Clock::now().time_since_epoch().count());
+  // Pass-through runs no ticks: an input format/size/rate change must wake the engine for the
+  // one tick that rebuilds the targets, or the outputs would hold a picture of the old shape.
+  if (prevW != 0 && (prevW != frame.width || prevH != frame.height || prevUyvy != newUyvy ||
+                     (newRate && prevRate && newRate != prevRate))) {
+    passRebuild_ = true;
+    if (wake_) wake_();
+  }
+  if (!newUyvy) return;  // the tick path handles every other format
   const size_t row = static_cast<size_t>(frame.width) * 2;
+  if (frame.stride < static_cast<int>(row)) return;  // a malformed row would read past the buffer
+  // The input's buffer lives only during this call: one tight copy, shared by every UYVY target.
+  bool wanted = false;
+  {
+    std::lock_guard lock(passMutex_);
+    for (Output* out : passTargets_) {
+      if (out->needsCpu() && out->wantsUyvy(frame.width, frame.height)) {
+        wanted = true;
+        break;
+      }
+    }
+  }
+  if (!wanted) return;  // no target takes this picture: no copy at all
   auto img = std::make_shared<CpuImage>();
   img->width = frame.width;
   img->height = frame.height;
@@ -518,10 +560,11 @@ void Camera::onCpuVideo(const CpuVideoFrame& frame) {
       audio = std::make_shared<const std::vector<float>>(std::move(passAudio_));
       passAudio_.clear();
     }
+    const uint64_t tick = ++passTick_;  // one timestamp per picture, not per target
     for (Output* out : passTargets_) {
       if (!out->needsCpu() || !out->wantsUyvy(frame.width, frame.height)) continue;
       OutFrame f;
-      f.tick = ++passTick_;
+      f.tick = tick;
       const Rate rate = unpackRate(cpuRatePacked_.load());
       f.rate = rate.num > 0 ? rate : nominalRate();  // never 0/1: an output divides by num
       f.uyvy = img;
