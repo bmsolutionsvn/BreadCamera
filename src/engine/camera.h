@@ -243,6 +243,7 @@ class Camera final : public InputSink {
   mutable std::mutex statsMutex_;
   double latencyEwmaMs_ = 0;
   uint64_t freshThisSecond_ = 0;
+  uint64_t relayedThisSecond_ = 0;  // coded frames passed through since publishStatus, for fps_
   double fps_ = 0;
   FeedPhase phase_ = FeedPhase::NoSignal;
   nlohmann::json matteParams_;

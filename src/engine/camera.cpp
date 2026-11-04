@@ -267,12 +267,14 @@ void Camera::startOutput(OutputSlot& s) {
 void Camera::start() {
   state_.set(path("/name"), cfg_.name);
   state_.set(path("/phase"), toString(FeedPhase::NoSignal));
-  startInput();
   for (auto& o : cfg_.outputs) {
     outputs_.push_back({o, nullptr, std::nullopt});
     startOutput(outputs_.back());
   }
+  // Before the input thread exists: its first receiver must already be the coded one when this
+  // camera passes through, or it decodes and encodes for up to a second before reopening.
   evaluatePass(previewQuery_ && previewQuery_());
+  startInput();
   publishStatus();
 }
 
@@ -307,7 +309,7 @@ void Camera::reconfigure(const CameraConfig& next) {
   if (inputChanged) {
     if (input_) input_->stop();
     input_.reset();
-    startInput();  // the last frame stays in sync_, so outputs hold, then slate
+    inputState_ = SignalState::Connecting;  // a new session: no pass targets until it is live
   }
   for (auto& o : cfg_.outputs) {
     auto it = old.find(o.id);
@@ -328,6 +330,7 @@ void Camera::reconfigure(const CameraConfig& next) {
     state_.erase(path("/outputs/" + id));
   }
   evaluatePass(previewQuery_ && previewQuery_());
+  if (inputChanged) startInput();  // the last frame stays in sync_, so outputs hold, then slate
   publishStatus();
 }
 
@@ -402,7 +405,6 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   const bool stages = anyStageEnabled();
   const bool live = inputState_.load() == SignalState::Live;
   const int mode = codedMode_.load();  // -1 until the source's first coded frame says which
-  const bool wasFullPass = !wantGpuVideo_.load();
   bool codedPossible = false;
   std::vector<Output*> targets;
   {
@@ -430,7 +432,10 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   // output set is pass targets may stop.
   const bool full = !targets.empty() && allPass && !stages && !previewWanted;
   wantGpuVideo_ = !full;
-  if (full && !wasFullPass) {  // entering pass-through: no held picture may be repeated on the way back
+  if (full) {
+    // While the whole output set is passed through, this camera holds no picture and takes no
+    // repeats: a frame that still arrived as decoding stopped must not re-arm the tick path (it
+    // would repeat the slate until an effect comes back, and then send that stale picture).
     lastFrame_.reset();
     sawFrame_ = false;
   }
@@ -453,28 +458,33 @@ bool Camera::wantsGpuVideo() const {
 bool Camera::onCodedOmt(std::shared_ptr<const omthx::CodedFrame> frame) {
   if (!frame) return false;
   codedMode_ = static_cast<int>(frame->mode);  // the source's mode, for the next target rebuild
-  std::lock_guard lock(passMutex_);
-  std::shared_ptr<const std::vector<float>> audio;
-  if (!passAudio_.empty()) {
-    audio = std::make_shared<const std::vector<float>>(std::move(passAudio_));
-    passAudio_.clear();
-  }
   bool wanted = false;
   bool delivered = false;
-  for (Output* out : passTargets_) {
-    if (!out->takesCodedOmt(frame->mode)) continue;
-    OutFrame f;
-    f.rate = nominalRate();  // the coded frame's own timestamp paces the output
-    f.coded = frame;
-    f.audio = audio;
-    out->submit(std::move(f));
-    delivered = true;
-    if (out->takeKeyframeRequest()) wanted = true;
+  {
+    std::lock_guard lock(passMutex_);
+    std::shared_ptr<const std::vector<float>> audio;
+    if (!passAudio_.empty()) {
+      audio = std::make_shared<const std::vector<float>>(std::move(passAudio_));
+      passAudio_.clear();
+    }
+    for (Output* out : passTargets_) {
+      if (!out->takesCodedOmt(frame->mode)) continue;
+      OutFrame f;
+      f.rate = nominalRate();  // the coded frame's own timestamp paces the output
+      f.coded = frame;
+      f.audio = audio;
+      out->submit(std::move(f));
+      delivered = true;
+      if (out->takeKeyframeRequest()) wanted = true;
+    }
   }
   if (!delivered) {
     // No output takes this source's mode (or the mode just changed): the tick path needs pictures.
     // Set here, on the input thread, so the input decodes again before the camera can tick.
     wantGpuVideo_ = true;
+  } else {
+    std::lock_guard l(statsMutex_);
+    ++relayedThisSecond_;  // the camera's rate while it passes through: no tick runs
   }
   return wanted;
 }
@@ -846,8 +856,9 @@ void Camera::publishStatus() {
   bool stutter;
   {
     std::lock_guard l(statsMutex_);
-    fps_ = static_cast<double>(freshThisSecond_);
+    fps_ = static_cast<double>(freshThisSecond_ + relayedThisSecond_);
     freshThisSecond_ = 0;
+    relayedThisSecond_ = 0;
     latency = latencyEwmaMs_;
     phase = phase_;
     stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
