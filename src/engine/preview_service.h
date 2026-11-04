@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/state_store.h"
@@ -41,6 +43,8 @@ class PreviewService {
   // Runs on the tick thread and never blocks on the encoder.
   void onTick(uint64_t tick, const std::vector<FrameTap>& frames);
   void requestKeyframe(const std::string& cameraId, PreviewSize size);
+  // Tests step the clock the 33 ms cap reads, so a busy machine cannot move it.
+  void setClock(std::function<std::chrono::steady_clock::time_point()> clock) { clock_ = std::move(clock); }
   // Waits until every worker has drained the frames queued so far (tests and shutdown).
   void drain();
 
@@ -60,5 +64,8 @@ class PreviewService {
   std::vector<std::unique_ptr<EncoderSlot>> retiring_;
   std::mutex keyMutex_;
   std::set<PreviewHub::Key> keyRequests_;
+  std::function<std::chrono::steady_clock::time_point()> clock_ = [] {
+    return std::chrono::steady_clock::now();
+  };
 };
 }  // namespace bc
