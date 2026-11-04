@@ -210,10 +210,12 @@ TEST_CASE("GpuDecoder keeps memory flat" BC_REQUIRES(bc::test::Req::HardwareGpu)
     for (int i = 0; i < n; ++i) dec.decode(aus[i % aus.size()], i, [&](VideoFrameIn) { ++pictures; });
   };
   feed(10);  // warm the decoder and its surface pool
-  const uint64_t before = privateBytes();
+  const int64_t before = static_cast<int64_t>(privateBytes());
   feed(300);
-  const uint64_t grown = privateBytes() - before;
-  CHECK(grown < 64ull * 1024 * 1024);
+  // Signed: the OS may trim a few pages while the frames decode, and that is still flat, not a
+  // uint64 underflow.
+  const int64_t grown = static_cast<int64_t>(privateBytes()) - before;
+  CHECK(grown < 64ll * 1024 * 1024);
   CHECK(pictures >= 300);
 }
 
