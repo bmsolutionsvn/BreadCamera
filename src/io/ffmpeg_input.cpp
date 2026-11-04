@@ -255,7 +255,8 @@ void FfmpegInput::runOnce() {
     const bool wantGpu = sink_->wantsGpuVideo();
     // A CPU tap (the UYVY pass, or a recorder) still needs decoded pictures.
     const bool wantPicture = wantGpu || sink_->wantsCpuVideo();
-    const bool decode = dec && (isVideo ? wantPicture : (!sink_->wantsPackets() || wantPicture));
+    const bool decode =
+        dec && (isVideo ? wantPicture : (!sink_->wantsPackets() || wantPicture || sink_->wantsDecodedAudio()));
     if (isVideo) {
       if (!wantPicture) {
         videoDecoding = false;

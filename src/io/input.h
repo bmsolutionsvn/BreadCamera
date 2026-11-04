@@ -49,9 +49,10 @@ struct CpuVideoFrame {
 // (OMT's full VMX frames). Valid only during the onCodedVideo call.
 struct CodedVideoFrame {
   std::span<const uint8_t> data;
-  std::string codec;
+  std::string codec;  // "vmx", "hevc" or "h264"
   uint32_t width = 0, height = 0;
   int64_t ptsUs = 0;
+  bool keyframe = true;
 };
 
 // Called from the input's own thread.
@@ -66,6 +67,9 @@ class InputSink {
   virtual bool wantsGpuVideo() const { return true; }
   virtual void onCpuVideo(const CpuVideoFrame&) {}
   virtual bool wantsCodedVmx() const { return false; }
+  // A recorder that also takes OMT-HX (HEVC/H.264) access units as they arrive; without it an HX
+  // source reopens as decoded pictures.
+  virtual bool wantsCodedHx() const { return false; }
   virtual void onCodedVideo(const CodedVideoFrame&) {}
   // The pass-through path (OMT input): true when the camera wants coded OMT frames instead of
   // pictures. onCodedOmt runs on the input thread and returns true when a downstream receiver
@@ -75,6 +79,8 @@ class InputSink {
   // The SRT pass-through path: true when the camera wants the input's coded packets (video and
   // audio) without decoding them. onPacket runs on the input thread.
   virtual bool wantsPackets() const { return false; }
+  // A packet sink that also wants the audio decoded to float (BreadReplay); a remux sink does not.
+  virtual bool wantsDecodedAudio() const { return false; }
   virtual void onPacket(std::shared_ptr<const MediaPacket>) {}
 };
 

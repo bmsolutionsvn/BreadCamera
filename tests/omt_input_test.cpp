@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -315,6 +316,81 @@ TEST_CASE("OmtInput: a coded sink gets VMX bytes" BC_REQUIRES(bc::test::Req::Omt
   CHECK(sink.coded.load() >= 20);
   CHECK(sink.wrong.load() == 0);
   CHECK(sink.pictures.load() == 0);
+}
+
+namespace {
+// A recorder tap that takes coded OMT-HX access units as they arrive, and VMX frames too.
+struct CodedHxSink : bc::InputSink {
+  std::atomic<int> coded{0};
+  std::atomic<int> wrong{0};
+  std::atomic<int> pictures{0};
+  std::mutex m;
+  std::vector<int64_t> keyTimes;
+
+  void onVideo(bc::VideoFrameIn) override { ++pictures; }
+  void onAudio(bc::AudioBlock) override {}
+  void onState(bc::SignalState, std::optional<bc::ErrorInfo>) override {}
+  bool wantsCodedVmx() const override { return true; }
+  bool wantsCodedHx() const override { return true; }
+  bool wantsGpuVideo() const override { return false; }
+  bool wantsCpuVideo() const override { return false; }
+  void onCodedVideo(const bc::CodedVideoFrame& f) override {
+    const int n = ++coded;
+    if (f.codec != "hevc" || f.data.empty() || f.width != 320 || f.height != 180) ++wrong;
+    if (n == 1 && !f.keyframe) ++wrong;
+    if (f.keyframe) {
+      std::lock_guard lock(m);
+      keyTimes.push_back(f.ptsUs);
+    }
+  }
+};
+}  // namespace
+
+TEST_CASE("OmtInput: a coded HX sink gets HEVC access units and keyframes" BC_REQUIRES(bc::test::Req::Omt)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  if (!gpu) return;
+  bc::TexturePool pool{*gpu};
+
+  const std::string name = "BreadCamera OMT coded HX " + std::to_string(GetCurrentProcessId());
+  omthx::Sender sender(name, omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+
+  omthx::VideoFormat format;
+  format.width = 320;
+  format.height = 180;
+  format.fpsN = 30;
+  format.fpsD = 1;
+  const std::vector<uint8_t> bgra(static_cast<size_t>(320) * 180 * 4, 100);
+
+  std::atomic<bool> run{true};
+  std::thread feeder([&] {
+    int64_t timestamp = 0;
+    while (run) {
+      sender.sendVideo(format, bgra, false, timestamp);
+      timestamp += 333333;  // 30 fps in 100 ns units
+      std::this_thread::sleep_for(33ms);
+    }
+  });
+
+  CodedHxSink sink;
+  bc::OmtInput input(*gpu, pool, sender.address());
+  input.start(sink);
+  for (int i = 0; i < 100 && sink.coded.load() < 30; ++i) std::this_thread::sleep_for(50ms);
+  input.stop();
+  run = false;
+  if (feeder.joinable()) feeder.join();
+
+  CHECK(sink.coded.load() >= 30);
+  CHECK(sink.wrong.load() == 0);
+  CHECK(sink.pictures.load() == 0);
+
+  std::vector<int64_t> keys;
+  {
+    std::lock_guard lock(sink.m);
+    keys = sink.keyTimes;
+  }
+  REQUIRE(keys.size() >= 2);
+  const int64_t span = keys.back() - keys.front();
+  CHECK(span <= static_cast<int64_t>(keys.size() - 1) * 600'000);  // a keyframe at least every 600 ms
 }
 
 namespace {
