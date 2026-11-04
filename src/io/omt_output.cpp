@@ -26,53 +26,62 @@ void OmthOutput::refuse(const std::string& why) {
 void OmthOutput::deliver(const OutFrame& f) {
   // A tick the queue dropped needs no keyframe: the encoder never saw it, and omthx numbers the coded
   // frames, so the receiver plays on.
-  const int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
-  bool sentVideo = false;
-  // The GPU path's size check runs on the frame alone, so a refused path is reported even while nobody
-  // pulls and the camera makes no picture: a receiver that connects then reads back instead.
-  const bool gpu = !f.hasAlpha && gpuPath();
-  const uint32_t width = f.rgba8 ? f.rgba8->width : f.linear ? f.linear->width : 0;
-  const uint32_t height = f.rgba8 ? f.rgba8->height : f.linear ? f.linear->height : 0;
-  if (gpu && (width % 2 != 0 || height % 2 != 0)) {
-    refuse("the frame is " + std::to_string(width) + "x" + std::to_string(height) +
-           " and the GPU encoder needs even sizes");
-  } else if (gpu && f.rgba8) {
-    // The GPU path takes no alpha, so a frame with it stays on the CPU path as it always has.
-    format_.width = static_cast<int>(f.rgba8->width);
-    format_.height = static_cast<int>(f.rgba8->height);
-    format_.fpsN = static_cast<int>(f.rate.num);
-    format_.fpsD = static_cast<int>(f.rate.den);
-    format_.alpha = false;
-    try {
-      // No GpuDevice::lock() here: an encode can take milliseconds and would stall the tick. The
-      // device's immediate context is multithread-protected (omthx ensures it too).
-      send_->sendVideoD3D11(format_, f.rgba8->tex.Get(), ts);
-      sentVideo = true;
-    } catch (const std::exception& e) {
-      refuse(e.what());
-      return;  // this frame is dropped; the next one comes through memory
+  int64_t ts = static_cast<int64_t>(f.tick) * 10'000'000LL * f.rate.den / f.rate.num;
+  if (f.coded) {
+    // Pass-through: the source's own coded frame, sent on untouched. A receiver asking for a keyframe
+    // (or losing one on the queue) is for the source to answer.
+    send_->sendCoded(*f.coded);
+    coded_ = true;
+    keyframe_ = keyframe_.load() || send_->keyframeRequested() || consumeDrop();
+    ts = f.coded->timestamp;  // the frame's own time, and its audio's
+  } else {
+    bool sentVideo = false;
+    // The GPU path's size check runs on the frame alone, so a refused path is reported even while nobody
+    // pulls and the camera makes no picture: a receiver that connects then reads back instead.
+    const bool gpu = !f.hasAlpha && gpuPath();
+    const uint32_t width = f.rgba8 ? f.rgba8->width : f.linear ? f.linear->width : 0;
+    const uint32_t height = f.rgba8 ? f.rgba8->height : f.linear ? f.linear->height : 0;
+    if (gpu && (width % 2 != 0 || height % 2 != 0)) {
+      refuse("the frame is " + std::to_string(width) + "x" + std::to_string(height) +
+             " and the GPU encoder needs even sizes");
+    } else if (gpu && f.rgba8) {
+      // The GPU path takes no alpha, so a frame with it stays on the CPU path as it always has.
+      format_.width = static_cast<int>(f.rgba8->width);
+      format_.height = static_cast<int>(f.rgba8->height);
+      format_.fpsN = static_cast<int>(f.rate.num);
+      format_.fpsD = static_cast<int>(f.rate.den);
+      format_.alpha = false;
+      try {
+        // No GpuDevice::lock() here: an encode can take milliseconds and would stall the tick. The
+        // device's immediate context is multithread-protected (omthx ensures it too).
+        send_->sendVideoD3D11(format_, f.rgba8->tex.Get(), ts);
+        sentVideo = true;
+      } catch (const std::exception& e) {
+        refuse(e.what());
+        return;  // this frame is dropped; the next one comes through memory
+      }
     }
-  }
 
-  if (!sentVideo && !f.hasAlpha && f.uyvy && !f.uyvy->bgra.empty()) {
-    // The camera's UYVY readback, sent as it is: libomt takes it with no conversion (the wire stays VMX).
-    format_.width = static_cast<int>(f.uyvy->width);
-    format_.height = static_cast<int>(f.uyvy->height);
-    format_.fpsN = static_cast<int>(f.rate.num);
-    format_.fpsD = static_cast<int>(f.rate.den);
-    format_.alpha = false;
-    send_->sendVideoUyvy(format_, f.uyvy->bgra.data(), format_.width * 2, nullptr, 0, false, ts);
-    sentVideo = true;
-  }
+    if (!sentVideo && !f.hasAlpha && f.uyvy && !f.uyvy->bgra.empty()) {
+      // The camera's UYVY readback, sent as it is: libomt takes it with no conversion (the wire stays VMX).
+      format_.width = static_cast<int>(f.uyvy->width);
+      format_.height = static_cast<int>(f.uyvy->height);
+      format_.fpsN = static_cast<int>(f.rate.num);
+      format_.fpsD = static_cast<int>(f.rate.den);
+      format_.alpha = false;
+      send_->sendVideoUyvy(format_, f.uyvy->bgra.data(), format_.width * 2, nullptr, 0, false, ts);
+      sentVideo = true;
+    }
 
-  if (!sentVideo && f.bgra && !f.bgra->bgra.empty()) {
-    format_.width = static_cast<int>(f.bgra->width);
-    format_.height = static_cast<int>(f.bgra->height);
-    format_.fpsN = static_cast<int>(f.rate.num);
-    format_.fpsD = static_cast<int>(f.rate.den);
-    format_.alpha = f.hasAlpha;
-    // BreadCamera's BGRA is straight, so premultiplied == false.
-    send_->sendVideo(format_, f.bgra->bgra, false, ts);
+    if (!sentVideo && f.bgra && !f.bgra->bgra.empty()) {
+      format_.width = static_cast<int>(f.bgra->width);
+      format_.height = static_cast<int>(f.bgra->height);
+      format_.fpsN = static_cast<int>(f.rate.num);
+      format_.fpsD = static_cast<int>(f.rate.den);
+      format_.alpha = f.hasAlpha;
+      // BreadCamera's BGRA is straight, so premultiplied == false.
+      send_->sendVideo(format_, f.bgra->bgra, false, ts);
+    }
   }
 
   if (f.audio && !f.audio->empty()) {
@@ -104,6 +113,8 @@ OutputStatus OmthOutput::status() const {
 
 void OmthOutput::close() noexcept {
   receivers_ = false;
+  keyframe_ = false;
+  coded_ = false;
   send_.reset();
   std::lock_guard lock(addrMutex_);
   address_.clear();

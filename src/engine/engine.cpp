@@ -76,6 +76,9 @@ void Engine::apply(const Show& show) {
         existing.erase(it);
       } else {
         auto cam = std::make_unique<Camera>(cfg, factory_, tools_, state_, policy());
+        const std::string id = cfg.id;
+        // The input asks the same question the tick does: decode while a preview is visible.
+        cam->setPreviewQuery([this, id] { return previewWanted_ && previewWanted_(id); });
         cam->setWake([this] {
           wake_.store(true);
           wakeCv_.notify_all();

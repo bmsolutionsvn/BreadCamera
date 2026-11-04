@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -9,6 +10,10 @@
 #include "core/signal_state.h"
 #include "gpu/converter.h"
 #include "gpu/texture_pool.h"
+
+namespace omthx {
+struct CodedFrame;
+}  // namespace omthx
 
 namespace bc {
 struct VideoFrameIn {
@@ -61,6 +66,11 @@ class InputSink {
   virtual void onCpuVideo(const CpuVideoFrame&) {}
   virtual bool wantsCodedVmx() const { return false; }
   virtual void onCodedVideo(const CodedVideoFrame&) {}
+  // The pass-through path (OMT input): true when the camera wants coded OMT frames instead of
+  // pictures. onCodedOmt runs on the input thread and returns true when a downstream receiver
+  // wants a keyframe, so the input asks its source for one.
+  virtual bool wantsCodedOmt() const { return false; }
+  virtual bool onCodedOmt(std::shared_ptr<const omthx::CodedFrame>) { return false; }
 };
 
 // spec §4.1: every adapter runs its own thread; start()/stop() never block for long.

@@ -521,6 +521,76 @@ TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc:
   out.stop();
   CHECK(program);
 }
+
+TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding" BC_REQUIRES(bc::test::Req::Omt)) {
+  const std::string name = "BreadCamera OMT coded " + std::to_string(GetCurrentProcessId());
+  bc::OmthOutput out(name, omthx::Mode::Hx, omthx::Codec::Hevc, /*keyed=*/false);
+  CHECK(out.takesCodedOmt(omthx::Mode::Hx));
+  CHECK_FALSE(out.takesCodedOmt(omthx::Mode::Full));
+  bc::OmthOutput full(name + " plain", omthx::Mode::Full, omthx::Codec::Hevc, /*keyed=*/false);
+  CHECK(full.takesCodedOmt(omthx::Mode::Full));
+  CHECK_FALSE(full.takesCodedOmt(omthx::Mode::Hx));
+
+  const omthx::VideoFormat fmt{640, 360, 60, 1, false};
+  omthx::Sender source("omthx-test-coded-in", omthx::Mode::Hx, omthx::Quality::Medium, omthx::Codec::Hevc);
+  omthx::Receiver coded(source.address(), omthx::PixelFormat::Coded);
+  out.start();
+  const std::string address = waitForAddress(out);
+  REQUIRE_FALSE(address.empty());
+
+  std::vector<uint8_t> bgra(static_cast<size_t>(fmt.width) * fmt.height * 4);
+  for (size_t i = 0; i < bgra.size(); i += 4) {
+    bgra[i + 0] = 20;   // B
+    bgra[i + 1] = 40;   // G
+    bgra[i + 2] = 230;  // R
+    bgra[i + 3] = 255;
+  }
+  bool got = false;
+  omthx::VideoFrame vf;
+  {
+    omthx::Receiver rx(address);
+    const bc::Rate rate{60, 1};
+    for (int i = 0; i < 400 && !got; ++i) {
+      source.sendVideo(fmt, bgra, false, static_cast<int64_t>(i) * 10'000'000 / 60);
+      if (omthx::CodedFrame c; coded.receiveCoded(c, 20)) {
+        bc::OutFrame f;
+        f.rate = rate;
+        f.coded = std::make_shared<omthx::CodedFrame>(c);
+        out.submit(std::move(f));
+      }
+      if (out.takeKeyframeRequest()) coded.requestKeyframe();  // the relay asks its source, like the camera
+      if (rx.receiveVideo(vf, 10) && vf.format.width == fmt.width && vf.format.height == fmt.height) got = true;
+      std::this_thread::sleep_for(5ms);
+    }
+  }
+  const bool codedSent = out.sentCoded();  // the frames went out as they came, with no encode
+  out.stop();
+  REQUIRE(got);
+  CHECK(codedSent);
+  const auto bgr = centreBgr(vf);
+  CHECK(std::abs(bgr[2] - 230) <= 8);  // R
+  CHECK(std::abs(bgr[1] - 40) <= 8);   // G
+  CHECK(std::abs(bgr[0] - 20) <= 8);   // B
+}
+TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe" BC_REQUIRES(bc::test::Req::Omt)) {
+  bc::OmthOutput out("bc-coded-drop", omthx::Mode::Full, omthx::Codec::Hevc, /*keyed=*/false);
+  auto c = std::make_shared<omthx::CodedFrame>();
+  c->mode = omthx::Mode::Full;
+  c->format = omthx::VideoFormat{64, 36, 60, 1, false};
+  c->data.assign(64, 0);  // never encoded: nobody is connected, so the sender drops it
+  bc::OutFrame f;
+  f.coded = c;
+  for (int i = 0; i < 5; ++i) out.submit(f);  // the queue holds 2: the rest drop
+  out.start();
+  bool asked = false;
+  for (int i = 0; i < 40 && !asked; ++i) {
+    asked = out.takeKeyframeRequest();
+    if (!asked) std::this_thread::sleep_for(50ms);
+  }
+  out.stop();
+  CHECK(asked);  // a lost coded frame breaks the receiver's picture: the source is asked for a keyframe
+}
+
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
@@ -532,4 +602,6 @@ TEST_CASE("OmthOutput: an HX output sends the GPU frame") {}
 TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path") {}
 TEST_CASE("OmthOutput: plain OMT takes UYVY") {}
 TEST_CASE("OmthOutput: plain OMT sends a UYVY frame") {}
+TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding") {}
+TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe") {}
 #endif
