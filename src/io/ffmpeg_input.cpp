@@ -242,6 +242,14 @@ void FfmpegInput::runOnce() {
       if (!params[idx] || paramsDiffer(params[idx].get(), fmt->streams[idx]->codecpar))
         params[idx] = copyParams(fmt->streams[idx]->codecpar);
       if (params[idx]) {
+        // Pace video by its own clock, as the decoded path does: a burst after a reconnect must
+        // not collapse the recording's timestamps.
+        if (isVideo && opts_.realtime) {
+          const int64_t dts = pkt->dts != AV_NOPTS_VALUE ? pkt->dts : pkt->pts;
+          if (dts != AV_NOPTS_VALUE) {
+            pace(av_rescale_q(dts, fmt->streams[idx]->time_base, {1, 1'000'000}));
+          }
+        }
         auto mp = std::make_shared<MediaPacket>();
         mp->params = params[idx];
         mp->timeBase = fmt->streams[idx]->time_base;
