@@ -26,9 +26,14 @@ void OmtInput::stop() {
 void OmtInput::run() {
   sink_->onState(SignalState::Connecting, std::nullopt);
   std::unique_ptr<omthx::Receiver> receiver;
-  // A recorder takes full OMT (VMX) frames as they are; an Hx source cannot be passed through,
-  // so it reopens as decoded pictures (the same path a Camera sink uses).
+  // A recorder takes full OMT (VMX) frames as they are. An Hx source reopens as decoded pictures
+  // (the same path a Camera sink uses) unless the sink also wants coded HX access units.
   bool codedVmx = sink_->wantsCodedVmx();
+  // A recorder that takes HX access units as they arrive keeps the Coded receiver for an Hx
+  // source instead of reopening it as pictures.
+  const bool codedHx = codedVmx && sink_->wantsCodedHx();
+  bool hxMode = false;  // the source on the coded receiver is Hx, not plain OMT
+  auto nextKeyRequest = Clock::now() + std::chrono::milliseconds(500);
   // A camera with no enabled stage passes coded OMT frames on itself and asks for pictures only
   // while a preview or another output needs one. That answer changes (an effect comes on), so it is
   // re-read once a second and the receiver is reopened when it does.
@@ -82,9 +87,14 @@ void OmtInput::run() {
 
     try {
       if (codedVmx) {
+        if (codedHx && hxMode && Clock::now() >= nextKeyRequest) {
+          receiver->requestKeyframe();  // a recorded HX source: a keyframe at least every 0.5 s
+          nextKeyRequest = Clock::now() + std::chrono::milliseconds(500);
+        }
         omthx::CodedFrame c;
         if (receiver->receiveCoded(c, 20)) {
-          if (c.mode != omthx::Mode::Full) {
+          hxMode = c.mode != omthx::Mode::Full;
+          if (hxMode && !codedHx) {
             codedVmx = false;  // Hx (HEVC/H.264): reopen with the picture receiver
             receiver.reset();
             live = false;
@@ -92,15 +102,20 @@ void OmtInput::run() {
           }
           const uint32_t w = static_cast<uint32_t>(c.format.width);
           const uint32_t h = static_cast<uint32_t>(c.format.height);
-          if (w == 0 || h == 0 || c.data.empty()) {
+          // HX with alpha: the last alphaBytes bytes are the VMX alpha; record the fill only.
+          const size_t fillBytes = c.mode == omthx::Mode::Full
+                                       ? c.data.size()
+                                       : (c.alphaBytes > c.data.size() ? 0 : c.data.size() - c.alphaBytes);
+          if (w == 0 || h == 0 || fillBytes == 0) {
             // nothing to pass on
           } else {
             CodedVideoFrame f;
-            f.data = c.data;
-            f.codec = "vmx";
+            f.data = std::span<const uint8_t>(c.data.data(), fillBytes);
+            f.codec = c.mode == omthx::Mode::Full ? "vmx" : (c.codec == omthx::Codec::H264 ? "h264" : "hevc");
             f.width = w;
             f.height = h;
             f.ptsUs = c.timestamp / 10;  // omthx timestamps are 100 ns units
+            f.keyframe = c.keyframe;
             lastVideo = Clock::now();
             if (!live) {
               live = true;
