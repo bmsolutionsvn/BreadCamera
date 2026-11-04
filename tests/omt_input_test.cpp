@@ -793,6 +793,8 @@ TEST_CASE("OMT pass-through: a camera with no consumer only receives"
   CHECK(rig.engine.stats().cameras.at("a").fps > 0);     // the coded frames are its rate
   const auto snap = rig.state.snapshot();
   CHECK(snap.at(nlohmann::json::json_pointer("/cameras/a/input/state")) == "live");
+  CHECK(snap.at(nlohmann::json::json_pointer("/cameras/a/phase")) == bc::toString(bc::FeedPhase::Live));
+  CHECK(snap.at(nlohmann::json::json_pointer("/cameras/a/input/health")) == "receiving");
 
   preview = true;  // the preview comes on: pictures resume within a second
   bool grew = false;

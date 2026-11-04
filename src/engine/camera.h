@@ -106,7 +106,12 @@ class Camera final : public InputSink {
   std::optional<SkinStats> matchOutputStats() const { return matchOutput_; }
   void setMatchReference(std::optional<SkinStats> ref, bool refHasPicture);
   // True while another camera matches this one: it measures its output even out of Match mode.
-  void setMatchedBy(bool matched) { matchedBy_ = matched; }
+  void setMatchedBy(bool matched) {
+    if (matchedBy_ == matched) return;
+    matchedBy_ = matched;
+    // Becoming a reference makes the pictures wanted again: decode before any tick can run.
+    if (matched) evaluatePass(previewQuery_ && previewQuery_());
+  }
   // Second half: rawAlpha (null = no matte this tick) → stages → readback → fan-out.
   // previewWanted forces the one readback even when no output needsCpu(), so a visible preview
   // (D5) still gets the image through the frame tap.

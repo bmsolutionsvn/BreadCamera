@@ -904,6 +904,32 @@ TEST_CASE("Camera: an SRT input with no consumer keeps decoding") {
   camera.stop();
 }
 
+// A camera another one matches is a consumer even with no outputs: it must decode and measure.
+TEST_CASE("Camera: a match reference with no consumer keeps decoding") {
+  Rig r;
+  RecordingFactory factory(/*needsCpu=*/false);
+  bc::CameraConfig cfg = cam("a", {});
+  cfg.input.kind = "omt";
+  bc::Camera camera(cfg, factory, bc::GpuTools{r.conv, r.comp, r.grader}, r.state, bc::SyncPolicy{});
+  camera.setPreviewQuery([] { return false; });
+  camera.start();
+  REQUIRE_FALSE(camera.wantsGpuVideo());
+
+  camera.setMatchedBy(true);
+  CHECK(camera.wantsGpuVideo());  // the reference decodes again, on the input's next check
+  CHECK_FALSE(camera.wantsCodedOmt());
+
+  camera.setMatchedBy(false);
+  auto slate = r.conv.solid(64, 36, {0, 0, 0, 1});
+  camera.onVideo(solidFrame(r.conv, 120));
+  const auto now = Clock::now();
+  camera.beginTick(now, slate);
+  camera.endTick(now, nullptr);
+  CHECK_FALSE(camera.wantsGpuVideo());  // nobody matches it now: receive-only again
+  CHECK(camera.wantsCodedOmt());
+  camera.stop();
+}
+
 TEST_CASE("Packets pass-through: an SRT target takes the packets and stops the decode") {
   Rig r;
   RecordingFactory factory(

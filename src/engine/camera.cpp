@@ -454,8 +454,10 @@ std::vector<Output*> Camera::evaluatePass(bool previewWanted) {
   const uint32_t guessW = cpuW ? cpuW : lastSize_.w, guessH = cpuH ? cpuH : lastSize_.h;
   const bool sdiInput = sdiOutputKind(cfg_.input.kind);
   const bool srtInput = cfg_.input.kind == "srt";  // the only FfmpegInput kind the show builds
-  // Nothing uses an OMT input's pictures (no outputs, no stage, no preview): it only receives.
-  const bool noConsumer = cfg_.input.kind == "omt" && outputs_.empty() && !stages && !previewWanted;
+  // Nothing uses an OMT input's pictures (no outputs, no stage, no preview, and it is not another
+  // camera's Match reference): it only receives.
+  const bool noConsumer =
+      cfg_.input.kind == "omt" && outputs_.empty() && !stages && !previewWanted && !matchedBy_;
   const int codec = packetCodec_.load();
   bool codedPossible = false;
   bool cpuPossible = false;
@@ -1058,6 +1060,8 @@ void Camera::publishStatus() {
     relayedThisSecond_ = 0;
     latency = latencyEwmaMs_;
     phase = phase_;
+    // A receive-only camera runs no ticks: the coded frames it receives are its whole live signal.
+    if (receiveOnly_.load() && inputState_.load() == SignalState::Live) phase = FeedPhase::Live;
     stutter = lastStutter_.time_since_epoch().count() != 0 && Clock::now() - lastStutter_ < std::chrono::seconds(10);
   }
   state_.set(path("/phase"), toString(phase));
