@@ -34,6 +34,20 @@
 #endif
 
 namespace bc {
+namespace {
+#if BC_WITH_OMT
+omthx::Quality qualityFromParam(const nlohmann::json& params) {
+  if (!params.contains("quality")) return omthx::Quality::Medium;
+  if (!params["quality"].is_string()) throw std::invalid_argument("OMT quality must be text");
+  const auto q = params["quality"].get<std::string>();
+  if (q == "low") return omthx::Quality::Low;
+  if (q == "high") return omthx::Quality::High;
+  if (q == "medium") return omthx::Quality::Medium;
+  throw std::invalid_argument("OMT quality must be 'low', 'medium' or 'high'");
+}
+#endif
+}  // namespace
+
 std::unique_ptr<Input> DefaultAdapterFactory::makeInput(const InputConfig& cfg) {
   if (cfg.kind == "srt") return std::make_unique<FfmpegInput>(gpu_, pool_, srtOptionsFromParams(cfg.params));
   if (cfg.kind == "ndi") {
@@ -134,12 +148,16 @@ std::unique_ptr<Output> DefaultAdapterFactory::makeOutput(const OutputConfig& cf
     // non-string codec is rejected here too; the value is ignored for plain OMT (full).
     if (cfg.params.contains("codec") && !cfg.params["codec"].is_string())
       throw std::invalid_argument("OMT codec must be text");
+    // Same rule again: the quality applies to both modes, and a hand-edited non-string is refused.
+    if (cfg.params.contains("quality") && !cfg.params["quality"].is_string())
+      throw std::invalid_argument("OMT quality must be text");
 #if BC_WITH_OMT
     const std::string mode = cfg.params.value("mode", std::string("hx"));
     std::string name = cfg.params.value("name", std::string("BreadCamera - ") + cam.name);
     if (name.empty() || utf8Length(name) > 200) throw std::invalid_argument("OMT name must be 1 to 200 characters");
     const auto codec = cfg.params.value("codec", std::string("hevc")) == "h264" ? omthx::Codec::H264 : omthx::Codec::Hevc;
-    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec, cfg.keyed);
+    return std::make_unique<OmthOutput>(name, mode == "full" ? omthx::Mode::Full : omthx::Mode::Hx, codec, cfg.keyed,
+                                        qualityFromParam(cfg.params));
 #else
     (void)cam;
     throw std::invalid_argument("OMT support is not built (BC_WITH_OMT=OFF)");

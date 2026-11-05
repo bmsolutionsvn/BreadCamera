@@ -480,6 +480,17 @@ TEST_CASE("output kind omt validates its params") {
       bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"codec", "h264"}}}));
 }
 
+TEST_CASE("validateOutput: OMT quality") {
+  for (const char* q : {"low", "medium", "high"})
+    CHECK_NOTHROW(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}, {"quality", q}}}));
+  CHECK_NOTHROW(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "full"}, {"quality", "low"}}}));
+  CHECK_NOTHROW(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"mode", "hx"}}}));
+  CHECK_THROWS_WITH_AS(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"quality", "ultra"}}}),
+                       "OMT quality must be 'low', 'medium' or 'high'", std::invalid_argument);
+  CHECK_THROWS_WITH_AS(bc::validateOutput(bc::OutputConfig{.id = "o1", .kind = "omt", .params = json{{"quality", 2}}}),
+                       "OMT quality must be text", std::invalid_argument);
+}
+
 TEST_CASE("CommandRouter: a capture device cannot belong to two cameras") {
   FakeFx fx;
   bc::CommandRouter r({}, fx);

@@ -40,6 +40,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
   const [omtMode, setOmtMode] = useState<'hx' | 'full'>('hx');
   const [omtCodec, setOmtCodec] = useState<'hevc' | 'h264'>('hevc');
+  const [omtQuality, setOmtQuality] = useState<'low' | 'medium' | 'high'>('medium');
   const [omtName, setOmtName] = useState(`BreadCamera - ${camera.name}`);
   const [srtMode, setSrtMode] = useState<'caller' | 'listener'>('caller');
   const [srtHost, setSrtHost] = useState('');
@@ -99,7 +100,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   async function submit() {
     let params: Record<string, unknown>;
     if (kind === 'ndi') params = { name: ndiName };
-    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, name: omtName } : { mode: omtMode, name: omtName };
+    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, quality: omtQuality, name: omtName } : { mode: omtMode, quality: omtQuality, name: omtName };
     else if (kind === 'srt') {
       params = { mode: srtMode, port: srtPortNum, latencyMs: Number(srtLatency) || 120, bitrateKbps: Number(bitrate) || 8000 };
       if (srtMode === 'caller' && srtHost) params.host = srtHost;
@@ -168,6 +169,15 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
               )}
             </Prop>
           )}
+          <Prop label="Quality" hint={omtMode === 'hx' ? (omtCodec === 'h264' ? '1080p60: about 21 / 42 / 70 Mbps (Low / Medium / High)' : '1080p60: about 15 / 30 / 50 Mbps (Low / Medium / High)') : "libomt's own quality level; the wire stays standard OMT"}>
+            {(id) => (
+              <select id={id} className="ctl" value={omtQuality} onChange={(e) => setOmtQuality(e.target.value as 'low' | 'medium' | 'high')}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            )}
+          </Prop>
           <Prop label="Name">
             {(id) => <input id={id} className="ctl" value={omtName} onChange={(e) => setOmtName(e.target.value)} />}
           </Prop>

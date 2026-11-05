@@ -67,6 +67,52 @@ test('a plain OMT output hides the codec and sends no codec', () => {
   expect(add.args.output.params.codec).toBeUndefined();
 });
 
+test('an OMT output offers a quality and sends the one chosen', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  expect((screen.getByLabelText('Quality') as HTMLSelectElement).value).toBe('medium');
+  fireEvent.change(screen.getByLabelText('Quality'), { target: { value: 'low' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params).toMatchObject({ mode: 'hx', codec: 'hevc', quality: 'low' });
+});
+
+test('a plain OMT output keeps the chosen quality', () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  fireEvent.change(screen.getByLabelText('Quality'), { target: { value: 'low' } });
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'full' } });
+  expect((screen.getByLabelText('Quality') as HTMLSelectElement).value).toBe('low');
+  fireEvent.click(screen.getByRole('button', { name: 'Add output' }));
+  const add = FakeWs.last.sent.map((s) => JSON.parse(s)).find((r) => r.cmd === 'addOutput');
+  expect(add.args.output.params).toMatchObject({ mode: 'full', quality: 'low' });
+  expect(add.args.output.params.codec).toBeUndefined();
+});
+
+test("the quality hint gives the chosen encoder's bitrates, not HEVC's", () => {
+  FakeWs.all = [];
+  const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);
+  c.connect();
+  FakeWs.last.open();
+  render(<AddOutputDialog client={c} camera={{ id: 'a', name: 'A' }} n={1} onClose={() => {}} />);
+  fireEvent.change(screen.getByLabelText('Output type'), { target: { value: 'omt' } });
+  expect(screen.getByText('1080p60: about 15 / 30 / 50 Mbps (Low / Medium / High)')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Codec'), { target: { value: 'h264' } });
+  expect(screen.getByText('1080p60: about 21 / 42 / 70 Mbps (Low / Medium / High)')).toBeTruthy();
+  expect(screen.queryByText('1080p60: about 15 / 30 / 50 Mbps (Low / Medium / High)')).toBeNull();
+  fireEvent.change(screen.getByLabelText('Mode'), { target: { value: 'full' } });
+  expect(screen.getByText("libomt's own quality level; the wire stays standard OMT")).toBeTruthy();
+  expect(screen.queryByText('1080p60: about 21 / 42 / 70 Mbps (Low / Medium / High)')).toBeNull();
+});
+
 test('a virtual camera output picks the first free number and has no format choice', () => {
   FakeWs.all = [];
   const c = new EngineClient('ws://x', (u) => new FakeWs(u) as unknown as WebSocket);

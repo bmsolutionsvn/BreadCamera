@@ -842,4 +842,36 @@ TEST_CASE("OMT pass-through: an output added to an idle camera gets pictures"
   rig.engine.stop();
 }
 
+TEST_CASE("AdapterFactory: OMT quality" BC_REQUIRES(bc::test::Req::Omt)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool{*gpu};
+  bc::DefaultAdapterFactory factory{*gpu, pool};
+  bc::CameraConfig cam;
+  cam.id = "a";
+  cam.name = "Cam a";
+  bc::OutputConfig o;
+  o.id = "o1";
+  o.kind = "omt";
+
+  o.params = {{"mode", "hx"}, {"quality", "high"}};
+  auto high = factory.makeOutput(o, cam, {60, 1});
+  CHECK(dynamic_cast<bc::OmthOutput*>(high.get())->quality() == omthx::Quality::High);
+
+  o.params = {{"mode", "hx"}};
+  auto medium = factory.makeOutput(o, cam, {60, 1});
+  CHECK(dynamic_cast<bc::OmthOutput*>(medium.get())->quality() == omthx::Quality::Medium);
+
+  // Plain OMT (full) uses the quality too, unlike the codec.
+  o.params = {{"mode", "full"}, {"quality", "low"}};
+  auto full = factory.makeOutput(o, cam, {60, 1});
+  CHECK(dynamic_cast<bc::OmthOutput*>(full.get())->quality() == omthx::Quality::Low);
+
+  o.params = {{"mode", "hx"}, {"quality", 2}};
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, cam, {60, 1}), "OMT quality must be text", std::invalid_argument);
+
+  o.params = {{"mode", "full"}, {"quality", "ultra"}};
+  CHECK_THROWS_WITH_AS(factory.makeOutput(o, cam, {60, 1}),
+                       "OMT quality must be 'low', 'medium' or 'high'", std::invalid_argument);
+}
+
 #endif
