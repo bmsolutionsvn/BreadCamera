@@ -169,12 +169,12 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
               )}
             </Prop>
           )}
-          <Prop label="Quality">
+          <Prop label="Quality" hint={omtMode === 'hx' ? (omtCodec === 'h264' ? '1080p60: about 21 / 42 / 70 Mbps (Low / Medium / High)' : '1080p60: about 15 / 30 / 50 Mbps (Low / Medium / High)') : "libomt's own quality level; the wire stays standard OMT"}>
             {(id) => (
               <select id={id} className="ctl" value={omtQuality} onChange={(e) => setOmtQuality(e.target.value as 'low' | 'medium' | 'high')}>
-                <option value="low">Low (HEVC ~15 Mbps at 1080p60)</option>
-                <option value="medium">Medium (HEVC ~30 Mbps)</option>
-                <option value="high">High (HEVC ~50 Mbps)</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
               </select>
             )}
           </Prop>
