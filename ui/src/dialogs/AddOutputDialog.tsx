@@ -40,6 +40,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   const [ndiName, setNdiName] = useState(`BreadCamera - ${camera.name}`);
   const [omtMode, setOmtMode] = useState<'hx' | 'full'>('hx');
   const [omtCodec, setOmtCodec] = useState<'hevc' | 'h264'>('hevc');
+  const [omtQuality, setOmtQuality] = useState<'low' | 'medium' | 'high'>('medium');
   const [omtName, setOmtName] = useState(`BreadCamera - ${camera.name}`);
   const [srtMode, setSrtMode] = useState<'caller' | 'listener'>('caller');
   const [srtHost, setSrtHost] = useState('');
@@ -99,7 +100,7 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
   async function submit() {
     let params: Record<string, unknown>;
     if (kind === 'ndi') params = { name: ndiName };
-    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, name: omtName } : { mode: omtMode, name: omtName };
+    else if (kind === 'omt') params = omtMode === 'hx' ? { mode: omtMode, codec: omtCodec, quality: omtQuality, name: omtName } : { mode: omtMode, quality: omtQuality, name: omtName };
     else if (kind === 'srt') {
       params = { mode: srtMode, port: srtPortNum, latencyMs: Number(srtLatency) || 120, bitrateKbps: Number(bitrate) || 8000 };
       if (srtMode === 'caller' && srtHost) params.host = srtHost;
@@ -168,6 +169,15 @@ export function AddOutputDialog({ client, camera, n, onClose }: { client: Engine
               )}
             </Prop>
           )}
+          <Prop label="Quality">
+            {(id) => (
+              <select id={id} className="ctl" value={omtQuality} onChange={(e) => setOmtQuality(e.target.value as 'low' | 'medium' | 'high')}>
+                <option value="low">Low (HEVC ~15 Mbps at 1080p60)</option>
+                <option value="medium">Medium (HEVC ~30 Mbps)</option>
+                <option value="high">High (HEVC ~50 Mbps)</option>
+              </select>
+            )}
+          </Prop>
           <Prop label="Name">
             {(id) => <input id={id} className="ctl" value={omtName} onChange={(e) => setOmtName(e.target.value)} />}
           </Prop>
