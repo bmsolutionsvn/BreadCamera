@@ -3,8 +3,8 @@
 #include <stdexcept>
 
 namespace bc {
-OmthOutput::OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec, bool keyed)
-    : name_(std::move(name)), mode_(mode), codec_(codec), keyed_(keyed) {}
+OmthOutput::OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec, bool keyed, omthx::Quality quality)
+    : name_(std::move(name)), mode_(mode), codec_(codec), keyed_(keyed), quality_(quality) {}
 
 std::string OmthOutput::address() const {
   std::lock_guard lock(addrMutex_);
@@ -12,7 +12,7 @@ std::string OmthOutput::address() const {
 }
 
 void OmthOutput::open() {
-  send_ = std::make_unique<omthx::Sender>(name_, mode_, omthx::Quality::Medium, codec_);
+  send_ = std::make_unique<omthx::Sender>(name_, mode_, quality_, codec_);
   std::lock_guard lock(addrMutex_);
   address_ = send_->address();
 }

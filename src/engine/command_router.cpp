@@ -242,6 +242,13 @@ void validateOutput(const OutputConfig& o) {
       const auto c = o.params["codec"].get<std::string>();
       if (c != "hevc" && c != "h264") throw std::invalid_argument("OMT codec must be 'hevc' or 'h264'");
     }
+    // The quality applies to both modes: Hx's encoder bitrate, and plain OMT's own levels.
+    if (o.params.contains("quality")) {
+      if (!o.params["quality"].is_string()) throw std::invalid_argument("OMT quality must be text");
+      const auto q = o.params["quality"].get<std::string>();
+      if (q != "low" && q != "medium" && q != "high")
+        throw std::invalid_argument("OMT quality must be 'low', 'medium' or 'high'");
+    }
     if (o.params.contains("name")) {
       if (!o.params["name"].is_string()) throw std::invalid_argument("OMT name must be text");
       const auto n = o.params["name"].get<std::string>();

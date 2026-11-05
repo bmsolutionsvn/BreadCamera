@@ -15,7 +15,8 @@ namespace bc {
 // no readback, no texture, no pack, no encode (OMT-HX drops the frame on the wire side).
 class OmthOutput final : public QueuedOutput {
  public:
-  OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec = omthx::Codec::Hevc, bool keyed = false);
+  OmthOutput(std::string name, omthx::Mode mode, omthx::Codec codec = omthx::Codec::Hevc, bool keyed = false,
+             omthx::Quality quality = omthx::Quality::Medium);
   ~OmthOutput() override { stop(); }
   // Full (plain OMT), a keyed output (it needs the alpha) and a refused GPU path read back — but only
   // while a receiver is connected.
@@ -30,6 +31,7 @@ class OmthOutput final : public QueuedOutput {
   bool takeKeyframeRequest() override { return keyframe_.exchange(false); }
   // A coded frame went over the wire as it came, with no encode (the sender's encoder is "none").
   bool sentCoded() const { return coded_.load(); }
+  omthx::Quality quality() const { return quality_; }
   std::string address() const;  // "HOST (name)", for a receiver to connect to
   OutputStatus status() const override;
 
@@ -49,6 +51,7 @@ class OmthOutput final : public QueuedOutput {
   omthx::Mode mode_;
   omthx::Codec codec_;
   bool keyed_;
+  omthx::Quality quality_;
   std::unique_ptr<omthx::Sender> send_;
   std::vector<float> planar_;
   omthx::VideoFormat format_;
