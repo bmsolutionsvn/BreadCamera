@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The Preview and Output ticks never block on the engine's command lock, timeline edits snap to the show's real frame rate, and undo never reuses a replay id.
+**Goal:** The Preview and Output ticks never block on the engine's command lock, timeline edits snap to the show's real frame rate, undo never reuses a replay id, exports work with Vietnamese paths, and three engine hazards found in review (show-open hang, input-removal crash, retention under an export) are closed.
 
 **Why (review of merge 9b12447):** the multicam-timeline run fixed a store data race by making every `Player` method, including `tick()`, take `Engine::cmdM_`. That lock is held for whole commands, `saveShow()` (a disk write) and the 10 Hz `statusJson()`; plan 4 adds `cleanup.plan`, which reads every segment index under it. So a slow command can delay an on-air frame, which the editing spec's anti-goals forbid ("any stutter or delay on the on-air output caused by editing"). Separately, the timeline snaps on a hard-coded 100 ms (`PERIOD_US = 100000`) because status carries no frame rate, and `EventStore::restoreFrom` copies `nextId_`, so an undo followed by a mark reuses an id.
 
@@ -135,7 +135,47 @@ git commit -m "fix(edit): undo never reuses an id; no-op keys send nothing"
 
 ---
 
-### Task 4: Merge
+### Task 4: Export paths in any language
+
+The export run's review (ledger `2026-11-05-breadreplay-export`) found that paths reach libavformat through `path::string()` (the ANSI code page), so a group renamed `Trận 1` or an export folder with Vietnamese letters fails or writes a mangled name. The owner works in Vietnamese.
+
+**Files:** `src/export/mp4_writer.cpp` (and any other place that hands a path to FFmpeg), `tests/mp4_writer_test.cpp`
+
+- [ ] **Step 1: Write the failing test** `"Mp4Writer: a Vietnamese folder and name work"` — folder `TempDir / u8"Trận đấu"`, final path `exportPath(folder, u8"Trận 1", t)`; write 10 frames, `finish()` → `std::filesystem::exists(final)` is true and no `.part` remains. Skip without an H.264 encoder, as the other writer tests do.
+- [ ] **Step 2: Run and see it fail.**
+- [ ] **Step 3: Implement:** hand FFmpeg the UTF-8 form (`reinterpret_cast<const char*>(path.u8string().c_str())`; FFmpeg's Windows file protocol converts UTF-8 to wide); rename `.part` → final with `std::filesystem::rename` on the `path` objects, never on narrow strings.
+- [ ] **Step 4: Run** — writer tests pass.
+- [ ] **Step 5: Commit** — `git add src/export tests/mp4_writer_test.cpp; git commit -m "fix(export): paths in any language"`
+
+---
+
+### Task 5: Opening a show cannot hang; removing an input cannot crash; exports keep their media
+
+Also from the export run's review (pre-existing, confirmed by reading `engine.cpp`):
+- `show.open` / `show.new` run under `cmdM_` and call `stop()`, which joins the status thread, while that thread may be blocked in `statusJson()` on `cmdM_`: a deadlock.
+- `removeInput` (and `addInput` / `updateInput`) call `rebuildFrameSource()`, which replaces `source_` while the preview and output threads are reading it: a use-after-free.
+- Retention can delete segments a queued or running export still needs.
+
+**Files:** `src/engine/engine.cpp`, `src/play/frame_source.h/.cpp`, `src/export/export_queue.h/.cpp`, `tests/engine_test.cpp`, `tests/frame_source_test.cpp`, `tests/export_queue_test.cpp`
+
+**Interfaces:**
+- `statusLoop` builds its status with `cmdM_` taken by `try_to_lock`; when busy it skips that push (status is 10 Hz). `statusJson()` called from command handlers keeps working as now.
+- `void FrameSource::setStores(std::map<std::string, const InputStore*> stores);` — swaps the map under the source's own lock and drops decoders and cached frames of inputs no longer present. `rebuildFrameSource()` calls it when `source_` exists instead of replacing the object.
+- `std::vector<ProtectedRange> ExportQueue::protectedRanges() const;` — In − 3 s … Out + 3 s of every event in queued and running jobs. `Engine::retentionTick()` adds them to the ranges it keeps.
+
+- [ ] **Step 1: Write the failing tests**
+  - `engine_test.cpp` `"Engine: opening a show while status runs does not hang"` — with the status thread running and a sender set, `handle({cmd:'show.new'})` 10 times; each returns within 5 s (run the call on a `std::async` and `wait_for`).
+  - `"Engine: removing and re-adding an input while Output plays does not crash"` — Output playing a replay; 20 × (`input.remove`, `input.add`) of a second input; the output player's `ticks()` keeps rising and the process survives.
+  - `frame_source_test.cpp` `"FrameSource: setStores drops a removed input"` — `get(cam2, t)` returns null after `setStores` without `cam2`; `cam1` still serves.
+  - `export_queue_test.cpp` `"Export: a queued export's media is protected"` — a job queued for an event at 20–25 s → `protectedRanges()` contains `[17 s, 28 s]`; after it finishes, empty.
+- [ ] **Step 2: Run and see them fail** (the hang test times out; the crash test may crash: run it alone).
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run all engine tests** — all pass.
+- [ ] **Step 5: Commit** — `git add src tests; git commit -m "fix(engine): show open cannot hang, input removal cannot crash, exports keep their media"`
+
+---
+
+### Task 6: Merge
 
 - [ ] **Step 1:** Full check on the branch: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1; ./build/release/br_tests.exe; npm --prefix ui test; npm --prefix ui run build`. All pass.
 - [ ] **Step 2:** `git checkout main; git merge --no-ff br-tick-never-waits -m "merge: ticks never wait; frame-rate snapping"`; full check again on `main`. Do not push.
