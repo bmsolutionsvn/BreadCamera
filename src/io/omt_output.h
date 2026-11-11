@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -45,7 +46,7 @@ class OmthOutput final : public QueuedOutput {
   // The GPU path takes an unkeyed HX output's texture; everything else needs the CPU picture.
   bool gpuPath() const { return mode_ == omthx::Mode::Hx && !keyed_ && !gpuRefused_; }
   // The GPU path cannot take this frame or this device: from now on send through memory, once.
-  void refuse(const std::string& why);
+  void refuse(const std::string& why, uint32_t width, uint32_t height);
 
   std::string name_;
   omthx::Mode mode_;
@@ -56,6 +57,8 @@ class OmthOutput final : public QueuedOutput {
   std::vector<float> planar_;
   omthx::VideoFormat format_;
   std::atomic<bool> gpuRefused_{false};  // read by needsCpu() on the tick thread
+  uint32_t refusedWidth_ = 0;            // the picture size the refusal was made for, on the worker thread
+  uint32_t refusedHeight_ = 0;
   // send_->hasReceivers(), published by the worker at the end of deliver: the tick thread reads it to
   // skip the readback and the RGBA texture. The tick thread never touches send_.
   std::atomic<bool> receivers_{false};
