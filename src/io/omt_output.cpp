@@ -11,6 +11,16 @@ std::string OmthOutput::address() const {
   return address_;
 }
 
+std::string omtStatusNote(const std::string& fallback, int bitratePercent) {
+  std::string note;
+  if (!fallback.empty()) note = fallback;
+  if (bitratePercent < 100) {
+    if (!note.empty()) note += "; ";
+    note += "bitrate lowered to " + std::to_string(bitratePercent) + " %";
+  }
+  return note;
+}
+
 void OmthOutput::open() {
   send_ = std::make_unique<omthx::Sender>(name_, mode_, quality_, codec_);
   // A new sender asks the device again: the refusal was about the last one.
@@ -112,16 +122,28 @@ void OmthOutput::deliver(const OutFrame& f) {
   program_ = t.program;
   preview_ = t.preview;
   receivers_ = send_->hasReceivers();  // the next tick asks for a picture only if someone is pulling
+
+  // Once a second: the status reads the stored copy, never the sender.
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= nextStats_) {
+    nextStats_ = now + std::chrono::seconds(1);
+    const omthx::SenderStats stats = send_->stats();
+    std::lock_guard lock(warnMutex_);
+    fallback_ = stats.lastFallback;
+    bitratePercent_ = stats.bitratePercent;
+  }
 }
 
 OutputStatus OmthOutput::status() const {
   OutputStatus s = QueuedOutput::status();
   s.program = program_;
   s.preview = preview_;
-  if (gpuRefused_) {
+  std::lock_guard lock(warnMutex_);
+  const std::string note = omtStatusNote(fallback_, bitratePercent_);
+  if (!note.empty()) s.note = s.note.empty() ? note : s.note + "; " + note;
+  if (gpuRefused_ && !s.error && !warn_.empty()) {
     // The output has no state path of its own, so the refusal rides in the error (state stays Live).
-    std::lock_guard lock(warnMutex_);
-    if (!s.error && !warn_.empty()) s.error = ErrorInfo{"omt-gpu-refused", warn_};
+    s.error = ErrorInfo{"omt-gpu-refused", warn_};
   }
   return s;
 }
@@ -131,6 +153,11 @@ void OmthOutput::close() noexcept {
   keyframe_ = false;
   coded_ = false;
   send_.reset();
+  {
+    std::lock_guard lock(warnMutex_);
+    fallback_.clear();
+    bitratePercent_ = 100;
+  }
   std::lock_guard lock(addrMutex_);
   address_.clear();
 }

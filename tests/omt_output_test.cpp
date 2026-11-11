@@ -676,6 +676,14 @@ TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe" BC_R
   CHECK(asked);  // a lost coded frame breaks the receiver's picture: the source is asked for a keyframe
 }
 
+TEST_CASE("OmthOutput: the status note names the sender's fallback and lowered bitrate") {
+  CHECK(bc::omtStatusNote("", 100).empty());
+  CHECK(bc::omtStatusNote("d3d11 encode: no GPU encoder", 100) == "d3d11 encode: no GPU encoder");
+  CHECK(bc::omtStatusNote("", 70) == "bitrate lowered to 70 %");
+  CHECK(bc::omtStatusNote("d3d11 encode: no GPU encoder", 70) ==
+        "d3d11 encode: no GPU encoder; bitrate lowered to 70 %");
+}
+
 TEST_CASE("OmthOutput: audio with no channels does not crash the output" BC_REQUIRES(bc::test::Req::Omt)) {
   bc::OmthOutput out("bc-omt-audio-zero " + std::to_string(GetCurrentProcessId()), omthx::Mode::Full);
   out.start();
@@ -707,4 +715,5 @@ TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe") {}
 TEST_CASE("OmthOutput: audio with no channels does not crash the output") {}
 TEST_CASE("OmthOutput: the GPU refusal holds at the refused size and clears at a new one") {}
 TEST_CASE("OmthOutput: open clears a refused GPU path") {}
+TEST_CASE("OmthOutput: the status note names the sender's fallback and lowered bitrate") {}
 #endif

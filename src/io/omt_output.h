@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -10,6 +11,10 @@
 #include "omthx/omthx.h"
 
 namespace bc {
+// What the sender's stats add to an output's status note: its last fallback, its lowered bitrate, or both,
+// joined with "; ". Empty when the sender has neither.
+std::string omtStatusNote(const std::string& fallback, int bitratePercent);
+
 // Open Media Transport sender (spec A4.3), plain OMT or OMT-HX, alpha when the frame has it.
 // An unkeyed HX output sends the frame's texture straight to the encoder (spec §4.2), so its
 // camera does no readback. While nobody is connected it asks the camera for no picture at all:
@@ -62,8 +67,12 @@ class OmthOutput final : public QueuedOutput {
   // send_->hasReceivers(), published by the worker at the end of deliver: the tick thread reads it to
   // skip the readback and the RGBA texture. The tick thread never touches send_.
   std::atomic<bool> receivers_{false};
-  mutable std::mutex warnMutex_;         // guards warn_
+  mutable std::mutex warnMutex_;         // guards warn_, fallback_ and bitratePercent_
   std::string warn_;
+  // The sender's stats, read by the worker at most once a second so status() never calls stats().
+  std::string fallback_;
+  int bitratePercent_ = 100;
+  std::chrono::steady_clock::time_point nextStats_{};
   mutable std::mutex addrMutex_;  // guards address_, set by the worker in open()
   std::string address_;
   std::atomic<bool> program_{false};  // the tally the sender reports, published by the worker
