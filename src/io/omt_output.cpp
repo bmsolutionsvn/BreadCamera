@@ -84,7 +84,7 @@ void OmthOutput::deliver(const OutFrame& f) {
     }
   }
 
-  if (f.audio && !f.audio->empty()) {
+  if (f.audio && !f.audio->empty() && f.channels > 0) {
     const int ch = f.channels;
     const int n = static_cast<int>(f.audio->size()) / ch;
     planar_.resize(f.audio->size());

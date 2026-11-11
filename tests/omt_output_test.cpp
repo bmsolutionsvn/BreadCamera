@@ -591,6 +591,21 @@ TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe" BC_R
   CHECK(asked);  // a lost coded frame breaks the receiver's picture: the source is asked for a keyframe
 }
 
+TEST_CASE("OmthOutput: audio with no channels does not crash the output" BC_REQUIRES(bc::test::Req::Omt)) {
+  bc::OmthOutput out("bc-omt-audio-zero " + std::to_string(GetCurrentProcessId()), omthx::Mode::Full);
+  out.start();
+  bc::OutFrame f;
+  f.tick = 0;
+  f.rate = bc::Rate{30, 1};
+  f.channels = 0;  // a sender can report none: the frame must not divide by it
+  f.audio = std::make_shared<const std::vector<float>>(std::vector<float>{0.5f, 0.5f});
+  out.submit(std::move(f));
+  for (int i = 0; i < 40 && out.status().delivered == 0; ++i) std::this_thread::sleep_for(50ms);
+  const bc::OutputStatus st = out.status();
+  out.stop();
+  CHECK(st.delivered >= 1);  // the frame went through and the output lives on
+}
+
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
@@ -604,4 +619,5 @@ TEST_CASE("OmthOutput: plain OMT takes UYVY") {}
 TEST_CASE("OmthOutput: plain OMT sends a UYVY frame") {}
 TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding") {}
 TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe") {}
+TEST_CASE("OmthOutput: audio with no channels does not crash the output") {}
 #endif

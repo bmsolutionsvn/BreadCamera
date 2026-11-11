@@ -874,4 +874,35 @@ TEST_CASE("AdapterFactory: OMT quality" BC_REQUIRES(bc::test::Req::Omt)) {
                        "OMT quality must be 'low', 'medium' or 'high'", std::invalid_argument);
 }
 
+TEST_CASE("OmtInput: a mono audio block fills both output channels") {
+  // The source's one plane, four samples: both channels carry it, never a read past the plane.
+  const std::vector<float> mono{0.1f, 0.2f, 0.3f, 0.4f};
+  std::vector<float> out;
+  REQUIRE(bc::planarToStereo(mono, 4, 1, out));
+  REQUIRE(out.size() == 8);
+  for (size_t i = 0; i < 4; ++i) {
+    CHECK(out[i * 2] == mono[i]);
+    CHECK(out[i * 2 + 1] == mono[i]);
+  }
+}
+
+TEST_CASE("OmtInput: an audio block takes its first two channels, and a short one is rejected") {
+  // Two channels: channel 0's samples, then channel 1's.
+  const std::vector<float> stereo{1, 2, 3, 4, 10, 20, 30, 40};
+  std::vector<float> out;
+  REQUIRE(bc::planarToStereo(stereo, 4, 2, out));
+  CHECK(out == std::vector<float>{1, 10, 2, 20, 3, 30, 4, 40});
+
+  // Three channels: the third is dropped.
+  const std::vector<float> three{1, 2, 3, 4, 10, 20, 30, 40, 100, 200, 300, 400};
+  REQUIRE(bc::planarToStereo(three, 4, 3, out));
+  CHECK(out == std::vector<float>{1, 10, 2, 20, 3, 30, 4, 40});
+
+  // Fewer samples than samples * channels: nothing is delivered, as before.
+  const std::vector<float> shortBuffer{1, 2, 3, 4, 10, 20, 30};
+  out.assign(2, -1.0f);
+  CHECK_FALSE(bc::planarToStereo(shortBuffer, 4, 2, out));
+  CHECK(out == std::vector<float>{-1.0f, -1.0f});
+}
+
 #endif
