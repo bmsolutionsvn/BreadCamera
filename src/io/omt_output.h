@@ -1,5 +1,7 @@
 #pragma once
 #include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -9,6 +11,10 @@
 #include "omthx/omthx.h"
 
 namespace bc {
+// What the sender's stats add to an output's status note: its last fallback, its lowered bitrate, or both,
+// joined with "; ". Empty when the sender has neither.
+std::string omtStatusNote(const std::string& fallback, int bitratePercent);
+
 // Open Media Transport sender (spec A4.3), plain OMT or OMT-HX, alpha when the frame has it.
 // An unkeyed HX output sends the frame's texture straight to the encoder (spec §4.2), so its
 // camera does no readback. While nobody is connected it asks the camera for no picture at all:
@@ -45,7 +51,7 @@ class OmthOutput final : public QueuedOutput {
   // The GPU path takes an unkeyed HX output's texture; everything else needs the CPU picture.
   bool gpuPath() const { return mode_ == omthx::Mode::Hx && !keyed_ && !gpuRefused_; }
   // The GPU path cannot take this frame or this device: from now on send through memory, once.
-  void refuse(const std::string& why);
+  void refuse(const std::string& why, uint32_t width, uint32_t height);
 
   std::string name_;
   omthx::Mode mode_;
@@ -56,11 +62,17 @@ class OmthOutput final : public QueuedOutput {
   std::vector<float> planar_;
   omthx::VideoFormat format_;
   std::atomic<bool> gpuRefused_{false};  // read by needsCpu() on the tick thread
+  uint32_t refusedWidth_ = 0;            // the picture size the refusal was made for, on the worker thread
+  uint32_t refusedHeight_ = 0;
   // send_->hasReceivers(), published by the worker at the end of deliver: the tick thread reads it to
   // skip the readback and the RGBA texture. The tick thread never touches send_.
   std::atomic<bool> receivers_{false};
-  mutable std::mutex warnMutex_;         // guards warn_
+  mutable std::mutex warnMutex_;         // guards warn_, fallback_ and bitratePercent_
   std::string warn_;
+  // The sender's stats, read by the worker at most once a second so status() never calls stats().
+  std::string fallback_;
+  int bitratePercent_ = 100;
+  std::chrono::steady_clock::time_point nextStats_{};
   mutable std::mutex addrMutex_;  // guards address_, set by the worker in open()
   std::string address_;
   std::atomic<bool> program_{false};  // the tally the sender reports, published by the worker

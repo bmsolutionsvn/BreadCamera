@@ -254,9 +254,15 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path" BC_REQUIRE
       std::this_thread::sleep_for(33ms);
     }
   });
+  // 640x360 is a new size: the refused GPU path is tried again, so the camera stops reading back.
+  bool cleared = false;
+  for (int i = 0; i < 50 && !cleared; ++i) {
+    cleared = !out.status().error.has_value();
+    if (!cleared) std::this_thread::sleep_for(100ms);
+  }
+  CHECK(cleared);
+  CHECK_FALSE(out.needsCpu());
   omthx::Receiver rx(out.address());
-  for (int i = 0; i < 20 && !out.needsCpu(); ++i) std::this_thread::sleep_for(100ms);
-  CHECK(out.needsCpu());  // the refused GPU path reads back once someone pulls
   omthx::VideoFrame vf;
   bool got = false;
   for (int i = 0; i < 60 && !got; ++i) {
@@ -270,6 +276,85 @@ TEST_CASE("OmthOutput: an odd-sized frame falls back to the CPU path" BC_REQUIRE
   CHECK(std::abs(bgr[2] - 230) <= 8);
   CHECK(std::abs(bgr[1] - 40) <= 8);
   CHECK(std::abs(bgr[0] - 20) <= 8);
+}
+
+TEST_CASE("OmthOutput: the GPU refusal holds at the refused size and clears at a new one"
+              BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool{*gpu};
+  bc::Converter conv{*gpu, pool};
+  const bc::TextureRef odd = rgba8Texture(conv, 641, 360, 230, 40, 20);
+  const bc::TextureRef even = rgba8Texture(conv, 640, 360, 230, 40, 20);
+
+  bc::OmthOutput out("BreadCamera OMT retry " + std::to_string(GetCurrentProcessId()), omthx::Mode::Hx,
+                     omthx::Codec::Hevc, /*keyed=*/false);
+  out.start();
+  auto submit = [&](const bc::TextureRef& tex, uint64_t tick) {
+    bc::OutFrame f;
+    f.tick = tick;
+    f.rate = bc::Rate{30, 1};
+    f.linear = tex;
+    out.submit(std::move(f));
+  };
+  auto waitDelivered = [&](uint64_t n) {
+    for (int i = 0; i < 50 && out.status().delivered < n; ++i) std::this_thread::sleep_for(100ms);
+    return out.status().delivered >= n;
+  };
+
+  submit(odd, 0);
+  REQUIRE(waitDelivered(1));
+  REQUIRE(out.status().error.has_value());
+  CHECK(out.status().error->code == "omt-gpu-refused");
+
+  // The same odd size again: the refusal is not retried, so the warning stays.
+  submit(odd, 1);
+  REQUIRE(waitDelivered(2));
+  REQUIRE(out.status().error.has_value());
+  CHECK(out.status().error->code == "omt-gpu-refused");
+
+  // A new size: the GPU path is tried again and the warning clears.
+  submit(even, 2);
+  bool cleared = false;
+  for (int i = 0; i < 50 && !cleared; ++i) {
+    cleared = !out.status().error.has_value();
+    if (!cleared) std::this_thread::sleep_for(100ms);
+  }
+  CHECK(cleared);
+  out.stop();
+}
+
+TEST_CASE("OmthOutput: open clears a refused GPU path" BC_REQUIRES(bc::test::Req::Omt)
+              BC_REQUIRES(bc::test::Req::HardwareGpu)) {
+  auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
+  bc::TexturePool pool{*gpu};
+  bc::Converter conv{*gpu, pool};
+  const bc::TextureRef odd = rgba8Texture(conv, 641, 360, 230, 40, 20);
+
+  bc::OmthOutput out("BreadCamera OMT reopen " + std::to_string(GetCurrentProcessId()), omthx::Mode::Hx,
+                     omthx::Codec::Hevc, /*keyed=*/false);
+  out.start();
+  bc::OutFrame f;
+  f.tick = 0;
+  f.rate = bc::Rate{30, 1};
+  f.linear = odd;
+  out.submit(std::move(f));
+  bool refused = false;
+  for (int i = 0; i < 50 && !refused; ++i) {
+    const bc::OutputStatus st = out.status();
+    refused = st.error && st.error->code == "omt-gpu-refused";
+    if (!refused) std::this_thread::sleep_for(100ms);
+  }
+  REQUIRE(refused);
+
+  out.stop();   // close
+  out.start();  // open: the device is asked again
+  bool cleared = false;
+  for (int i = 0; i < 50 && !cleared; ++i) {
+    cleared = !out.status().error.has_value();
+    if (!cleared) std::this_thread::sleep_for(100ms);
+  }
+  CHECK(cleared);
+  out.stop();
 }
 
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
@@ -591,6 +676,29 @@ TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe" BC_R
   CHECK(asked);  // a lost coded frame breaks the receiver's picture: the source is asked for a keyframe
 }
 
+TEST_CASE("OmthOutput: the status note names the sender's fallback and lowered bitrate") {
+  CHECK(bc::omtStatusNote("", 100).empty());
+  CHECK(bc::omtStatusNote("d3d11 encode: no GPU encoder", 100) == "d3d11 encode: no GPU encoder");
+  CHECK(bc::omtStatusNote("", 70) == "bitrate lowered to 70 %");
+  CHECK(bc::omtStatusNote("d3d11 encode: no GPU encoder", 70) ==
+        "d3d11 encode: no GPU encoder; bitrate lowered to 70 %");
+}
+
+TEST_CASE("OmthOutput: audio with no channels does not crash the output" BC_REQUIRES(bc::test::Req::Omt)) {
+  bc::OmthOutput out("bc-omt-audio-zero " + std::to_string(GetCurrentProcessId()), omthx::Mode::Full);
+  out.start();
+  bc::OutFrame f;
+  f.tick = 0;
+  f.rate = bc::Rate{30, 1};
+  f.channels = 0;  // a sender can report none: the frame must not divide by it
+  f.audio = std::make_shared<const std::vector<float>>(std::vector<float>{0.5f, 0.5f});
+  out.submit(std::move(f));
+  for (int i = 0; i < 40 && out.status().delivered == 0; ++i) std::this_thread::sleep_for(50ms);
+  const bc::OutputStatus st = out.status();
+  out.stop();
+  CHECK(st.delivered >= 1);  // the frame went through and the output lives on
+}
+
 #else
 TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {}
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
@@ -604,4 +712,8 @@ TEST_CASE("OmthOutput: plain OMT takes UYVY") {}
 TEST_CASE("OmthOutput: plain OMT sends a UYVY frame") {}
 TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding") {}
 TEST_CASE("OmthOutput: a coded frame the queue dropped asks for a keyframe") {}
+TEST_CASE("OmthOutput: audio with no channels does not crash the output") {}
+TEST_CASE("OmthOutput: the GPU refusal holds at the refused size and clears at a new one") {}
+TEST_CASE("OmthOutput: open clears a refused GPU path") {}
+TEST_CASE("OmthOutput: the status note names the sender's fallback and lowered bitrate") {}
 #endif

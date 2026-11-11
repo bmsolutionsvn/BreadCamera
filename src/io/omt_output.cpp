@@ -11,14 +11,32 @@ std::string OmthOutput::address() const {
   return address_;
 }
 
+std::string omtStatusNote(const std::string& fallback, int bitratePercent) {
+  std::string note;
+  if (!fallback.empty()) note = fallback;
+  if (bitratePercent < 100) {
+    if (!note.empty()) note += "; ";
+    note += "bitrate lowered to " + std::to_string(bitratePercent) + " %";
+  }
+  return note;
+}
+
 void OmthOutput::open() {
   send_ = std::make_unique<omthx::Sender>(name_, mode_, quality_, codec_);
+  // A new sender asks the device again: the refusal was about the last one.
+  gpuRefused_ = false;
+  {
+    std::lock_guard lock(warnMutex_);
+    warn_.clear();
+  }
   std::lock_guard lock(addrMutex_);
   address_ = send_->address();
 }
 
-void OmthOutput::refuse(const std::string& why) {
+void OmthOutput::refuse(const std::string& why, uint32_t width, uint32_t height) {
   if (gpuRefused_.exchange(true)) return;  // the first reason is the one that sticks
+  refusedWidth_ = width;
+  refusedHeight_ = height;
   std::lock_guard lock(warnMutex_);
   warn_ = "OMT HX is sending through memory: " + why;
 }
@@ -38,12 +56,19 @@ void OmthOutput::deliver(const OutFrame& f) {
     bool sentVideo = false;
     // The GPU path's size check runs on the frame alone, so a refused path is reported even while nobody
     // pulls and the camera makes no picture: a receiver that connects then reads back instead.
-    const bool gpu = !f.hasAlpha && gpuPath();
     const uint32_t width = f.rgba8 ? f.rgba8->width : f.linear ? f.linear->width : 0;
     const uint32_t height = f.rgba8 ? f.rgba8->height : f.linear ? f.linear->height : 0;
+    // The refusal is a property of the picture or the device: a picture of a new size asks the device again.
+    if (gpuRefused_ && (width != refusedWidth_ || height != refusedHeight_)) {
+      gpuRefused_ = false;
+      std::lock_guard lock(warnMutex_);
+      warn_.clear();
+    }
+    const bool gpu = !f.hasAlpha && gpuPath();
     if (gpu && (width % 2 != 0 || height % 2 != 0)) {
       refuse("the frame is " + std::to_string(width) + "x" + std::to_string(height) +
-             " and the GPU encoder needs even sizes");
+                 " and the GPU encoder needs even sizes",
+             width, height);
     } else if (gpu && f.rgba8) {
       // The GPU path takes no alpha, so a frame with it stays on the CPU path as it always has.
       format_.width = static_cast<int>(f.rgba8->width);
@@ -57,7 +82,7 @@ void OmthOutput::deliver(const OutFrame& f) {
         send_->sendVideoD3D11(format_, f.rgba8->tex.Get(), ts);
         sentVideo = true;
       } catch (const std::exception& e) {
-        refuse(e.what());
+        refuse(e.what(), width, height);
         return;  // this frame is dropped; the next one comes through memory
       }
     }
@@ -84,7 +109,7 @@ void OmthOutput::deliver(const OutFrame& f) {
     }
   }
 
-  if (f.audio && !f.audio->empty()) {
+  if (f.audio && !f.audio->empty() && f.channels > 0) {
     const int ch = f.channels;
     const int n = static_cast<int>(f.audio->size()) / ch;
     planar_.resize(f.audio->size());
@@ -97,16 +122,28 @@ void OmthOutput::deliver(const OutFrame& f) {
   program_ = t.program;
   preview_ = t.preview;
   receivers_ = send_->hasReceivers();  // the next tick asks for a picture only if someone is pulling
+
+  // Once a second: the status reads the stored copy, never the sender.
+  const auto now = std::chrono::steady_clock::now();
+  if (now >= nextStats_) {
+    nextStats_ = now + std::chrono::seconds(1);
+    const omthx::SenderStats stats = send_->stats();
+    std::lock_guard lock(warnMutex_);
+    fallback_ = stats.lastFallback;
+    bitratePercent_ = stats.bitratePercent;
+  }
 }
 
 OutputStatus OmthOutput::status() const {
   OutputStatus s = QueuedOutput::status();
   s.program = program_;
   s.preview = preview_;
-  if (gpuRefused_) {
+  std::lock_guard lock(warnMutex_);
+  const std::string note = omtStatusNote(fallback_, bitratePercent_);
+  if (!note.empty()) s.note = s.note.empty() ? note : s.note + "; " + note;
+  if (gpuRefused_ && !s.error && !warn_.empty()) {
     // The output has no state path of its own, so the refusal rides in the error (state stays Live).
-    std::lock_guard lock(warnMutex_);
-    if (!s.error) s.error = ErrorInfo{"omt-gpu-refused", warn_};
+    s.error = ErrorInfo{"omt-gpu-refused", warn_};
   }
   return s;
 }
@@ -116,6 +153,11 @@ void OmthOutput::close() noexcept {
   keyframe_ = false;
   coded_ = false;
   send_.reset();
+  {
+    std::lock_guard lock(warnMutex_);
+    fallback_.clear();
+    bitratePercent_ = 100;
+  }
   std::lock_guard lock(addrMutex_);
   address_.clear();
 }

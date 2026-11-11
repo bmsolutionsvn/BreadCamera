@@ -12,6 +12,20 @@
 namespace bc {
 using Clock = std::chrono::steady_clock;
 
+bool planarToStereo(std::span<const float> planar, int samples, int channels, std::vector<float>& out) {
+  if (channels < 1 || samples < 0 ||
+      planar.size() < static_cast<size_t>(samples) * static_cast<size_t>(channels))
+    return false;
+  out.resize(static_cast<size_t>(samples) * 2);
+  for (int i = 0; i < samples; ++i) {
+    out[static_cast<size_t>(i) * 2] = planar[static_cast<size_t>(i)];
+    out[static_cast<size_t>(i) * 2 + 1] =
+        channels > 1 ? planar[static_cast<size_t>(samples) + static_cast<size_t>(i)]
+                     : planar[static_cast<size_t>(i)];
+  }
+  return true;
+}
+
 void OmtInput::start(InputSink& sink) {
   sink_ = &sink;
   stopping_ = false;
@@ -226,21 +240,13 @@ void OmtInput::run() {
         }
       }
 
-      // Audio is drained with a zero timeout; anything slower than the picture falls behind, so
-      // only the newest block of each pass is kept.
+      // Audio is drained with a zero timeout: every block already waiting is delivered in order, so a picture
+      // that is late only leaves the audio to catch up in the next pass.
       omthx::AudioFrame a;
       while (receiver->receiveAudio(a, 0)) {
-        if (a.sampleRate == 48000 && a.channels >= 1 &&
-            a.planar.size() >= static_cast<size_t>(a.samples) * static_cast<size_t>(a.channels)) {
-          AudioBlock blk;
-          blk.samples.resize(static_cast<size_t>(a.samples) * 2);
-          for (int i = 0; i < a.samples; ++i) {
-            blk.samples[static_cast<size_t>(i) * 2] = a.planar[static_cast<size_t>(i)];
-            blk.samples[static_cast<size_t>(i) * 2 + 1] =
-                a.planar[static_cast<size_t>(a.samples) + static_cast<size_t>(i)];
-          }
+        AudioBlock blk;
+        if (a.sampleRate == 48000 && planarToStereo(a.planar, a.samples, a.channels, blk.samples))
           sink_->onAudio(std::move(blk));
-        }
       }
     } catch (const std::exception& e) {
       sink_->onState(SignalState::Offline, ErrorInfo{"omt-failed", e.what()});
