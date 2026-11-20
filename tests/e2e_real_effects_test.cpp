@@ -30,19 +30,20 @@ using namespace std::chrono_literals;
 using nlohmann::json;
 
 namespace {
-// Reads the frames from the SRT output and, once, converts one frame to BGRA8 and averages its
-// BT.709 luma. FfmpegInput calls onVideo without the GPU lock held, so the sampled frame can be
+// Reads the frames from the SRT output and, every 60th frame from frame 120 on, converts one to BGRA8
+// and averages its BT.709 luma; the last sample wins. Not one fixed frame: CI renders on WARP, where
+// the colour stage runs at ~17 fps and a 10 s run never reaches frame 300. FfmpegInput calls onVideo without the GPU lock held, so the sampled frame can be
 // converted here; the frame is not kept by reference (the pool may recycle it after onVideo).
 struct LumaSink : bc::InputSink {
   explicit LumaSink(bc::Converter& c) : conv(c) {}
   bc::Converter& conv;
-  int sampleAt = 300;  // ~5 s at 60 fps: a settled clip frame after the output goes live
+  static constexpr int kSampleFrom = 120;  // 2 s at 60 fps; ~7 s on WARP
   std::atomic<int> video{0};
   std::atomic<double> luma{-1};
 
   void onVideo(bc::VideoFrameIn f) override {
     const int n = ++video;
-    if (n != sampleAt) return;
+    if (n < kSampleFrom || n % 60 != 0) return;
     auto linear = conv.toLinear(*f.tex, f.layout, f.fullRange);
     auto rgba8 = conv.toBgra8(*linear, f.tex->width, f.tex->height);
     const bc::CpuImage img = conv.readback(*rgba8);
@@ -132,8 +133,9 @@ TEST_CASE("real effect acceptance: SRT in -> colour effect -> SRT out, output pi
 
   // Both runs are a real transport: frames flow from a live input to a live output, and the
   // camera's phase is `live` (frames are actually reaching the tick, not the slate).
-  CHECK(on.frames > 300);
-  CHECK(off.frames > 300);
+  // 120, not 600: WARP (CI) runs the colour stage at ~17 fps, so 10 s gives ~170 frames there.
+  CHECK(on.frames >= LumaSink::kSampleFrom);
+  CHECK(off.frames >= LumaSink::kSampleFrom);
   CHECK(on.inputState == "live");
   CHECK(off.inputState == "live");
   CHECK(on.outputState == "live");
