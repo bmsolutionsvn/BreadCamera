@@ -7,6 +7,13 @@ jobs:
       BC_FORCE_WARP: "1"
     steps:
       - uses: actions/checkout@v4
+      # The engine includes omthx/omthx.h, and OMT-HX is its own repository: clone it beside
+      # this one with its omt/ submodules, where CMakeLists.txt looks for it (OMTHX_ROOT).
+      - name: Check out OMT-HX beside the repository
+        shell: pwsh
+        run: |
+          $sibling = Join-Path (Split-Path $env:GITHUB_WORKSPACE -Parent) 'OMT-HX'
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/bmsolutionsvn/OMT-HX $sibling
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Build and test
         shell: pwsh
