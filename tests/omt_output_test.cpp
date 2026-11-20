@@ -358,7 +358,7 @@ TEST_CASE("OmthOutput: open clears a refused GPU path" BC_REQUIRES(bc::test::Req
 }
 
 TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once a receiver connects"
-              BC_REQUIRES(bc::test::Req::Omt)) {
+              BC_REQUIRES(bc::test::Req::Omt) BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   const bc::Rate rate{30, 1};
   auto picture = std::make_shared<bc::CpuImage>();
   picture->width = 640;
@@ -609,7 +609,8 @@ TEST_CASE("OmthOutput: status carries the tally a receiver sets" BC_REQUIRES(bc:
   CHECK(program);
 }
 
-TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding" BC_REQUIRES(bc::test::Req::Omt)) {
+TEST_CASE("OmthOutput: an HX output passes coded frames on without encoding" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {  // the HX source encodes
   const std::string name = "BreadCamera OMT coded " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput out(name, omthx::Mode::Hx, omthx::Codec::Hevc, /*keyed=*/false);
   CHECK(out.takesCodedOmt(omthx::Mode::Hx));

@@ -708,14 +708,17 @@ TEST_CASE("OMT pass-through: audio flows" BC_REQUIRES(bc::test::Req::Omt)) {
   int64_t videoTs = -1;
   int64_t audioTs = -1;
   std::vector<int64_t> videoStamps;
-  for (int i = 0; i < 100 && (videoTs < 0 || audioTs < 0); ++i) {
+  // Audio arrives before the first picture, and a slow (WARP) runner has few pictures yet: compare an audio block
+  // from after the first picture, once the pictures have caught up with it.
+  for (int i = 0; i < 300 && (audioTs < 0 || videoTs < audioTs); ++i) {
     omthx::VideoFrame vf;
     if (rx.receiveVideo(vf, 20)) {
       videoTs = vf.timestamp;
       videoStamps.push_back(videoTs);
     }
     omthx::AudioFrame af;
-    if (rx.receiveAudio(af, 0)) audioTs = af.timestamp;
+    if (rx.receiveAudio(af, 0) && audioTs < 0 && !videoStamps.empty() && af.timestamp >= videoStamps.front())
+      audioTs = af.timestamp;
   }
   REQUIRE(videoTs >= 0);
   REQUIRE(audioTs >= 0);  // the tone keeps flowing on the pass-through output
