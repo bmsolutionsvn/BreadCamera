@@ -394,7 +394,8 @@ TEST_CASE("OmthOutput: keyed and plain OMT outputs ask for the CPU picture once 
   }
 }
 
-TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)) {
+TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   const std::string name = "BreadCamera OMT " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput out(name, omthx::Mode::Hx);
   auto img = std::make_shared<bc::CpuImage>();
@@ -449,7 +450,8 @@ TEST_CASE("OmthOutput: an omthx receiver gets our picture with alpha" BC_REQUIRE
   CHECK(std::abs(a - 128) <= 20);
 }
 
-TEST_CASE("OmthOutput: an omt hx output sends H.264 when asked" BC_REQUIRES(bc::test::Req::Omt)) {
+TEST_CASE("OmthOutput: an omt hx output sends H.264 when asked" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   const std::string name = "BreadCamera OMT h264 " + std::to_string(GetCurrentProcessId());
   bc::OmthOutput out(name, omthx::Mode::Hx, omthx::Codec::H264);
   auto img = std::make_shared<bc::CpuImage>();

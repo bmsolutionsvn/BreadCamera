@@ -114,7 +114,8 @@ struct CpuOnlySink : bc::InputSink {
 };
 }  // namespace
 
-TEST_CASE("OmtInput: receives an OMT HX source as pictures and audio" BC_REQUIRES(bc::test::Req::Omt)) {
+TEST_CASE("OmtInput: receives an OMT HX source as pictures and audio" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   if (!gpu) return;
   bc::TexturePool pool{*gpu};
@@ -346,7 +347,8 @@ struct CodedHxSink : bc::InputSink {
 };
 }  // namespace
 
-TEST_CASE("OmtInput: a coded HX sink gets HEVC access units and keyframes" BC_REQUIRES(bc::test::Req::Omt)) {
+TEST_CASE("OmtInput: a coded HX sink gets HEVC access units and keyframes" BC_REQUIRES(bc::test::Req::Omt)
+          BC_REQUIRES(bc::test::Req::HardwareGpu)) {
   auto gpu = bc::GpuDevice::create(bc::GpuDevice::Pref::HardwareOrWarp);
   if (!gpu) return;
   bc::TexturePool pool{*gpu};
